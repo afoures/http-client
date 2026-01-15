@@ -100,7 +100,6 @@ export namespace HTTPMethod {
 export namespace HTTPFetchApi {
   type SharedResponseContent = {
     headers: Headers;
-    url: string;
     raw_response: Response;
   };
 
@@ -129,10 +128,10 @@ export namespace HTTPFetchApi {
         }
     );
 
-  type RedirectMessage = SharedResponseContent & {
+  export type RedirectMessage = SharedResponseContent & {
     ok: false;
     status: HTTPStatus.RedirectMessage;
-    redirect_to: string;
+    redirect_to: string | null;
   };
 
   export type TypedResponse<
@@ -170,7 +169,7 @@ export namespace Schema {
     StandardSchemaV1.InferOutput<schema>;
 }
 
-namespace Json {
+export namespace Json {
   /**
   Matches a JSON object.
 
@@ -308,20 +307,24 @@ export namespace Parser {
         deserialization:
           | "text"
           | "json"
-          | ((data: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
+          | ((
+              body: Response["body"]
+            ) => Promise<Schema.infer_input<NoInfer<schema>>>);
       }
     : schema extends Schema._<Json.Value, any>
     ? {
         schema: schema;
         deserialization?:
           | "json"
-          | ((data: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
+          | ((
+              body: Response["body"]
+            ) => Promise<Schema.infer_input<NoInfer<schema>>>);
       }
     : {
         schema: schema;
         deserialization: (
-          data: Response["body"]
-        ) => Schema.infer_input<NoInfer<schema>>;
+          body: Response["body"]
+        ) => Promise<Schema.infer_input<NoInfer<schema>>>;
       };
 
   export type Error<schema extends Schema._ = Schema.Any> = {
@@ -341,19 +344,23 @@ export namespace Parser {
         deserialization:
           | "text"
           | "json"
-          | ((data: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
+          | ((
+              body: Response["body"]
+            ) => Promise<Schema.infer_input<NoInfer<schema>>>);
       }
     : schema extends Schema._<Json.Value, any>
     ? {
         schema: schema;
-        deserialization?:
+        deserialization:
           | "json"
-          | ((data: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
+          | ((
+              body: Response["body"]
+            ) => Promise<Schema.infer_input<NoInfer<schema>>>);
       }
     : {
         schema: schema;
         deserialization: (
-          data: Response["body"]
-        ) => Schema.infer_input<NoInfer<schema>>;
+          body: Response["body"]
+        ) => Promise<Schema.infer_input<NoInfer<schema>>>;
       };
 }

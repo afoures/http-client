@@ -3,6 +3,8 @@ import type {
   ErrorMessage,
   HTTPFetchApi,
   HTTPMethod,
+  HTTPStatus,
+  Json,
   Parser,
   Pathname,
   Pretty,
@@ -31,7 +33,7 @@ type EndpointDefinition<
   ? { params?: never }
   : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
   (http_method extends HTTPMethod.WithBody
-    ? { body: Serializer.BodyV2<body_schema> }
+    ? { body?: Serializer.BodyV2<body_schema> }
     : [body_schema] extends [never]
     ? { body?: never }
     : { body?: ErrorMessage<"this http method does not support body"> });
@@ -53,9 +55,13 @@ type GenerateUrlFrom<
       : { query: Schema.infer_input<query_schema> })
 >;
 
-type SerializeBodyFrom<body_schema extends Schema._> = Pretty<{
-  content: Schema.infer_input<body_schema>;
-}>;
+type SerializeBodyFrom<body_schema extends Schema._> = Pretty<
+  [body_schema] extends [never]
+    ? { content?: never }
+    : undefined extends Schema.infer_input<body_schema>
+    ? { content?: Schema.infer_input<body_schema> }
+    : { content: Schema.infer_input<body_schema> }
+>;
 
 export class Endpoint<
   http_method extends HTTPMethod.Any,
@@ -277,11 +283,153 @@ export class Endpoint<
         : Schema.infer_output<error_schema>
     >
   > {
-    return {} as any;
+    const raw_response = response;
+    const cloned_response = response.clone();
+
+    const status = cloned_response.status;
+    const headers = cloned_response.headers;
+
+    // Handle redirects (30x)
+    if (status >= 300 && status < 400) {
+      const redirect_to = headers.get("Location") || null;
+      return {
+        ok: false,
+        status: status as HTTPStatus.RedirectMessage,
+        redirect_to,
+        headers,
+        raw_response,
+      } as HTTPFetchApi.RedirectMessage;
+    }
+
+    // Handle client and server errors (40x and 50x)
+    if (status >= 400 && status < 600) {
+      let error: any;
+
+      if (this.#parsers.error) {
+        // Parse error body using error parser
+        const parser = this.#parsers.error;
+        let parsed: any;
+
+        if (typeof parser.deserialization === "function") {
+          // Custom deserialization function
+          parsed = await parser.deserialization(cloned_response.body);
+        } else if (parser.deserialization === "json") {
+          parsed = await parse_as_json(cloned_response);
+        } else if (parser.deserialization === "text") {
+          // Default to text deserialization
+          parsed = await cloned_response.text();
+        }
+
+        // Validate with schema
+        const schema = parser.schema;
+        const result = await schema["~standard"].validate(parsed);
+
+        if (result.issues !== undefined) {
+          throw new Error(
+            `Error response validation failed: ${result.issues
+              .map((i: any) => i.message)
+              .join(", ")}`
+          );
+        }
+
+        error = result.value;
+      } else {
+        // No error parser - default to text
+        error = await cloned_response.text();
+      }
+
+      return {
+        ok: false,
+        status: status,
+        error,
+        headers,
+        raw_response,
+      } as
+        | HTTPFetchApi.ClientErrorResponse<any>
+        | HTTPFetchApi.ServerErrorResponse<any>;
+    }
+
+    // Handle successful responses (20x)
+    if (status >= 200 && status < 300) {
+      // 204 No Content - special handling
+      if (status === 204) {
+        return {
+          ok: true,
+          status: 204,
+          data: null,
+          headers,
+          raw_response,
+        } as HTTPFetchApi.SuccessfulResponse<any>;
+      }
+
+      // Other success statuses
+      if (this.#parsers.data) {
+        // Parse data body using data parser
+        const parser = this.#parsers.data;
+        let parsed: any;
+
+        if (typeof parser.deserialization === "function") {
+          // Custom deserialization function
+          parsed = await parser.deserialization(cloned_response.body);
+        } else if (parser.deserialization === "json") {
+          // JSON deserialization
+          parsed = await parse_as_json(cloned_response);
+        } else if (parser.deserialization === "text") {
+          // Text deserialization
+          parsed = await cloned_response.text();
+        }
+
+        // Validate with schema
+        const schema = parser.schema;
+        const result = await schema["~standard"].validate(parsed);
+
+        if (result.issues !== undefined) {
+          throw new Error(
+            `Response validation failed: ${result.issues
+              .map((i: any) => i.message)
+              .join(", ")}`
+          );
+        }
+
+        return {
+          ok: true,
+          status: status,
+          data: result.value,
+          headers,
+          raw_response,
+        } as HTTPFetchApi.SuccessfulResponse<any>;
+      } else {
+        // No data parser - return null
+        return {
+          ok: true,
+          status: status,
+          data: null as any,
+          headers,
+          raw_response,
+        } as HTTPFetchApi.SuccessfulResponse<any>;
+      }
+    }
+
+    // Fallback for other status codes (shouldn't happen in practice)
+    throw new Error(`Unhandled status code: ${status}`);
   }
 }
 
 export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any>;
+
+async function parse_as_json(response: Response): Promise<Json.Value | null> {
+  try {
+    const text = await response.text();
+    if (text) return JSON.parse(text);
+    return null;
+  } catch (e) {
+    throw new Error(
+      `Failed to parse response as JSON: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
+}
 
 function as_serializer<serializer extends Serializer.Any>(
   serializer: any,

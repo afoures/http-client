@@ -559,7 +559,8 @@ describe("Endpoint.serialize_body", () => {
     await assert.rejects(
       async () => {
         await endpoint.serialize_body({
-          content: { name: "John" } as any, // missing email
+          // @ts-expect-error - missing email
+          content: { name: "John" },
         });
       },
       (error: Error) => {
@@ -574,5 +575,545 @@ describe("Endpoint.serialize_body", () => {
 });
 
 describe("Endpoint.parse_response", () => {
-  // TODO: implement tests
+  // Helper function to read response body stream
+  async function readStream(stream: ReadableStream | null): Promise<string> {
+    if (!stream) return "";
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let done = false;
+    while (!done) {
+      const { value, done: streamDone } = await reader.read();
+      done = streamDone;
+      if (value) chunks.push(value);
+    }
+    const allBytes = new Uint8Array(
+      chunks.reduce(
+        (acc, chunk) => [...acc, ...Array.from(chunk)],
+        [] as number[]
+      )
+    );
+    return new TextDecoder().decode(allBytes);
+  }
+
+  // 1. Successful Responses (20x)
+
+  test("200 OK with JSON body and data schema", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({
+          id: z.number(),
+          name: z.string(),
+        }),
+      },
+    });
+    const response = new Response(JSON.stringify({ id: 1, name: "Test" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, { id: 1, name: "Test" });
+    assert.ok(result.headers instanceof Headers);
+    assert.equal(result.raw_response, response);
+  });
+
+  test("201 Created with JSON body", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: undefined as any,
+      data: {
+        schema: z.object({
+          id: z.number(),
+          name: z.string(),
+        }),
+      },
+    } as any);
+    const response = new Response(JSON.stringify({ id: 2, name: "Created" }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 201);
+    assert.deepEqual(result.data, { id: 2, name: "Created" });
+  });
+
+  test("204 No Content (no body)", async () => {
+    const endpoint = new Endpoint({
+      method: "DELETE",
+      pathname: "/users/(:id)",
+      data: {
+        schema: z.object({
+          id: z.number(),
+        }),
+      },
+    });
+    const response = new Response(null, {
+      status: 204,
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 204);
+    assert.equal(result.data, null);
+  });
+
+  test("204 No Content without data schema", async () => {
+    const endpoint = new Endpoint({
+      method: "DELETE",
+      pathname: "/users/(:id)",
+    });
+    const response = new Response(null, {
+      status: 204,
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 204);
+    assert.equal(result.data, null);
+  });
+
+  test("200 OK with no data schema (void)", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+    const response = new Response(JSON.stringify({ id: 1 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
+    assert.equal(result.data, null);
+  });
+
+  test("200 OK with custom deserialization", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({
+          value: z.string(),
+        }),
+        deserialization: async (body) => {
+          const text = await readStream(body);
+          return JSON.parse(text);
+        },
+      },
+    });
+    const response = new Response(JSON.stringify({ value: "custom" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, { value: "custom" });
+  });
+
+  test("200 OK with schema transformations", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({
+          name: z.string().transform((s) => s.toUpperCase()),
+          age: z.number().transform((n) => n * 2),
+        }),
+      },
+    });
+    const response = new Response(JSON.stringify({ name: "john", age: 25 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, { name: "JOHN", age: 50 });
+  });
+
+  // 2. Redirect Responses (30x)
+
+  test("301 Moved Permanently", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/old",
+    });
+    const response = new Response(null, {
+      status: 301,
+      headers: { Location: "https://example.com/new" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 301);
+    assert.equal(result.redirect_to, "https://example.com/new");
+  });
+
+  test("302 Found", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/redirect",
+    });
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "https://example.com/target" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 302);
+    assert.equal(result.redirect_to, "https://example.com/target");
+  });
+
+  test("308 Permanent Redirect", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/redirect",
+    });
+    const response = new Response(null, {
+      status: 308,
+      headers: { Location: "https://example.com/permanent" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 308);
+    assert.equal(result.redirect_to, "https://example.com/permanent");
+  });
+
+  // 3. Client Error Responses (40x)
+
+  test("400 Bad Request with error schema", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      error: {
+        schema: z.object({
+          message: z.string(),
+        }),
+        deserialization: "json",
+      },
+    });
+    const response = new Response(
+      JSON.stringify({ message: "Invalid input" }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.error, { message: "Invalid input" });
+  });
+
+  test("404 Not Found with text error", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users/(:id)",
+      error: {
+        schema: z.string(),
+        deserialization: "text",
+      },
+    });
+    const response = new Response("Not Found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 404);
+    assert.equal(result.error, "Not Found");
+  });
+
+  test("422 Unprocessable Entity with custom error deserialization", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      error: {
+        schema: z.object({
+          errors: z.array(z.string()),
+        }),
+        deserialization: async (body) => {
+          const text = await readStream(body);
+          return { errors: text.split(",") };
+        },
+      },
+    });
+    const response = new Response("error1,error2,error3", {
+      status: 422,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 422);
+    assert.deepEqual(result.error, {
+      errors: ["error1", "error2", "error3"],
+    });
+  });
+
+  test("400 Bad Request without error schema (defaults to string)", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+    });
+    const response = new Response("Error message", {
+      status: 400,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "Error message");
+  });
+
+  test("401 Unauthorized with JSON error body", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/protected",
+      error: {
+        schema: z.object({
+          code: z.string(),
+        }),
+        deserialization: "json",
+      },
+    });
+    const response = new Response(JSON.stringify({ code: "UNAUTHORIZED" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 401);
+    assert.deepEqual(result.error, { code: "UNAUTHORIZED" });
+  });
+
+  // 4. Server Error Responses (50x)
+
+  test("500 Internal Server Error with error schema", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      error: {
+        schema: z.object({
+          message: z.string(),
+          code: z.string(),
+        }),
+        deserialization: "json",
+      },
+    });
+    const response = new Response(
+      JSON.stringify({ message: "Internal error", code: "ERR_500" }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 500);
+    assert.deepEqual(result.error, {
+      message: "Internal error",
+      code: "ERR_500",
+    });
+  });
+
+  test("503 Service Unavailable with text error", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      error: {
+        schema: z.string(),
+        deserialization: "text",
+      },
+    });
+    const response = new Response("Service unavailable", {
+      status: 503,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 503);
+    assert.equal(result.error, "Service unavailable");
+  });
+
+  test("502 Bad Gateway with custom error deserialization", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/proxy",
+      error: {
+        schema: z.object({
+          upstream: z.string(),
+        }),
+        deserialization: async (body) => {
+          const text = await readStream(body);
+          return { upstream: `gateway-${text}` };
+        },
+      },
+    });
+    const response = new Response("error", {
+      status: 502,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 502);
+    assert.deepEqual(result.error, { upstream: "gateway-error" });
+  });
+
+  // 5. No Body Scenarios
+
+  test("200 OK with empty body", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/empty",
+      data: {
+        schema: z.object({
+          id: z.number(),
+        }),
+      },
+    });
+    const response = new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    await assert.rejects(
+      async () => {
+        await endpoint.parse_response(response);
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation") ||
+            error.message.includes("JSON") ||
+            error.message.includes("Unexpected")
+        );
+        return true;
+      }
+    );
+  });
+
+  test("400 Bad Request with no body", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      error: {
+        schema: z.string(),
+        deserialization: "text",
+      },
+    });
+    const response = new Response(null, {
+      status: 400,
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.error, "");
+  });
+
+  // 6. Validation Errors
+
+  test("200 OK with invalid JSON (doesn't match schema)", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({
+          id: z.number(),
+          name: z.string(),
+        }),
+      },
+    });
+    const response = new Response(JSON.stringify({ id: "invalid" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    await assert.rejects(
+      async () => {
+        await endpoint.parse_response(response);
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation") ||
+            error.message.includes("issues") ||
+            error.message.includes("Expected")
+        );
+        return true;
+      }
+    );
+  });
+
+  test("400 Bad Request with invalid error format", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      error: {
+        schema: z.object({
+          message: z.string(),
+          code: z.number(),
+        }),
+        deserialization: "json",
+      },
+    });
+    const response = new Response(
+      JSON.stringify({ message: "Error", code: "not-a-number" }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    await assert.rejects(
+      async () => {
+        await endpoint.parse_response(response);
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation") ||
+            error.message.includes("issues") ||
+            error.message.includes("Expected")
+        );
+        return true;
+      }
+    );
+  });
+
+  // 7. Response Metadata
+
+  test("headers preserved", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({ id: z.number() }),
+      },
+    });
+    const headers = new Headers();
+    headers.set("X-Custom-Header", "test-value");
+    headers.set("Content-Type", "application/json");
+    const response = new Response(JSON.stringify({ id: 1 }), {
+      status: 200,
+      headers,
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.headers.get("X-Custom-Header"), "test-value");
+    assert.equal(result.headers.get("Content-Type"), "application/json");
+  });
+
+  test("raw response preserved", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      data: {
+        schema: z.object({ id: z.number() }),
+      },
+    });
+    const response = new Response(JSON.stringify({ id: 1 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.raw_response, response);
+  });
 });
