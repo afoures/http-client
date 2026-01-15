@@ -229,11 +229,42 @@ export class Endpoint<
     return url;
   }
 
-  serialize_body({ content }: SerializeBodyFrom<body_schema>): {
+  async serialize_body({ content }: SerializeBodyFrom<body_schema>): Promise<{
     body: BodyInit | null;
     content_type?: string;
-  } {
-    return { body: null };
+  }> {
+    // If no body serializer, return null
+    if (!this.#serializers.body) {
+      return { body: null, content_type: undefined };
+    }
+
+    // Validate/transform content using Standard Schema
+    const schema = this.#serializers.body.schema;
+    const result = await schema["~standard"].validate(content);
+
+    if (result.issues !== undefined) {
+      // Validation failed
+      throw new Error(
+        `Body validation failed: ${result.issues
+          .map((i: any) => i.message)
+          .join(", ")}`
+      );
+    }
+
+    // Use transformed content
+    const transformed_content = result.value;
+
+    // Apply custom serialization if provided
+    if (typeof this.#serializers.body.serialization === "function") {
+      // Custom serialization function
+      return this.#serializers.body.serialization(transformed_content as any);
+    } else {
+      // Default JSON serialization
+      return {
+        body: JSON.stringify(transformed_content),
+        content_type: "application/json",
+      };
+    }
   }
 
   async parse_response(
@@ -362,7 +393,7 @@ async function fetch_endpoint<endpoint extends AnyEndpoint>(
     query: init.query,
   });
 
-  const { body, content_type } = endpoint.serialize_body({
+  const { body, content_type } = await endpoint.serialize_body({
     content: init.content,
   });
   if (content_type) headers.set("Content-Type", content_type);

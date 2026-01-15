@@ -247,7 +247,330 @@ describe("Endpoint.generate_url", () => {
 });
 
 describe("Endpoint.serialize_body", () => {
-  // TODO: implement tests
+  test("GET request without body schema returns null", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+    // For GET requests, content should be never/undefined
+    const result = await endpoint.serialize_body({
+      content: undefined as never,
+    });
+    assert.equal(result.body, null);
+    assert.equal(result.content_type, undefined);
+  });
+
+  test("POST request without body schema returns null", async () => {
+    // TypeScript requires body for POST, but we test runtime behavior
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: undefined as any,
+    } as any);
+    const result = await endpoint.serialize_body({
+      content: undefined as never,
+    });
+    assert.equal(result.body, null);
+    assert.equal(result.content_type, undefined);
+  });
+
+  test("POST request with JSON serialization - object schema", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.object({ name: z.string() }),
+      },
+    });
+    const result = await endpoint.serialize_body({ content: { name: "John" } });
+    assert.equal(result.body, JSON.stringify({ name: "John" }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("POST request with JSON serialization - array schema", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.array(z.object({ id: z.number() })),
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: [{ id: 1 }, { id: 2 }],
+    });
+    assert.equal(result.body, JSON.stringify([{ id: 1 }, { id: 2 }]));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("POST request with JSON serialization - schema transformations", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.object({
+          name: z.string().transform((s) => s.toUpperCase()),
+          age: z.number().transform((n) => n * 2),
+        }),
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { name: "john", age: 25 },
+    });
+    // Schema should transform: name -> "JOHN", age -> 50
+    assert.equal(result.body, JSON.stringify({ name: "JOHN", age: 50 }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("PUT request with JSON serialization", async () => {
+    const endpoint = new Endpoint({
+      method: "PUT",
+      pathname: "/users/(:id)",
+      body: {
+        schema: z.object({ name: z.string() }),
+      },
+    });
+    const result = await endpoint.serialize_body({ content: { name: "Jane" } });
+    assert.equal(result.body, JSON.stringify({ name: "Jane" }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("PATCH request with JSON serialization", async () => {
+    const endpoint = new Endpoint({
+      method: "PATCH",
+      pathname: "/users/(:id)",
+      body: {
+        schema: z.object({ name: z.string() }),
+      },
+    });
+    const result = await endpoint.serialize_body({ content: { name: "Bob" } });
+    assert.equal(result.body, JSON.stringify({ name: "Bob" }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("DELETE request with JSON serialization", async () => {
+    const endpoint = new Endpoint({
+      method: "DELETE",
+      pathname: "/users/(:id)",
+      body: {
+        schema: z.object({ reason: z.string() }),
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { reason: "inactive" },
+    });
+    assert.equal(result.body, JSON.stringify({ reason: "inactive" }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("POST request with custom serialization - FormData", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/upload",
+      body: {
+        schema: z.object({
+          name: z.string(),
+          file: z.string(),
+        }),
+        serialization: (data) => {
+          const formData = new FormData();
+          formData.append("name", data.name);
+          formData.append("file", data.file);
+          return {
+            body: formData,
+            content_type: "multipart/form-data",
+          };
+        },
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { name: "test.txt", file: "file content" },
+    });
+    assert.ok(result.body instanceof FormData);
+    assert.equal(result.content_type, "multipart/form-data");
+  });
+
+  test("POST request with custom serialization - URLSearchParams", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/submit",
+      body: {
+        schema: z.object({
+          username: z.string(),
+          password: z.string(),
+        }),
+        serialization: (data) => {
+          const params = new URLSearchParams();
+          params.set("username", data.username);
+          params.set("password", data.password);
+          return {
+            body: params,
+            content_type: "application/x-www-form-urlencoded",
+          };
+        },
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { username: "user123", password: "secret" },
+    });
+    assert.ok(result.body instanceof URLSearchParams);
+    assert.equal(result.content_type, "application/x-www-form-urlencoded");
+    const params = result.body as URLSearchParams;
+    assert.equal(params.get("username"), "user123");
+    assert.equal(params.get("password"), "secret");
+  });
+
+  test("POST request with custom serialization - string", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/text",
+      body: {
+        schema: z.object({
+          message: z.string(),
+        }),
+        serialization: (data) => {
+          return {
+            body: data.message,
+            content_type: "text/plain",
+          };
+        },
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { message: "Hello, World!" },
+    });
+    assert.equal(result.body, "Hello, World!");
+    assert.equal(result.content_type, "text/plain");
+  });
+
+  test("POST request with custom serialization - null body", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/empty",
+      body: {
+        schema: z.object({
+          action: z.string(),
+        }),
+        serialization: () => {
+          return {
+            body: null,
+            content_type: "application/json",
+          };
+        },
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { action: "delete" },
+    });
+    assert.equal(result.body, null);
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("POST request with custom serialization - schema transformations", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/transform",
+      body: {
+        schema: z.object({
+          value: z.string().transform((s) => s.toUpperCase()),
+          count: z.number().transform((n) => n * 2),
+        }),
+        serialization: (data) => {
+          // Custom serialization receives transformed data
+          return {
+            body: `${data.value}:${data.count}`,
+            content_type: "text/plain",
+          };
+        },
+      },
+    });
+    const result = await endpoint.serialize_body({
+      content: { value: "hello", count: 5 },
+    });
+    // Schema transforms: "hello" -> "HELLO", 5 -> 10
+    // Custom serialization formats as "HELLO:10"
+    assert.equal(result.body, "HELLO:10");
+    assert.equal(result.content_type, "text/plain");
+  });
+
+  test("POST request with invalid content - validation error", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.object({
+          name: z.string().min(3),
+          age: z.number().positive(),
+        }),
+      },
+    });
+    await assert.rejects(
+      async () => {
+        await endpoint.serialize_body({
+          content: { name: "ab", age: -1 } as any,
+        });
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation failed") ||
+            error.message.includes("issues")
+        );
+        return true;
+      }
+    );
+  });
+
+  test("POST request with invalid content type - validation error", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.object({
+          name: z.string(),
+        }),
+      },
+    });
+    await assert.rejects(
+      async () => {
+        await endpoint.serialize_body({
+          content: { name: 123 } as any, // wrong type
+        });
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation failed") ||
+            error.message.includes("issues")
+        );
+        return true;
+      }
+    );
+  });
+
+  test("POST request with missing required fields - validation error", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: {
+        schema: z.object({
+          name: z.string(),
+          email: z.string().email(),
+        }),
+      },
+    });
+    await assert.rejects(
+      async () => {
+        await endpoint.serialize_body({
+          content: { name: "John" } as any, // missing email
+        });
+      },
+      (error: Error) => {
+        assert.ok(
+          error.message.includes("validation failed") ||
+            error.message.includes("issues")
+        );
+        return true;
+      }
+    );
+  });
 });
 
 describe("Endpoint.parse_response", () => {
