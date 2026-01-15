@@ -69,13 +69,13 @@ export class Endpoint<
   #method: http_method;
   #pattern: RoutePattern<pathname>;
   #serializers: {
-    params: Serializer.ParamsV2<any, params_schema> | null;
-    query: Serializer.QueryStringV2<query_schema> | null;
-    body: Serializer.BodyV2<body_schema> | null;
+    params: Required<Serializer.ParamsV2<any, params_schema>> | null;
+    query: Required<Serializer.QueryStringV2<query_schema>> | null;
+    body: Required<Serializer.BodyV2<body_schema>> | null;
   };
   #parsers: {
-    data: Parser.DataV2<data_schema> | null;
-    error: Parser.ErrorV2<error_schema> | null;
+    data: Required<Parser.DataV2<data_schema>> | null;
+    error: Required<Parser.ErrorV2<error_schema>> | null;
   };
 
   constructor(
@@ -108,12 +108,125 @@ export class Endpoint<
     return this.#method;
   }
 
-  generate_url({
+  async generate_url({
     origin,
     params,
     query,
-  }: GenerateUrlFrom<pathname, params_schema, query_schema>): URL {
-    return new URL("");
+  }: GenerateUrlFrom<pathname, params_schema, query_schema>): Promise<URL> {
+    // Step 1: Handle pathname params
+    let pathname_params: Record<string, string> = {};
+
+    if (params !== undefined) {
+      if (this.#serializers.params) {
+        // Validate/transform params using Standard Schema
+        const schema = this.#serializers.params.schema;
+        const result = await schema["~standard"].validate(params);
+
+        if (result.issues !== undefined) {
+          // Validation failed - for now, throw error since return type is URL
+          // TODO: Consider changing return type to Result<URL> in the future
+          throw new Error(
+            `Params validation failed: ${result.issues
+              .map((i: any) => i.message)
+              .join(", ")}`
+          );
+        }
+
+        // Use transformed params
+        const transformed_params = result.value;
+
+        // Apply custom serialization if provided
+        if (this.#serializers.params.serialization) {
+          pathname_params = this.#serializers.params.serialization(
+            transformed_params as any
+          );
+        } else {
+          // Convert to string values for RoutePattern
+          pathname_params = Object.fromEntries(
+            Object.entries(transformed_params as any).map(([key, value]) => [
+              key,
+              String(value),
+            ])
+          );
+        }
+      } else {
+        // No schema, use params directly
+        pathname_params = Object.fromEntries(
+          Object.entries(params as Record<string, unknown>).map(
+            ([key, value]) => [key, String(value)]
+          )
+        );
+      }
+    }
+
+    // Generate pathname using RoutePattern.href()
+    const pathname = this.#pattern.href(pathname_params);
+
+    // Step 2: Handle query parameters
+    let search_params = new URLSearchParams();
+
+    if (query !== undefined && this.#serializers.query) {
+      // Validate/transform query using Standard Schema
+      const schema = this.#serializers.query.schema;
+      const result = await schema["~standard"].validate(query);
+
+      if (result.issues !== undefined) {
+        // Validation failed
+        throw new Error(
+          `Query validation failed: ${result.issues
+            .map((i: any) => i.message)
+            .join(", ")}`
+        );
+      }
+
+      // Use transformed query
+      const transformed_query = result.value;
+
+      if (typeof this.#serializers.query.serialization === "function") {
+        // Custom serialization function
+        search_params = this.#serializers.query.serialization(
+          transformed_query as any
+        );
+      } else if (this.#serializers.query.serialization === "urlencoded") {
+        // Default urlencoded serialization
+        if (Array.isArray(transformed_query)) {
+          // Array schema (tuples) - serialize tuples as key-value pairs
+          // For tuples like [["ok", "test"]], serialize each tuple element
+          transformed_query.forEach((tuple, index) => {
+            if (Array.isArray(tuple)) {
+              // Tuple: serialize each element
+              tuple.forEach((value, tupleIndex) => {
+                search_params.append(`${index}[${tupleIndex}]`, String(value));
+              });
+            } else {
+              // Non-tuple array element
+              search_params.append(String(index), String(tuple));
+            }
+          });
+        } else if (
+          transformed_query !== null &&
+          typeof transformed_query === "object"
+        ) {
+          // Object schema - serialize as key-value pairs
+          for (const [key, value] of Object.entries(transformed_query)) {
+            if (value !== undefined && value !== null) {
+              search_params.set(key, String(value));
+            }
+          }
+        }
+      }
+    }
+
+    // Step 3: Construct URL
+    const url = new URL(pathname, origin);
+
+    // Append query string
+    const query_string = search_params.toString();
+    if (query_string) {
+      url.search = query_string;
+    }
+
+    return url;
   }
 
   serialize_body({ content }: SerializeBodyFrom<body_schema>): {
@@ -176,6 +289,8 @@ function as_parser<parser extends Parser.Any>(
 
   return { deserialization: default_deserialization, ...parser };
 }
+
+// local testing
 
 const delete_user = new Endpoint({
   method: "POST",
@@ -241,7 +356,7 @@ async function fetch_endpoint<endpoint extends AnyEndpoint>(
 ): Promise<infer_result<NoInfer<endpoint>>> {
   const headers = new Headers();
 
-  const url = endpoint.generate_url({
+  const url = await endpoint.generate_url({
     origin: init.origin,
     params: init.params,
     query: init.query,
