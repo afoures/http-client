@@ -7,5 +7,9 @@ export type {
   Schema,
   Pathname,
 } from "./types.ts";
-// export { Endpoint } from "./endpoint.ts";
-// export { http_client, type HttpClientOptions } from "./http-client.ts";
+export {
+  Endpoint,
+  type EndpointDefinition,
+  type AnyEndpoint,
+} from "./endpoint.ts";
+export { http_client, type HttpClientOptions } from "./http-client.ts";

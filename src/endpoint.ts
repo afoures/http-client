@@ -1,26 +1,26 @@
-import z from "zod";
-import type {
-  ErrorMessage,
-  HTTPFetchApi,
-  HTTPMethod,
-  HTTPStatus,
-  Json,
-  Parser,
-  Pathname,
-  Pretty,
-  Schema,
-  Serializer,
+import type { DeserializationError, SerializationError } from "./errors";
+import {
+  type ErrorMessage,
+  type HTTPFetchApi,
+  type HTTPMethod,
+  type HTTPStatus,
+  type Json,
+  type Parser,
+  type Pathname,
+  type Pretty,
+  type Schema,
+  type Serializer,
 } from "./types";
 import { RoutePattern } from "@remix-run/route-pattern";
 
-type EndpointDefinition<
+export type EndpointDefinition<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
   params_schema extends Schema._,
   query_schema extends Schema._,
   body_schema extends Schema._,
   data_schema extends Schema._,
-  error_schema extends Schema._
+  error_schema extends Schema._,
 > = {
   method: http_method;
   pathname: pathname;
@@ -30,38 +30,13 @@ type EndpointDefinition<
 } & (pathname extends Pathname.WithParams
   ? { params?: Serializer.ParamsV2<pathname, params_schema> }
   : [params_schema] extends [never]
-  ? { params?: never }
-  : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
+    ? { params?: never }
+    : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
   (http_method extends HTTPMethod.WithBody
     ? { body?: Serializer.BodyV2<body_schema> }
     : [body_schema] extends [never]
-    ? { body?: never }
-    : { body?: ErrorMessage<"this http method does not support body"> });
-
-type GenerateUrlFrom<
-  pathname extends Pathname.Relative,
-  params_schema extends Schema._,
-  query_schema extends Schema._
-> = Pretty<
-  { origin: string } & ([params_schema] extends [never]
-    ? pathname extends Pathname.WithParams
-      ? { params: Pathname.Params<pathname> }
-      : { params?: never }
-    : { params: Schema.infer_input<params_schema> }) &
-    ([query_schema] extends [never]
-      ? { query?: never }
-      : undefined extends Schema.infer_input<query_schema>
-      ? { query?: Schema.infer_input<query_schema> }
-      : { query: Schema.infer_input<query_schema> })
->;
-
-type SerializeBodyFrom<body_schema extends Schema._> = Pretty<
-  [body_schema] extends [never]
-    ? { content?: never }
-    : undefined extends Schema.infer_input<body_schema>
-    ? { content?: Schema.infer_input<body_schema> }
-    : { content: Schema.infer_input<body_schema> }
->;
+      ? { body?: never }
+      : { body?: ErrorMessage<"this http method does not support body"> });
 
 export class Endpoint<
   http_method extends HTTPMethod.Any,
@@ -70,7 +45,7 @@ export class Endpoint<
   query_schema extends Schema._ = never,
   body_schema extends Schema._ = never,
   data_schema extends Schema._ = never,
-  error_schema extends Schema._ = never
+  error_schema extends Schema._ = never,
 > {
   #method: http_method;
   #pattern: RoutePattern<pathname>;
@@ -93,7 +68,7 @@ export class Endpoint<
       body_schema,
       data_schema,
       error_schema
-    >
+    >,
   ) {
     this.#method = definition.method;
     this.#pattern = new RoutePattern(definition.pathname, {
@@ -114,27 +89,26 @@ export class Endpoint<
     return this.#method;
   }
 
-  async generate_url({
-    origin,
-    params,
-    query,
-  }: GenerateUrlFrom<pathname, params_schema, query_schema>): Promise<URL> {
+  async generate_url(
+    init: Pretty<
+      { origin: string } & HTTPFetchApi.TypedParamsInit<pathname, params_schema> &
+        HTTPFetchApi.TypedQueryInit<query_schema>
+    >,
+  ): Promise<URL> {
     // Step 1: Handle pathname params
     let pathname_params: Record<string, string> = {};
 
-    if (params !== undefined) {
+    if ("params" in init && init.params !== undefined) {
       if (this.#serializers.params) {
         // Validate/transform params using Standard Schema
         const schema = this.#serializers.params.schema;
-        const result = await schema["~standard"].validate(params);
+        const result = await schema["~standard"].validate(init.params);
 
         if (result.issues !== undefined) {
           // Validation failed - for now, throw error since return type is URL
           // TODO: Consider changing return type to Result<URL> in the future
           throw new Error(
-            `Params validation failed: ${result.issues
-              .map((i: any) => i.message)
-              .join(", ")}`
+            `Params validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
           );
         }
 
@@ -143,24 +117,20 @@ export class Endpoint<
 
         // Apply custom serialization if provided
         if (this.#serializers.params.serialization) {
-          pathname_params = this.#serializers.params.serialization(
-            transformed_params as any
-          );
+          pathname_params = this.#serializers.params.serialization(transformed_params as any);
         } else {
           // Convert to string values for RoutePattern
           pathname_params = Object.fromEntries(
-            Object.entries(transformed_params as any).map(([key, value]) => [
-              key,
-              String(value),
-            ])
+            Object.entries(transformed_params as any).map(([key, value]) => [key, String(value)]),
           );
         }
       } else {
         // No schema, use params directly
         pathname_params = Object.fromEntries(
-          Object.entries(params as Record<string, unknown>).map(
-            ([key, value]) => [key, String(value)]
-          )
+          Object.entries(init.params as Record<string, unknown>).map(([key, value]) => [
+            key,
+            String(value),
+          ]),
         );
       }
     }
@@ -171,17 +141,15 @@ export class Endpoint<
     // Step 2: Handle query parameters
     let search_params = new URLSearchParams();
 
-    if (query !== undefined && this.#serializers.query) {
+    if ("query" in init && init.query !== undefined && this.#serializers.query) {
       // Validate/transform query using Standard Schema
       const schema = this.#serializers.query.schema;
-      const result = await schema["~standard"].validate(query);
+      const result = await schema["~standard"].validate(init.query);
 
       if (result.issues !== undefined) {
         // Validation failed
         throw new Error(
-          `Query validation failed: ${result.issues
-            .map((i: any) => i.message)
-            .join(", ")}`
+          `Query validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
         );
       }
 
@@ -190,9 +158,7 @@ export class Endpoint<
 
       if (typeof this.#serializers.query.serialization === "function") {
         // Custom serialization function
-        search_params = this.#serializers.query.serialization(
-          transformed_query as any
-        );
+        search_params = this.#serializers.query.serialization(transformed_query as any);
       } else if (this.#serializers.query.serialization === "urlencoded") {
         // Default urlencoded serialization
         if (Array.isArray(transformed_query)) {
@@ -209,10 +175,7 @@ export class Endpoint<
               search_params.append(String(index), String(tuple));
             }
           });
-        } else if (
-          transformed_query !== null &&
-          typeof transformed_query === "object"
-        ) {
+        } else if (transformed_query !== null && typeof transformed_query === "object") {
           // Object schema - serialize as key-value pairs
           for (const [key, value] of Object.entries(transformed_query)) {
             if (value !== undefined && value !== null) {
@@ -224,7 +187,7 @@ export class Endpoint<
     }
 
     // Step 3: Construct URL
-    const url = new URL(pathname, origin);
+    const url = new URL(pathname, init.origin);
 
     // Append query string
     const query_string = search_params.toString();
@@ -235,7 +198,7 @@ export class Endpoint<
     return url;
   }
 
-  async serialize_body({ content }: SerializeBodyFrom<body_schema>): Promise<{
+  async serialize_body(init: Pretty<HTTPFetchApi.TypedBodyInit<body_schema>>): Promise<{
     body: BodyInit | null;
     content_type?: string;
   }> {
@@ -244,16 +207,18 @@ export class Endpoint<
       return { body: null, content_type: undefined };
     }
 
+    if (!("body" in init && init.body == undefined)) {
+      return { body: null, content_type: undefined };
+    }
+
     // Validate/transform content using Standard Schema
     const schema = this.#serializers.body.schema;
-    const result = await schema["~standard"].validate(content);
+    const result = await schema["~standard"].validate(init.body);
 
     if (result.issues !== undefined) {
       // Validation failed
       throw new Error(
-        `Body validation failed: ${result.issues
-          .map((i: any) => i.message)
-          .join(", ")}`
+        `Body validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
       );
     }
 
@@ -274,14 +239,14 @@ export class Endpoint<
   }
 
   async parse_response(
-    response: Response
+    response: Response,
   ): Promise<
-    HTTPFetchApi.TypedResponse<
-      [data_schema] extends [never] ? void : Schema.infer_output<data_schema>,
-      [error_schema] extends [never]
-        ? string
-        : Schema.infer_output<error_schema>
-    >
+    | HTTPFetchApi.ClientErrorResponse<Schema.infer_output<error_schema, string>>
+    | HTTPFetchApi.ServerErrorResponse<Schema.infer_output<error_schema, string>>
+    | HTTPFetchApi.SuccessfulResponse<Schema.infer_output<data_schema, void>>
+    | HTTPFetchApi.RedirectMessage
+    | SerializationError
+    | DeserializationError
   > {
     const raw_response = response;
     const cloned_response = response.clone();
@@ -328,7 +293,7 @@ export class Endpoint<
           throw new Error(
             `Error response validation failed: ${result.issues
               .map((i: any) => i.message)
-              .join(", ")}`
+              .join(", ")}`,
           );
         }
 
@@ -344,9 +309,7 @@ export class Endpoint<
         error,
         headers,
         raw_response,
-      } as
-        | HTTPFetchApi.ClientErrorResponse<any>
-        | HTTPFetchApi.ServerErrorResponse<any>;
+      } as HTTPFetchApi.ClientErrorResponse<any> | HTTPFetchApi.ServerErrorResponse<any>;
     }
 
     // Handle successful responses (20x)
@@ -385,9 +348,7 @@ export class Endpoint<
 
         if (result.issues !== undefined) {
           throw new Error(
-            `Response validation failed: ${result.issues
-              .map((i: any) => i.message)
-              .join(", ")}`
+            `Response validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
           );
         }
 
@@ -424,28 +385,20 @@ async function parse_as_json(response: Response): Promise<Json.Value | null> {
     return null;
   } catch (e) {
     throw new Error(
-      `Failed to parse response as JSON: ${
-        e instanceof Error ? e.message : String(e)
-      }`
+      `Failed to parse response as JSON: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 }
 
 function as_serializer<serializer extends Serializer.Any>(
   serializer: any,
-  default_serialization?: serializer["serialization"] & string
+  default_serialization?: serializer["serialization"] & string,
 ): serializer | null {
-  if (
-    !serializer ||
-    typeof serializer !== "object" ||
-    !("schema" in serializer)
-  )
-    return null;
+  if (!serializer || typeof serializer !== "object" || !("schema" in serializer)) return null;
 
   if (
     default_serialization === undefined ||
-    ("serialization" in serializer &&
-      typeof serializer.serialization !== "undefined")
+    ("serialization" in serializer && typeof serializer.serialization !== "undefined")
   )
     return serializer;
 
@@ -454,117 +407,15 @@ function as_serializer<serializer extends Serializer.Any>(
 
 function as_parser<parser extends Parser.Any>(
   parser: any,
-  default_deserialization?: parser["deserialization"] & string
+  default_deserialization?: parser["deserialization"] & string,
 ): parser | null {
-  if (!parser || typeof parser !== "object" || !("schema" in parser))
-    return null;
+  if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
   if (
     default_deserialization === undefined ||
-    ("deserialization" in parser &&
-      typeof parser.deserialization !== "undefined")
+    ("deserialization" in parser && typeof parser.deserialization !== "undefined")
   )
     return parser;
 
   return { deserialization: default_deserialization, ...parser };
 }
-
-// local testing
-
-const delete_user = new Endpoint({
-  method: "POST",
-  pathname: "/users/(:id)",
-  query: {
-    schema: z.array(z.tuple([z.literal("ok"), z.string()])),
-  },
-  body: {
-    schema: z.object({ test: z.string().transform((str) => str.length) }),
-  },
-});
-
-type infer_result<endpoint extends AnyEndpoint> = Awaited<
-  ReturnType<NoInfer<endpoint>["parse_response"]>
->;
-
-type extract_pathname<endpoint extends AnyEndpoint> = endpoint extends Endpoint<
-  any,
-  infer pathname,
-  any,
-  any,
-  any,
-  any,
-  any
->
-  ? pathname
-  : never;
-
-type extract_params_schema<endpoint extends AnyEndpoint> =
-  endpoint extends Endpoint<any, any, infer params_schema, any, any, any, any>
-    ? params_schema
-    : never;
-
-type extract_query_schema<endpoint extends AnyEndpoint> =
-  endpoint extends Endpoint<any, any, any, infer query_schema, any, any, any>
-    ? query_schema
-    : never;
-
-type extract_body_schema<endpoint extends AnyEndpoint> =
-  endpoint extends Endpoint<any, any, any, any, infer body_schema, any, any>
-    ? body_schema
-    : never;
-
-type CustomFetch = (
-  url: URL,
-  init: Omit<RequestInit, "headers"> & { headers: Headers }
-) => Promise<Response>;
-
-async function fetch_endpoint<endpoint extends AnyEndpoint>(
-  endpoint: endpoint,
-  init: Pretty<
-    GenerateUrlFrom<
-      extract_pathname<NoInfer<endpoint>>,
-      extract_params_schema<NoInfer<endpoint>>,
-      extract_query_schema<NoInfer<endpoint>>
-    > &
-      SerializeBodyFrom<extract_body_schema<NoInfer<endpoint>>> & {
-        custom_fetch?: CustomFetch;
-        headers?: HeadersInit;
-      }
-  >,
-  defaults?: {}
-): Promise<infer_result<NoInfer<endpoint>>> {
-  const headers = new Headers();
-
-  const url = await endpoint.generate_url({
-    origin: init.origin,
-    params: init.params,
-    query: init.query,
-  });
-
-  const { body, content_type } = await endpoint.serialize_body({
-    content: init.content,
-  });
-  if (content_type) headers.set("Content-Type", content_type);
-
-  const custom_fetch = init.custom_fetch ?? fetch;
-  const response = await custom_fetch(url, {
-    method: endpoint.method,
-    body,
-    headers,
-  });
-
-  const result = await endpoint.parse_response(response);
-
-  return result as infer_result<endpoint>;
-}
-
-const r = await fetch_endpoint(delete_user, {
-  origin: "https://ok.com",
-  params: { id: 1234567 },
-  query: [],
-  content: { test: "" },
-  custom_fetch(url, init) {
-    return fetch(url, init);
-  },
-  headers: {},
-});

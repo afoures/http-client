@@ -22,7 +22,9 @@ type Fetcher<
     query: def["query"];
     body: def["body"];
   }>
-) => Promise<HTTPFetchApi.TypedResponse<def["data"], def["error"]>>;
+) => Promise<
+  HTTPFetchApi.TypedResponse<{ data: def["data"]; error: def["error"] }>
+>;
 
 type AnyFetcher = Fetcher<{
   params: any;

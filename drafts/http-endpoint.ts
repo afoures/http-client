@@ -213,10 +213,10 @@ export class HTTPEndpoint<
   async parse_response(
     response: Response
   ): Promise<
-    HTTPFetchApi.TypedResponse<
-      Schema.infer_output<data_schema>,
-      Schema.infer_output<error_schema>
-    >
+    HTTPFetchApi.TypedResponse<{
+      data: Schema.infer_output<data_schema>;
+      error: Schema.infer_output<error_schema>;
+    }>
   > {
     return {} as any;
   }
