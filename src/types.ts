@@ -70,7 +70,7 @@ export namespace HTTPMethod {
   export type Any = HTTPMethod.WithoutBody | HTTPMethod.WithBody;
 }
 
-export namespace HTTPFetchApi {
+export namespace HTTPFetch {
   type SharedResponseContent = {
     headers: Headers;
     raw_response: Response;
@@ -107,25 +107,6 @@ export namespace HTTPFetchApi {
     redirect_to: string | null;
   };
 
-  export type TypedResponse<args extends { data: unknown; error: unknown }> =
-    | ClientErrorResponse<args["error"]>
-    | ServerErrorResponse<args["error"]>
-    | SuccessfulResponse<args["data"]>
-    | RedirectMessage;
-
-  export type TypedResponseV2<data extends unknown = void, error extends unknown = string> =
-    | ClientErrorResponse<error>
-    | ServerErrorResponse<error>
-    | SuccessfulResponse<data>
-    | RedirectMessage;
-
-  export type TypedRequestInit<args extends { params: unknown; body: unknown; query: unknown }> =
-    Omit<RequestInit, "body" | "method" | "headers"> & {
-      headers?: (default_headers: Headers) => Headers;
-    } & ([args["params"]] extends [never] ? {} : { params: args["params"] }) &
-      ([args["query"]] extends [never] ? {} : { query: args["query"] }) &
-      ([args["body"]] extends [never] ? {} : { body: args["body"] });
-
   export type TypedParamsInit<
     pathname extends Pathname.Relative,
     params_schema extends Schema._,
@@ -150,14 +131,6 @@ export namespace HTTPFetchApi {
   export type PartialRequestInit = Omit<RequestInit, "body" | "method" | "headers"> & {
     headers?: (default_headers: Headers) => Headers;
   };
-
-  export type TypedRequestInitV2<
-    init extends Pretty<
-      TypedParamsInit<Pathname.Relative, any> & TypedQueryInit<any> & TypedBodyInit<any>
-    >,
-  > = Omit<RequestInit, "body" | "method" | "headers"> & {
-    headers?: (default_headers: Headers) => Headers;
-  } & init;
 }
 
 export namespace Schema {
@@ -220,11 +193,7 @@ export namespace Serializer {
     serialization?: string | ((data: any) => any);
   };
 
-  export type Params<schema extends Schema._ = Schema.Any> = {
-    schema: schema;
-  };
-
-  export type ParamsV2<pathname extends Pathname.Relative, schema extends Schema._> =
+  export type Params<pathname extends Pathname.Relative, schema extends Schema._> =
     schema extends Schema._<any, Pathname.Params<pathname>>
       ? {
           schema: schema;
@@ -235,16 +204,7 @@ export namespace Serializer {
           serialization: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
         };
 
-  export type QueryString<schema extends Schema._ = Schema.Any> = {
-    schema: schema;
-    serialization?:
-      | "urlencoded"
-      | ([Schema.infer_output<NoInfer<schema>>] extends [never]
-          ? never
-          : (query: Schema.infer_output<NoInfer<schema>>) => URLSearchParams);
-  };
-
-  export type QueryStringV2<schema extends Schema._> =
+  export type QueryString<schema extends Schema._> =
     schema extends Schema._<any, Array<Array<string>> | Record<string, string> | undefined>
       ? {
           schema: schema;
@@ -257,17 +217,7 @@ export namespace Serializer {
           serialization: (data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams;
         };
 
-  export type Body<schema extends Schema._ = Schema.Any> = {
-    schema: schema;
-    serialization?:
-      | "json"
-      | ((body: Schema.infer_output<NoInfer<schema>>) => {
-          body: BodyInit | null;
-          content_type: string;
-        });
-  };
-
-  export type BodyV2<schema extends Schema._> =
+  export type Body<schema extends Schema._> =
     schema extends Schema._<any, Json.Value>
       ? {
           schema: schema;
@@ -293,15 +243,7 @@ export namespace Parser {
     deserialization?: string | ((data: any) => any);
   };
 
-  export type Data<schema extends Schema._ = Schema.Any> = {
-    schema: schema;
-    deserialization?:
-      | "json"
-      | "text"
-      | ((body: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
-  };
-
-  export type DataV2<schema extends Schema._> =
+  export type Data<schema extends Schema._> =
     schema extends Schema._<string, any>
       ? {
           schema: schema;
@@ -324,15 +266,7 @@ export namespace Parser {
             ) => Promise<Schema.infer_input<NoInfer<schema>>>;
           };
 
-  export type Error<schema extends Schema._ = Schema.Any> = {
-    schema: schema;
-    deserialization?:
-      | "text"
-      | "json"
-      | ((body: Response["body"]) => Schema.infer_input<NoInfer<schema>>);
-  };
-
-  export type ErrorV2<schema extends Schema._> =
+  export type Error<schema extends Schema._> =
     schema extends Schema._<string, any>
       ? {
           schema: schema;

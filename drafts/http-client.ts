@@ -1,6 +1,6 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 import { HTTPEndpoint } from "./http-endpoint.ts";
-import { type HTTPFetchApi, type Pretty } from "../src/types.ts";
+import { type HTTPFetch, type Pretty } from "../src/types.ts";
 
 export type AnyEndpoint = HTTPEndpoint<any, any, any, any, any, any, any>;
 
@@ -15,16 +15,14 @@ type Fetcher<
     body: unknown;
     data: unknown;
     error: unknown;
-  }
+  },
 > = (
-  args: HTTPFetchApi.TypedRequestInit<{
+  args: HTTPFetch.TypedRequestInit<{
     params: def["params"];
     query: def["query"];
     body: def["body"];
-  }>
-) => Promise<
-  HTTPFetchApi.TypedResponse<{ data: def["data"]; error: def["error"] }>
->;
+  }>,
+) => Promise<HTTPFetch.TypedResponse<{ data: def["data"]; error: def["error"] }>>;
 
 type AnyFetcher = Fetcher<{
   params: any;
@@ -52,8 +50,8 @@ type HTTPFetchers<endpoints extends EndpointDefinitions> = Pretty<{
         error: StandardSchemaV1.InferOutput<error_schema>;
       }>
     : endpoints[name] extends EndpointDefinitions
-    ? HTTPFetchers<endpoints[name]>
-    : never;
+      ? HTTPFetchers<endpoints[name]>
+      : never;
 }>;
 
 export type HttpClientOptions<endpoints extends EndpointDefinitions> = {
@@ -62,7 +60,7 @@ export type HttpClientOptions<endpoints extends EndpointDefinitions> = {
   endpoints: endpoints;
   fetch?: (
     url: URL,
-    init: Omit<RequestInit, "headers"> & { headers: Headers }
+    init: Omit<RequestInit, "headers"> & { headers: Headers },
   ) => Promise<Response>;
 };
 
@@ -72,9 +70,7 @@ export function http_client<const endpoints extends EndpointDefinitions>({
   defaults = {},
   fetch: custom_fetch = fetch,
 }: HttpClientOptions<endpoints>) {
-  function map_to_fetcher<defs extends EndpointDefinitions>(
-    definition: defs
-  ): HTTPFetchers<defs> {
+  function map_to_fetcher<defs extends EndpointDefinitions>(definition: defs): HTTPFetchers<defs> {
     return Object.fromEntries(
       Object.entries(definition).map(([key, endpoint_or_object]) => {
         if (endpoint_or_object instanceof HTTPEndpoint) {
@@ -95,8 +91,7 @@ export function http_client<const endpoints extends EndpointDefinitions>({
               query: unprocessed_query,
             });
 
-            const { body, content_type } =
-              endpoint.serialize_body(unprocessed_body);
+            const { body, content_type } = endpoint.serialize_body(unprocessed_body);
             if (content_type) headers.set("Content-Type", content_type);
 
             const response = await custom_fetch(url, {
@@ -115,7 +110,7 @@ export function http_client<const endpoints extends EndpointDefinitions>({
         }
 
         return [key, map_to_fetcher(endpoint_or_object)];
-      })
+      }),
     ) as HTTPFetchers<defs>;
   }
 

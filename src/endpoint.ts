@@ -1,7 +1,7 @@
-import type { DeserializationError, SerializationError } from "./errors";
+import { DeserializationError, SerializationError } from "./errors.ts";
 import {
   type ErrorMessage,
-  type HTTPFetchApi,
+  type HTTPFetch,
   type HTTPMethod,
   type HTTPStatus,
   type Json,
@@ -10,7 +10,7 @@ import {
   type Pretty,
   type Schema,
   type Serializer,
-} from "./types";
+} from "./types.ts";
 import { RoutePattern } from "@remix-run/route-pattern";
 
 export type EndpointDefinition<
@@ -24,16 +24,16 @@ export type EndpointDefinition<
 > = {
   method: http_method;
   pathname: pathname;
-  query?: Serializer.QueryStringV2<query_schema>;
-  data?: Parser.DataV2<data_schema>;
-  error?: Parser.ErrorV2<error_schema>;
+  query?: Serializer.QueryString<query_schema>;
+  data?: Parser.Data<data_schema>;
+  error?: Parser.Error<error_schema>;
 } & (pathname extends Pathname.WithParams
-  ? { params?: Serializer.ParamsV2<pathname, params_schema> }
+  ? { params?: Serializer.Params<pathname, params_schema> }
   : [params_schema] extends [never]
     ? { params?: never }
     : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
   (http_method extends HTTPMethod.WithBody
-    ? { body?: Serializer.BodyV2<body_schema> }
+    ? { body?: Serializer.Body<body_schema> }
     : [body_schema] extends [never]
       ? { body?: never }
       : { body?: ErrorMessage<"this http method does not support body"> });
@@ -50,13 +50,13 @@ export class Endpoint<
   #method: http_method;
   #pattern: RoutePattern<pathname>;
   #serializers: {
-    params: Required<Serializer.ParamsV2<any, params_schema>> | null;
-    query: Required<Serializer.QueryStringV2<query_schema>> | null;
-    body: Required<Serializer.BodyV2<body_schema>> | null;
+    params: Required<Serializer.Params<any, params_schema>> | null;
+    query: Required<Serializer.QueryString<query_schema>> | null;
+    body: Required<Serializer.Body<body_schema>> | null;
   };
   #parsers: {
-    data: Required<Parser.DataV2<data_schema>> | null;
-    error: Required<Parser.ErrorV2<error_schema>> | null;
+    data: Required<Parser.Data<data_schema>> | null;
+    error: Required<Parser.Error<error_schema>> | null;
   };
 
   constructor(
@@ -91,10 +91,10 @@ export class Endpoint<
 
   async generate_url(
     init: Pretty<
-      { origin: string } & HTTPFetchApi.TypedParamsInit<pathname, params_schema> &
-        HTTPFetchApi.TypedQueryInit<query_schema>
+      { origin: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
+        HTTPFetch.TypedQueryInit<query_schema>
     >,
-  ): Promise<URL> {
+  ): Promise<URL | SerializationError> {
     // Step 1: Handle pathname params
     let pathname_params: Record<string, string> = {};
 
@@ -105,9 +105,7 @@ export class Endpoint<
         const result = await schema["~standard"].validate(init.params);
 
         if (result.issues !== undefined) {
-          // Validation failed - for now, throw error since return type is URL
-          // TODO: Consider changing return type to Result<URL> in the future
-          throw new Error(
+          return new SerializationError(
             `Params validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
           );
         }
@@ -147,8 +145,7 @@ export class Endpoint<
       const result = await schema["~standard"].validate(init.query);
 
       if (result.issues !== undefined) {
-        // Validation failed
-        throw new Error(
+        return new SerializationError(
           `Query validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
         );
       }
@@ -198,16 +195,19 @@ export class Endpoint<
     return url;
   }
 
-  async serialize_body(init: Pretty<HTTPFetchApi.TypedBodyInit<body_schema>>): Promise<{
-    body: BodyInit | null;
-    content_type?: string;
-  }> {
+  async serialize_body(init: Pretty<HTTPFetch.TypedBodyInit<body_schema>>): Promise<
+    | {
+        body: BodyInit | null;
+        content_type?: string;
+      }
+    | SerializationError
+  > {
     // If no body serializer, return null
     if (!this.#serializers.body) {
       return { body: null, content_type: undefined };
     }
 
-    if (!("body" in init && init.body == undefined)) {
+    if (!("body" in init) || init.body == undefined) {
       return { body: null, content_type: undefined };
     }
 
@@ -217,7 +217,7 @@ export class Endpoint<
 
     if (result.issues !== undefined) {
       // Validation failed
-      throw new Error(
+      return new SerializationError(
         `Body validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
       );
     }
@@ -241,11 +241,10 @@ export class Endpoint<
   async parse_response(
     response: Response,
   ): Promise<
-    | HTTPFetchApi.ClientErrorResponse<Schema.infer_output<error_schema, string>>
-    | HTTPFetchApi.ServerErrorResponse<Schema.infer_output<error_schema, string>>
-    | HTTPFetchApi.SuccessfulResponse<Schema.infer_output<data_schema, void>>
-    | HTTPFetchApi.RedirectMessage
-    | SerializationError
+    | HTTPFetch.ClientErrorResponse<Schema.infer_output<error_schema, string>>
+    | HTTPFetch.ServerErrorResponse<Schema.infer_output<error_schema, string>>
+    | HTTPFetch.SuccessfulResponse<Schema.infer_output<data_schema, void>>
+    | HTTPFetch.RedirectMessage
     | DeserializationError
   > {
     const raw_response = response;
@@ -263,7 +262,7 @@ export class Endpoint<
         redirect_to,
         headers,
         raw_response,
-      } as HTTPFetchApi.RedirectMessage;
+      } as HTTPFetch.RedirectMessage;
     }
 
     // Handle client and server errors (40x and 50x)
@@ -273,7 +272,7 @@ export class Endpoint<
       if (this.#parsers.error) {
         // Parse error body using error parser
         const parser = this.#parsers.error;
-        let parsed: any;
+        let parsed;
 
         if (typeof parser.deserialization === "function") {
           // Custom deserialization function
@@ -290,7 +289,7 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          throw new Error(
+          return new DeserializationError(
             `Error response validation failed: ${result.issues
               .map((i: any) => i.message)
               .join(", ")}`,
@@ -309,7 +308,7 @@ export class Endpoint<
         error,
         headers,
         raw_response,
-      } as HTTPFetchApi.ClientErrorResponse<any> | HTTPFetchApi.ServerErrorResponse<any>;
+      } as HTTPFetch.ClientErrorResponse<any> | HTTPFetch.ServerErrorResponse<any>;
     }
 
     // Handle successful responses (20x)
@@ -322,14 +321,14 @@ export class Endpoint<
           data: null,
           headers,
           raw_response,
-        } as HTTPFetchApi.SuccessfulResponse<any>;
+        } as HTTPFetch.SuccessfulResponse<any>;
       }
 
       // Other success statuses
       if (this.#parsers.data) {
         // Parse data body using data parser
         const parser = this.#parsers.data;
-        let parsed: any;
+        let parsed;
 
         if (typeof parser.deserialization === "function") {
           // Custom deserialization function
@@ -347,7 +346,7 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          throw new Error(
+          return new DeserializationError(
             `Response validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
           );
         }
@@ -358,7 +357,7 @@ export class Endpoint<
           data: result.value,
           headers,
           raw_response,
-        } as HTTPFetchApi.SuccessfulResponse<any>;
+        } as HTTPFetch.SuccessfulResponse<any>;
       } else {
         // No data parser - return null
         return {
@@ -367,7 +366,7 @@ export class Endpoint<
           data: null as any,
           headers,
           raw_response,
-        } as HTTPFetchApi.SuccessfulResponse<any>;
+        } as HTTPFetch.SuccessfulResponse<any>;
       }
     }
 

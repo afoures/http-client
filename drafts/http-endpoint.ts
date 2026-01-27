@@ -1,6 +1,6 @@
 import z from "zod";
 import type {
-  HTTPFetchApi,
+  HTTPFetch,
   HTTPMethod,
   Parser,
   Pathname,
@@ -15,13 +15,11 @@ export const ZeroWidthSpace = "\u{200B}";
 /** Unrendered character (U+200B) used to mark a string type */
 export type ZeroWidthSpace = typeof ZeroWidthSpace;
 
-export type ErrorMessage<message extends string = string> =
-  `${message}${ZeroWidthSpace}`;
+export type ErrorMessage<message extends string = string> = `${message}${ZeroWidthSpace}`;
 
-type ExtractPathParams<Path extends string> =
-  Path extends `${infer L}/${infer R}`
-    ? ExtractPathParams<L> | ExtractPathParams<R>
-    : Path extends `:${infer Param}`
+type ExtractPathParams<Path extends string> = Path extends `${infer L}/${infer R}`
+  ? ExtractPathParams<L> | ExtractPathParams<R>
+  : Path extends `:${infer Param}`
     ? Param
     : never;
 
@@ -30,22 +28,18 @@ type ParamsObject<pathname extends Pathname.Relative> = Record<
   string | number
 >;
 
-type DefaultParams<pathname extends Pathname.Relative> =
-  pathname extends Pathname.WithParams
-    ? Schema._<ParamsObject<pathname>>
-    : never;
+type DefaultParams<pathname extends Pathname.Relative> = pathname extends Pathname.WithParams
+  ? Schema._<ParamsObject<pathname>>
+  : never;
 
 export type EndpointConfig<
   method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
   params_schema extends Schema._<any, ParamsObject<NoInfer<pathname>>>,
-  query_schema extends Schema._<
-    any,
-    string[][] | Record<string, string> | undefined
-  >,
+  query_schema extends Schema._<any, string[][] | Record<string, string> | undefined>,
   body_schema extends Schema._,
   data_schema extends Schema._,
-  error_schema extends Schema._
+  error_schema extends Schema._,
 > = {
   method: method;
   pathname: pathname;
@@ -55,28 +49,24 @@ export type EndpointConfig<
 } & (pathname extends Pathname.WithParams
   ? { params?: Serializer.Params<params_schema> }
   : [params_schema] extends [never]
-  ? {}
-  : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
+    ? {}
+    : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
   (method extends HTTPMethod.WithBody
     ? { body: Serializer.Body<body_schema> }
     : [body_schema] extends [never]
-    ? {}
-    : { body?: ErrorMessage<"this http method does not support body"> });
+      ? {}
+      : { body?: ErrorMessage<"this http method does not support body"> });
 
 export class HTTPEndpoint<
   method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
-  params_schema extends Schema._<
-    any,
-    ParamsObject<NoInfer<pathname>>
-  > = DefaultParams<NoInfer<pathname>>,
-  query_schema extends Schema._<
-    any,
-    string[][] | Record<string, string> | undefined
-  > = never,
+  params_schema extends Schema._<any, ParamsObject<NoInfer<pathname>>> = DefaultParams<
+    NoInfer<pathname>
+  >,
+  query_schema extends Schema._<any, string[][] | Record<string, string> | undefined> = never,
   body_schema extends Schema._ = never,
   data_schema extends Schema._ = never,
-  error_schema extends Schema._ = never
+  error_schema extends Schema._ = never,
 > {
   #method: method;
   #pathname: pathname;
@@ -99,16 +89,13 @@ export class HTTPEndpoint<
       body_schema,
       data_schema,
       error_schema
-    >
+    >,
   ) {
     this.#method = config.method;
     this.#pathname = config.pathname;
 
     this.#serializers = {
-      params:
-        "params" in config && typeof config.params === "object"
-          ? config.params
-          : null,
+      params: "params" in config && typeof config.params === "object" ? config.params : null,
       query:
         "query" in config && typeof config.query === "object"
           ? { serialization: "urlencoded", ...config.query }
@@ -133,8 +120,7 @@ export class HTTPEndpoint<
   }
 
   #generate_pathname(data: Schema.infer_input<params_schema>) {
-    if (this.#serializers.params === null)
-      return replace_params(this.#pathname, data);
+    if (this.#serializers.params === null) return replace_params(this.#pathname, data);
 
     const params = validate(this.#serializers.params.schema, data);
 
@@ -168,8 +154,8 @@ export class HTTPEndpoint<
       ([query_schema] extends [never]
         ? { query?: never }
         : undefined extends Schema.infer_input<query_schema>
-        ? { query?: Schema.infer_input<query_schema> }
-        : { query: Schema.infer_input<query_schema> })
+          ? { query?: Schema.infer_input<query_schema> }
+          : { query: Schema.infer_input<query_schema> })
   >): URL {
     const url = new URL(origin);
 
@@ -210,10 +196,8 @@ export class HTTPEndpoint<
     return this.#generate_body(data);
   }
 
-  async parse_response(
-    response: Response
-  ): Promise<
-    HTTPFetchApi.TypedResponse<{
+  async parse_response(response: Response): Promise<
+    HTTPFetch.TypedResponse<{
       data: Schema.infer_output<data_schema>;
       error: Schema.infer_output<error_schema>;
     }>
@@ -225,17 +209,13 @@ export class HTTPEndpoint<
 export function endpoint<
   const method extends HTTPMethod.Any,
   const pathname extends Pathname.Relative,
-  params_schema extends Schema._<
-    any,
-    ParamsObject<NoInfer<pathname>>
-  > = DefaultParams<NoInfer<pathname>>,
-  query_schema extends Schema._<
-    any,
-    string[][] | Record<string, string> | undefined
-  > = never,
+  params_schema extends Schema._<any, ParamsObject<NoInfer<pathname>>> = DefaultParams<
+    NoInfer<pathname>
+  >,
+  query_schema extends Schema._<any, string[][] | Record<string, string> | undefined> = never,
   body_schema extends Schema._ = never,
   data_schema extends Schema._ = never,
-  error_schema extends Schema._ = Schema._<any, string>
+  error_schema extends Schema._ = Schema._<any, string>,
 >(
   config: EndpointConfig<
     method,
@@ -245,24 +225,19 @@ export function endpoint<
     body_schema,
     data_schema,
     error_schema
-  >
+  >,
 ) {
   return new HTTPEndpoint(config);
 }
 
-function replace_params(
-  pathname: Pathname.Relative,
-  params: Record<string, number | string> = {}
-) {
+function replace_params(pathname: Pathname.Relative, params: Record<string, number | string> = {}) {
   const result = pathname
     .split("/")
     .map((segment) => {
       if (segment.startsWith(":")) {
         const value = params[segment.slice(1)];
         if (value === undefined || value === "") {
-          throw new Error(
-            `url path param "${segment.slice(1)}" should not be empty`
-          );
+          throw new Error(`url path param "${segment.slice(1)}" should not be empty`);
         }
         return encodeURIComponent(value.toString());
       }
@@ -275,8 +250,7 @@ function replace_params(
 
 function validate<output>(schema: Schema._<any, output>, data: any): output {
   const result = schema["~standard"].validate(data);
-  if (result instanceof Promise)
-    throw new Error("cannot validate asynchronously");
+  if (result instanceof Promise) throw new Error("cannot validate asynchronously");
   // if the `issues` field exists, the validation failed
   if (result.issues) {
     throw new Error(JSON.stringify(result.issues, null, 2));

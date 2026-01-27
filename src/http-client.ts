@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { Endpoint, type AnyEndpoint } from "./endpoint.ts";
 import {
-  type HTTPFetchApi,
+  type HTTPFetch,
   type HTTPMethod,
   type Pathname,
   type Pretty,
   type Schema,
 } from "./types.ts";
-import { AbortedError, TimeoutError } from "./errors.ts";
+import { AbortedError, SerializationError, TimeoutError } from "./errors.ts";
 
 interface EndpointDefinitions {
   [name: string]: AnyEndpoint | EndpointDefinitions;
@@ -71,10 +71,10 @@ function fetch_endpoint_factory<
 }) {
   async function fetch_endpoint(
     request_init: Pretty<
-      HTTPFetchApi.TypedParamsInit<pathname, params_schema> &
-        HTTPFetchApi.TypedQueryInit<query_schema> &
-        HTTPFetchApi.TypedBodyInit<body_schema> &
-        HTTPFetchApi.PartialRequestInit
+      HTTPFetch.TypedParamsInit<pathname, params_schema> &
+        HTTPFetch.TypedQueryInit<query_schema> &
+        HTTPFetch.TypedBodyInit<body_schema> &
+        HTTPFetch.PartialRequestInit
     >,
   ) {
     const headers = new Headers();
@@ -84,15 +84,18 @@ function fetch_endpoint_factory<
       params: "params" in request_init ? request_init.params : undefined,
       query: "query" in request_init ? request_init.query : undefined,
     } as any);
+    if (url instanceof SerializationError) return url;
 
-    const { body, content_type } = await endpoint.serialize_body({
+    const serialized = await endpoint.serialize_body({
       body: "body" in request_init ? request_init.body : undefined,
     } as any);
-    if (content_type) headers.set("Content-Type", content_type);
+    if (serialized instanceof SerializationError) return serialized;
+
+    if (serialized.content_type) headers.set("Content-Type", serialized.content_type);
 
     const response = await custom_fetch(url, {
       method: endpoint.method,
-      body,
+      body: serialized.body,
       headers,
     });
 

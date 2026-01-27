@@ -2,6 +2,7 @@ import * as assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { Endpoint } from "./endpoint.ts";
 import z from "zod";
+import { DeserializationError, SerializationError } from "./errors.ts";
 
 describe("Endpoint.generate_url", () => {
   test("basic pathname without params or query", async () => {
@@ -12,6 +13,7 @@ describe("Endpoint.generate_url", () => {
     const url = await endpoint.generate_url({
       origin: "https://api.example.com",
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.toString(), "https://api.example.com/users");
     assert.equal(url.pathname, "/users");
     assert.equal(url.search, "");
@@ -29,6 +31,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       query: [["ok", "test"]],
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users");
     // Array schema with tuples should serialize to query string
@@ -51,6 +54,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       query: { search: "test", page: 1 },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users");
     assert.equal(url.searchParams.get("search"), "test");
@@ -66,6 +70,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       params: { id: 123 },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users/123");
     assert.equal(url.search, "");
@@ -85,6 +90,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       params: { id: "abc" },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     // Schema should transform the param value
     assert.equal(url.pathname, "/users/ABC");
@@ -106,6 +112,7 @@ describe("Endpoint.generate_url", () => {
       params: { id: "123" },
       query: { include: "posts" },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users/123");
     assert.equal(url.searchParams.get("include"), "posts");
@@ -129,6 +136,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       params: { id: 123 },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users/000123");
     assert.equal(url.search, "");
@@ -152,6 +160,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       params: { id: "abc" },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     // Schema transforms "abc" to "ABC", then custom serialization adds prefix
     assert.equal(url.pathname, "/users/user-ABC");
@@ -180,6 +189,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       query: { tags: ["react", "typescript"], limit: 10 },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users");
     assert.equal(url.searchParams.get("tags"), "react,typescript");
@@ -208,6 +218,7 @@ describe("Endpoint.generate_url", () => {
       origin: "https://api.example.com",
       query: { q: "  Hello World  ", page: 2 },
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/search");
     // Schema transforms: "  Hello World  " -> "hello world", page 2 -> 20
@@ -239,6 +250,7 @@ describe("Endpoint.generate_url", () => {
         ["role", "admin"],
       ],
     });
+    assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/filters");
     assert.equal(url.searchParams.get("status"), "active");
@@ -254,8 +266,9 @@ describe("Endpoint.serialize_body", () => {
     });
     // For GET requests, content should be never/undefined
     const result = await endpoint.serialize_body({
-      content: undefined as never,
+      body: undefined as never,
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, null);
     assert.equal(result.content_type, undefined);
   });
@@ -268,8 +281,9 @@ describe("Endpoint.serialize_body", () => {
       body: undefined as any,
     } as any);
     const result = await endpoint.serialize_body({
-      content: undefined as never,
+      body: undefined as never,
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, null);
     assert.equal(result.content_type, undefined);
   });
@@ -282,7 +296,8 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({ name: z.string() }),
       },
     });
-    const result = await endpoint.serialize_body({ content: { name: "John" } });
+    const result = await endpoint.serialize_body({ body: { name: "John" } });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ name: "John" }));
     assert.equal(result.content_type, "application/json");
   });
@@ -296,8 +311,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: [{ id: 1 }, { id: 2 }],
+      body: [{ id: 1 }, { id: 2 }],
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify([{ id: 1 }, { id: 2 }]));
     assert.equal(result.content_type, "application/json");
   });
@@ -314,9 +330,10 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { name: "john", age: 25 },
+      body: { name: "john", age: 25 },
     });
     // Schema should transform: name -> "JOHN", age -> 50
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ name: "JOHN", age: 50 }));
     assert.equal(result.content_type, "application/json");
   });
@@ -329,7 +346,8 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({ name: z.string() }),
       },
     });
-    const result = await endpoint.serialize_body({ content: { name: "Jane" } });
+    const result = await endpoint.serialize_body({ body: { name: "Jane" } });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ name: "Jane" }));
     assert.equal(result.content_type, "application/json");
   });
@@ -342,7 +360,8 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({ name: z.string() }),
       },
     });
-    const result = await endpoint.serialize_body({ content: { name: "Bob" } });
+    const result = await endpoint.serialize_body({ body: { name: "Bob" } });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ name: "Bob" }));
     assert.equal(result.content_type, "application/json");
   });
@@ -356,8 +375,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { reason: "inactive" },
+      body: { reason: "inactive" },
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ reason: "inactive" }));
     assert.equal(result.content_type, "application/json");
   });
@@ -383,8 +403,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { name: "test.txt", file: "file content" },
+      body: { name: "test.txt", file: "file content" },
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.ok(result.body instanceof FormData);
     assert.equal(result.content_type, "multipart/form-data");
   });
@@ -410,8 +431,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { username: "user123", password: "secret" },
+      body: { username: "user123", password: "secret" },
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.ok(result.body instanceof URLSearchParams);
     assert.equal(result.content_type, "application/x-www-form-urlencoded");
     const params = result.body as URLSearchParams;
@@ -436,8 +458,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { message: "Hello, World!" },
+      body: { message: "Hello, World!" },
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, "Hello, World!");
     assert.equal(result.content_type, "text/plain");
   });
@@ -459,8 +482,9 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { action: "delete" },
+      body: { action: "delete" },
     });
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, null);
     assert.equal(result.content_type, "application/json");
   });
@@ -484,10 +508,11 @@ describe("Endpoint.serialize_body", () => {
       },
     });
     const result = await endpoint.serialize_body({
-      content: { value: "hello", count: 5 },
+      body: { value: "hello", count: 5 },
     });
     // Schema transforms: "hello" -> "HELLO", 5 -> 10
     // Custom serialization formats as "HELLO:10"
+    assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, "HELLO:10");
     assert.equal(result.content_type, "text/plain");
   });
@@ -503,20 +528,12 @@ describe("Endpoint.serialize_body", () => {
         }),
       },
     });
-    await assert.rejects(
-      async () => {
-        await endpoint.serialize_body({
-          content: { name: "ab", age: -1 } as any,
-        });
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation failed") ||
-            error.message.includes("issues")
-        );
-        return true;
-      }
-    );
+
+    const result = await endpoint.serialize_body({
+      body: { name: "ab", age: -1 } as any,
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.ok(result.message.includes("Body validation failed"));
   });
 
   test("POST request with invalid content type - validation error", async () => {
@@ -529,20 +546,11 @@ describe("Endpoint.serialize_body", () => {
         }),
       },
     });
-    await assert.rejects(
-      async () => {
-        await endpoint.serialize_body({
-          content: { name: 123 } as any, // wrong type
-        });
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation failed") ||
-            error.message.includes("issues")
-        );
-        return true;
-      }
-    );
+    const result = await endpoint.serialize_body({
+      body: { name: 123 } as any, // wrong type
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.ok(result.message.includes("Body validation failed"));
   });
 
   test("POST request with missing required fields - validation error", async () => {
@@ -556,21 +564,12 @@ describe("Endpoint.serialize_body", () => {
         }),
       },
     });
-    await assert.rejects(
-      async () => {
-        await endpoint.serialize_body({
-          // @ts-expect-error - missing email
-          content: { name: "John" },
-        });
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation failed") ||
-            error.message.includes("issues")
-        );
-        return true;
-      }
-    );
+    const result = await endpoint.serialize_body({
+      // @ts-expect-error - missing email
+      body: { name: "John" },
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.ok(result.message.includes("Body validation failed"));
   });
 });
 
@@ -587,10 +586,7 @@ describe("Endpoint.parse_response", () => {
       if (value) chunks.push(value);
     }
     const allBytes = new Uint8Array(
-      chunks.reduce(
-        (acc, chunk) => [...acc, ...Array.from(chunk)],
-        [] as number[]
-      )
+      chunks.reduce((acc, chunk) => [...acc, ...Array.from(chunk)], [] as number[]),
     );
     return new TextDecoder().decode(allBytes);
   }
@@ -613,6 +609,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { id: 1, name: "Test" });
@@ -637,6 +634,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 201);
     assert.deepEqual(result.data, { id: 2, name: "Created" });
@@ -656,6 +654,7 @@ describe("Endpoint.parse_response", () => {
       status: 204,
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 204);
     assert.equal(result.data, null);
@@ -670,6 +669,7 @@ describe("Endpoint.parse_response", () => {
       status: 204,
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 204);
     assert.equal(result.data, null);
@@ -685,6 +685,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.equal(result.data, null);
@@ -709,6 +710,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { value: "custom" });
@@ -730,6 +732,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { name: "JOHN", age: 50 });
@@ -747,6 +750,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/new" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 301);
     assert.equal(result.redirect_to, "https://example.com/new");
@@ -762,6 +766,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/target" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 302);
     assert.equal(result.redirect_to, "https://example.com/target");
@@ -777,6 +782,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/permanent" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 308);
     assert.equal(result.redirect_to, "https://example.com/permanent");
@@ -795,14 +801,12 @@ describe("Endpoint.parse_response", () => {
         deserialization: "json",
       },
     });
-    const response = new Response(
-      JSON.stringify({ message: "Invalid input" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    const response = new Response(JSON.stringify({ message: "Invalid input" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.deepEqual(result.error, { message: "Invalid input" });
@@ -822,6 +826,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 404);
     assert.equal(result.error, "Not Found");
@@ -846,6 +851,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 422);
     assert.deepEqual(result.error, {
@@ -863,6 +869,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.equal(result.error, "Error message");
@@ -884,6 +891,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 401);
     assert.deepEqual(result.error, { code: "UNAUTHORIZED" });
@@ -903,14 +911,12 @@ describe("Endpoint.parse_response", () => {
         deserialization: "json",
       },
     });
-    const response = new Response(
-      JSON.stringify({ message: "Internal error", code: "ERR_500" }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    const response = new Response(JSON.stringify({ message: "Internal error", code: "ERR_500" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 500);
     assert.deepEqual(result.error, {
@@ -933,6 +939,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 503);
     assert.equal(result.error, "Service unavailable");
@@ -957,6 +964,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 502);
     assert.deepEqual(result.error, { upstream: "gateway-error" });
@@ -978,19 +986,8 @@ describe("Endpoint.parse_response", () => {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-    await assert.rejects(
-      async () => {
-        await endpoint.parse_response(response);
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation") ||
-            error.message.includes("JSON") ||
-            error.message.includes("Unexpected")
-        );
-        return true;
-      }
-    );
+    const result = await endpoint.parse_response(response);
+    assert.ok(result instanceof DeserializationError);
   });
 
   test("400 Bad Request with no body", async () => {
@@ -1006,6 +1003,7 @@ describe("Endpoint.parse_response", () => {
       status: 400,
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.equal(result.error, "");
@@ -1028,19 +1026,8 @@ describe("Endpoint.parse_response", () => {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-    await assert.rejects(
-      async () => {
-        await endpoint.parse_response(response);
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation") ||
-            error.message.includes("issues") ||
-            error.message.includes("Expected")
-        );
-        return true;
-      }
-    );
+    const result = await endpoint.parse_response(response);
+    assert.ok(result instanceof DeserializationError);
   });
 
   test("400 Bad Request with invalid error format", async () => {
@@ -1055,26 +1042,13 @@ describe("Endpoint.parse_response", () => {
         deserialization: "json",
       },
     });
-    const response = new Response(
-      JSON.stringify({ message: "Error", code: "not-a-number" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-    await assert.rejects(
-      async () => {
-        await endpoint.parse_response(response);
-      },
-      (error: Error) => {
-        assert.ok(
-          error.message.includes("validation") ||
-            error.message.includes("issues") ||
-            error.message.includes("Expected")
-        );
-        return true;
-      }
-    );
+    const response = new Response(JSON.stringify({ message: "Error", code: "not-a-number" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.ok(result instanceof DeserializationError);
+    assert.ok(result.message.includes("validation"));
   });
 
   // 7. Response Metadata
@@ -1095,6 +1069,7 @@ describe("Endpoint.parse_response", () => {
       headers,
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.headers.get("X-Custom-Header"), "test-value");
     assert.equal(result.headers.get("Content-Type"), "application/json");
@@ -1113,6 +1088,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
+    assert.ok(!(result instanceof DeserializationError));
     assert.equal(result.ok, true);
     assert.equal(result.raw_response, response);
   });
