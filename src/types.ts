@@ -73,7 +73,7 @@ export namespace HTTPMethod {
 }
 
 type HeaderValue = string | number | boolean | null | undefined;
-type HeaderReducer = (previous_value: string | undefined) => string | undefined | null;
+type HeaderReducer = (current_value: string | undefined) => string | undefined | null;
 
 export type HeadersInitWithReducer =
   | [string, HeaderValue | HeaderReducer][]
@@ -138,9 +138,9 @@ export namespace HTTPFetch {
       ? { body?: Schema.infer_input<body_schema> }
       : { body: Schema.infer_input<body_schema> };
 
-  export type DefaultRequestInit = Omit<RequestInit, "body" | "method" | "headers"> & {
+  export type DefaultRequestInit = {
     headers?: HeadersInitWithReducer;
-  };
+  } & Omit<RequestInit, "body" | "method" | "headers">;
 
   export type OptionalRequestInit = {
     /**

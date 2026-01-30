@@ -37,8 +37,8 @@ export type EndpointDefinition<
     : [body_schema] extends [never]
       ? { body?: never }
       : { body?: ErrorMessage<"this http method does not support body"> }) &
-  HTTPFetch.DefaultRequestInit &
-  HTTPFetch.OptionalRequestInit;
+  HTTPFetch.OptionalRequestInit &
+  HTTPFetch.DefaultRequestInit;
 
 export class Endpoint<
   http_method extends HTTPMethod.Any,
@@ -60,7 +60,7 @@ export class Endpoint<
     data: Required<Parser.Data<data_schema>> | null;
     error: Required<Parser.Error<error_schema>> | null;
   };
-  #options: Omit<HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit, "signal">;
+  #options: Omit<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit, "signal">;
 
   constructor(
     definition: EndpointDefinition<
@@ -96,7 +96,7 @@ export class Endpoint<
     return this.#method;
   }
 
-  get options(): HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit {
+  get options(): HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit {
     return this.#options;
   }
 

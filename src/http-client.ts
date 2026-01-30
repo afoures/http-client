@@ -71,7 +71,7 @@ function fetch_endpoint_factory<
   >;
   custom_fetch: CustomFetch;
   get_default_options?: () => MaybePromise<
-    HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit
+    HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
   >;
 }) {
   async function fetch_endpoint(
@@ -79,8 +79,8 @@ function fetch_endpoint_factory<
       HTTPFetch.TypedParamsInit<pathname, params_schema> &
         HTTPFetch.TypedQueryInit<query_schema> &
         HTTPFetch.TypedBodyInit<body_schema> &
-        HTTPFetch.DefaultRequestInit &
-        HTTPFetch.OptionalRequestInit
+        HTTPFetch.OptionalRequestInit &
+        HTTPFetch.DefaultRequestInit
     >,
   ) {
     const { args, options } = extract_args(input);
@@ -112,8 +112,8 @@ function fetch_endpoint_factory<
         // attempts++;
 
         const signals: Array<AbortSignal> = [];
-        if (options.timeout) signals.push(AbortSignal.timeout(options.timeout));
         if (options.signal) signals.push(options.signal);
+        if (options.timeout) signals.push(AbortSignal.timeout(options.timeout));
 
         const response = await custom_fetch(url, {
           ...remove_custom_options(merged_options),
@@ -146,7 +146,7 @@ export type HttpClientOptions<endpoints extends EndpointDefinitions> = {
   origin: string;
   endpoints: endpoints;
   options?: () => MaybePromise<
-    Omit<HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit, "signal">
+    Omit<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit, "signal">
   >;
   fetch?: CustomFetch;
 };
@@ -181,37 +181,39 @@ export function http_client<const endpoints extends EndpointDefinitions>({
   return map(all_endpoints);
 }
 
-// const get_user = new Endpoint({
-//   method: "GET",
-//   pathname: "/users/:id",
-//   data: {
-//     schema: z.object({
-//       id: z.string(),
-//     }),
-//   },
-// });
+import { z } from "zod";
 
-// const call2 = fetch_endpoint_factory({
-//   endpoint: get_user,
-//   origin: "https://ok.com",
-//   custom_fetch: fetch,
-// });
+const get_user = new Endpoint({
+  method: "GET",
+  pathname: "/users/:id",
+  data: {
+    schema: z.object({
+      id: z.string(),
+    }),
+  },
+});
 
-// const result2 = await call2({
-//   params: {
-//     id: "1",
-//   },
-// });
+const call2 = fetch_endpoint_factory({
+  endpoint: get_user,
+  origin: "https://ok.com",
+  custom_fetch: fetch,
+});
 
-// const client = http_client({
-//   origin: "https://ok.com",
-//   endpoints: {
-//     get_user,
-//   },
-// });
+const result2 = await call2({
+  params: {
+    id: "1",
+  },
+});
 
-// const result3 = await client.get_user({
-//   params: {
-//     id: "1",
-//   },
-// });
+const client = http_client({
+  origin: "https://ok.com",
+  endpoints: {
+    get_user,
+  },
+});
+
+const result3 = await client.get_user({
+  params: {
+    id: "1",
+  },
+});

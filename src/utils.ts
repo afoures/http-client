@@ -46,13 +46,13 @@ export function extract_args<
     HTTPFetch.TypedParamsInit<pathname, params_schema> &
       HTTPFetch.TypedQueryInit<query_schema> &
       HTTPFetch.TypedBodyInit<body_schema> &
-      HTTPFetch.DefaultRequestInit &
-      HTTPFetch.OptionalRequestInit
+      HTTPFetch.OptionalRequestInit &
+      HTTPFetch.DefaultRequestInit
   >,
 ) {
   const { params, query, body, ...rest } = input as any;
   return {
-    options: rest as HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit,
+    options: rest as HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
     args: {
       params,
       query,
@@ -62,14 +62,14 @@ export function extract_args<
 }
 
 export function remove_custom_options(
-  options: HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit,
+  options: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
 ) {
   const { timeout: _timeout, headers: _headers, signal: _signal, ...rest } = options;
   return rest;
 }
 
 export function merge_options(
-  ...sources: Array<HTTPFetch.DefaultRequestInit & HTTPFetch.OptionalRequestInit>
+  ...sources: Array<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>
 ) {
   const headers = merge_headers(...sources.map((source) => source.headers));
   return {
