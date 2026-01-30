@@ -3,6 +3,8 @@ import { type Params as RoutePatternParams } from "@remix-run/route-pattern";
 
 export type Pretty<T> = { [K in keyof T]: T[K] } & {};
 
+export type MaybePromise<T> = T | Promise<T>;
+
 const ZeroWidthSpace = "\u{200B}";
 
 /** Unrendered character (U+200B) used to mark a string type */
@@ -70,6 +72,14 @@ export namespace HTTPMethod {
   export type Any = HTTPMethod.WithoutBody | HTTPMethod.WithBody;
 }
 
+type HeaderValue = string | number | boolean | null | undefined;
+type HeaderReducer = (previous_value: string | undefined) => string | undefined | null;
+
+export type HeadersInitWithReducer =
+  | [string, HeaderValue | HeaderReducer][]
+  | Record<string, HeaderValue | HeaderReducer>
+  | Headers;
+
 export namespace HTTPFetch {
   type SharedResponseContent = {
     headers: Headers;
@@ -128,8 +138,15 @@ export namespace HTTPFetch {
       ? { body?: Schema.infer_input<body_schema> }
       : { body: Schema.infer_input<body_schema> };
 
-  export type PartialRequestInit = Omit<RequestInit, "body" | "method" | "headers"> & {
-    headers?: (default_headers: Headers) => Headers;
+  export type DefaultRequestInit = Omit<RequestInit, "body" | "method" | "headers"> & {
+    headers?: HeadersInitWithReducer;
+  };
+
+  export type OptionalRequestInit = {
+    /**
+     * timeout in milliseconds
+     */
+    timeout?: number;
   };
 }
 
