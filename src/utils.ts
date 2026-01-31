@@ -10,7 +10,7 @@ function get_entries(source: HeadersInitWithReducer) {
   return Object.entries(source);
 }
 
-function merge_headers(...sources: Array<HeadersInitWithReducer | undefined>) {
+export function merge_headers(...sources: Array<HeadersInitWithReducer | undefined>) {
   const headers = new Headers();
 
   for (const source of sources) {

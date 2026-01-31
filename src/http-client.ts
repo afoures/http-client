@@ -43,7 +43,7 @@ type map_to_fetch_endpoint_functions<endpoints extends EndpointDefinitions> = Pr
       : never;
 }>;
 
-function fetch_endpoint_factory<
+export function fetch_endpoint_factory<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
   params_schema extends Schema._,
@@ -141,14 +141,15 @@ function fetch_endpoint_factory<
       try {
         attempt++;
         response = await custom_fetch(request);
+        error = undefined; // clear any previous error on success
       } catch (local_error) {
         if (local_error instanceof Error && local_error.name === "TimeoutError") {
           error = new TimeoutError(local_error.message);
-        }
-        if (local_error instanceof Error && local_error.name === "AbortError") {
+        } else if (local_error instanceof Error && local_error.name === "AbortError") {
           error = new AbortedError(local_error.message);
+        } else {
+          error = new NetworkError("Network error", { cause: local_error });
         }
-        error = new NetworkError("Network error", { cause: local_error });
       }
 
       try {
