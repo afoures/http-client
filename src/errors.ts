@@ -7,3 +7,7 @@ export class AbortedError extends HttpClientError {}
 export class SerializationError extends HttpClientError {}
 
 export class DeserializationError extends HttpClientError {}
+
+export class NetworkError extends HttpClientError {}
+
+export class UnexpectedError extends Error {}

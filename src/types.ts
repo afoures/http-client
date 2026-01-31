@@ -1,5 +1,6 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 import { type Params as RoutePatternParams } from "@remix-run/route-pattern";
+import type { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors";
 
 export type Pretty<T> = { [K in keyof T]: T[K] } & {};
 
@@ -80,6 +81,40 @@ export type HeadersInitWithReducer =
   | Record<string, HeaderValue | HeaderReducer>
   | Headers;
 
+export namespace RetryPolicy {
+  export type Condition = (context: {
+    request: Request;
+    response: Response | undefined;
+    error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+  }) => MaybePromise<boolean>;
+
+  export type Attempts = number | ((context: { request: Request }) => MaybePromise<number>);
+
+  export type Delay =
+    | number
+    | ((context: {
+        response: Response | undefined;
+        error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+        request: Request;
+        attempt: number;
+      }) => MaybePromise<number>);
+
+  export type Configuration = {
+    /**
+     * the number of attempts to make before giving up
+     */
+    attempts?: Attempts;
+    /**
+     * the delay before retrying
+     */
+    delay?: Delay;
+    /**
+     * function to determine if a retry attempt should be made
+     */
+    when?: Condition;
+  };
+}
+
 export namespace HTTPFetch {
   type SharedResponseContent = {
     headers: Headers;
@@ -147,6 +182,10 @@ export namespace HTTPFetch {
      * timeout in milliseconds
      */
     timeout?: number;
+    /**
+     * retry policy
+     */
+    retry?: RetryPolicy.Configuration;
   };
 }
 

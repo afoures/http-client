@@ -60,7 +60,7 @@ export class Endpoint<
     data: Required<Parser.Data<data_schema>> | null;
     error: Required<Parser.Error<error_schema>> | null;
   };
-  #options: Omit<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit, "signal">;
+  #options: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit;
 
   constructor(
     definition: EndpointDefinition<
@@ -73,7 +73,7 @@ export class Endpoint<
       error_schema
     >,
   ) {
-    const { method, pathname, params, query, body, data, error, ...rest } = definition;
+    const { method, pathname, params, query, body, data, error, ...options } = definition;
     this.#method = method;
     this.#pattern = new RoutePattern(pathname, {
       ignoreCase: false,
@@ -87,9 +87,7 @@ export class Endpoint<
       data: as_parser(data, "json"),
       error: as_parser(error, "text"),
     };
-    this.#options = {
-      ...rest,
-    };
+    this.#options = options;
   }
 
   get method() {

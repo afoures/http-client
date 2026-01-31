@@ -64,16 +64,42 @@ export function extract_args<
 export function remove_custom_options(
   options: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
 ) {
-  const { timeout: _timeout, headers: _headers, signal: _signal, ...rest } = options;
+  const { timeout: _timeout, headers: _headers, signal: _signal, retry: _retry, ...rest } = options;
   return rest;
 }
 
 export function merge_options(
   ...sources: Array<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>
 ) {
-  const headers = merge_headers(...sources.map((source) => source.headers));
   return {
-    ...sources.reduce((acc, source) => ({ ...acc, ...source }), {}),
-    headers,
+    ...sources.reduce((acc, source) => {
+      return {
+        ...acc,
+        ...source,
+        signal: acc.signal
+          ? source.signal
+            ? AbortSignal.any([acc.signal, source.signal])
+            : acc.signal
+          : source.signal,
+        retry: { ...acc.retry, ...source.retry },
+      };
+    }, {}),
+    headers: merge_headers(...sources.map((source) => source.headers)),
   };
+}
+
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    signal?.addEventListener("abort", on_abort, { once: true });
+
+    const token = setTimeout(() => {
+      signal?.removeEventListener("abort", on_abort);
+      resolve();
+    }, ms);
+
+    function on_abort() {
+      clearTimeout(token);
+      reject(signal!.reason);
+    }
+  });
 }

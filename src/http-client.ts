@@ -5,19 +5,17 @@ import {
   type MaybePromise,
   type Pathname,
   type Pretty,
+  type RetryPolicy,
   type Schema,
 } from "./types.ts";
-import { AbortedError, SerializationError, TimeoutError } from "./errors.ts";
-import { extract_args, merge_options, remove_custom_options } from "./utils.ts";
+import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
+import { extract_args, merge_options, remove_custom_options, sleep } from "./utils.ts";
 
 interface EndpointDefinitions {
   [name: string]: AnyEndpoint | EndpointDefinitions;
 }
 
-type CustomFetch = (
-  url: URL,
-  init: Omit<RequestInit, "headers"> & { headers: Headers },
-) => Promise<Response>;
+type CustomFetch = (request: Request) => Promise<Response>;
 
 type map_to_fetch_endpoint_functions<endpoints extends EndpointDefinitions> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
@@ -91,52 +89,101 @@ function fetch_endpoint_factory<
       options,
     );
 
-    const url = await endpoint.generate_url({
-      origin,
-      params: args.params,
-      query: args.query,
-    } as any);
-    if (url instanceof SerializationError) return url;
+    const url = await endpoint
+      .generate_url({
+        origin,
+        params: args.params,
+        query: args.query,
+      } as any)
+      .catch((error) => new UnexpectedError("Failed to generate URL", { cause: error }));
+    if (url instanceof Error) return url;
 
-    const serialized = await endpoint.serialize_body({
-      body: args.body,
-    } as any);
-    if (serialized instanceof SerializationError) return serialized;
+    const serialized = await endpoint
+      .serialize_body({
+        body: args.body,
+      } as any)
+      .catch((error) => new UnexpectedError("Failed to serialize body", { cause: error }));
+    if (serialized instanceof Error) return serialized;
 
     headers.delete("Content-Type");
     if (serialized.content_type) headers.set("Content-Type", serialized.content_type);
 
-    // let attempts = 0;
+    const retry_policy: Required<RetryPolicy.Configuration> = {
+      when: options.retry?.when ?? ((ctx) => !ctx.response || ctx.response.ok === false),
+      attempts: options.retry?.attempts ?? 0,
+      delay: options.retry?.delay ?? 0,
+    };
+
+    let attempt = 0;
+    let request: Request;
+    let response: Response | undefined;
+    let error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+
     do {
+      const signals: Array<AbortSignal> = [];
+      if (options.signal) signals.push(options.signal);
+      if (options.timeout) signals.push(AbortSignal.timeout(options.timeout));
+      const abort_signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+
       try {
-        // attempts++;
-
-        const signals: Array<AbortSignal> = [];
-        if (options.signal) signals.push(options.signal);
-        if (options.timeout) signals.push(AbortSignal.timeout(options.timeout));
-
-        const response = await custom_fetch(url, {
+        request = new Request(url, {
           ...remove_custom_options(merged_options),
           method: endpoint.method,
           body: serialized.body,
           headers,
-          signal: signals.length > 0 ? AbortSignal.any(signals) : undefined,
+          signal: abort_signal,
         });
+      } catch (local_error) {
+        error = new UnexpectedError("Failed to create request", { cause: local_error });
+        break; // no retry
+      }
 
-        const result = await endpoint.parse_response(response);
+      try {
+        attempt++;
+        response = await custom_fetch(request);
+      } catch (local_error) {
+        if (local_error instanceof Error && local_error.name === "TimeoutError") {
+          error = new TimeoutError(local_error.message);
+        }
+        if (local_error instanceof Error && local_error.name === "AbortError") {
+          error = new AbortedError(local_error.message);
+        }
+        error = new NetworkError("Network error", { cause: local_error });
+      }
 
-        return result;
-      } catch (error) {
-        if (error instanceof Error && error.name === "TimeoutError") {
-          return new TimeoutError(error.message);
+      try {
+        const should_retry = await retry_policy.when({ request, response, error });
+        if (!should_retry) break;
+
+        const max_attempts =
+          typeof retry_policy.attempts === "function"
+            ? await retry_policy.attempts({ request })
+            : retry_policy.attempts;
+        if (attempt >= max_attempts) break;
+
+        const delay =
+          typeof retry_policy.delay === "function"
+            ? await retry_policy.delay({ request, response, error, attempt })
+            : retry_policy.delay;
+        if (delay > 0) {
+          await sleep(delay, abort_signal);
         }
-        if (error instanceof Error && error.name === "AbortError") {
-          return new AbortedError(error.message);
-        }
-        throw error;
+      } catch (local_error) {
+        error = new UnexpectedError("Failed to check retry policy", { cause: local_error });
+        break; // no retry
       }
       // oxlint-disable-next-line no-constant-condition
     } while (true);
+
+    if (error) return error;
+    if (!response) {
+      return new UnexpectedError("", { cause: "No response received" });
+    }
+    const result = await endpoint
+      .parse_response(response)
+      .catch((error) => new UnexpectedError("Failed to parse response", { cause: error }));
+
+    return result;
   }
 
   return fetch_endpoint;
@@ -145,9 +192,7 @@ function fetch_endpoint_factory<
 export type HttpClientOptions<endpoints extends EndpointDefinitions> = {
   origin: string;
   endpoints: endpoints;
-  options?: () => MaybePromise<
-    Omit<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit, "signal">
-  >;
+  options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
   fetch?: CustomFetch;
 };
 
