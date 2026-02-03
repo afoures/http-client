@@ -17,6 +17,11 @@ interface EndpointDefinitions {
 
 type CustomFetch = (request: Request) => Promise<Response>;
 
+type Hooks = {
+  on_request?: (request: Request) => void;
+  on_response?: (response: Response) => void;
+};
+
 type map_to_fetch_endpoint_functions<endpoints extends EndpointDefinitions> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
@@ -56,6 +61,7 @@ export function fetch_endpoint_factory<
   endpoint,
   custom_fetch,
   get_default_options = () => ({}),
+  hooks = {},
 }: {
   origin: string;
   endpoint: Endpoint<
@@ -71,6 +77,7 @@ export function fetch_endpoint_factory<
   get_default_options?: () => MaybePromise<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
   >;
+  hooks?: Hooks;
 }) {
   async function fetch_endpoint(
     input: Pretty<
@@ -109,7 +116,7 @@ export function fetch_endpoint_factory<
     if (serialized.content_type) headers.set("Content-Type", serialized.content_type);
 
     const retry_policy: Required<RetryPolicy.Configuration> = {
-      when: options.retry?.when ?? ((ctx) => !ctx.response || ctx.response.ok === false),
+      when: options.retry?.when ?? ((ctx) => ctx.response?.ok === false),
       attempts: options.retry?.attempts ?? 0,
       delay: options.retry?.delay ?? 0,
     };
@@ -140,6 +147,7 @@ export function fetch_endpoint_factory<
 
       try {
         attempt++;
+        hooks.on_request?.(request);
         response = await custom_fetch(request);
         error = undefined; // clear any previous error on success
       } catch (local_error) {
@@ -180,9 +188,13 @@ export function fetch_endpoint_factory<
     if (!response) {
       return new UnexpectedError("", { cause: "No response received" });
     }
-    const result = await endpoint
-      .parse_response(response)
-      .catch((error) => new UnexpectedError("Failed to parse response", { cause: error }));
+    hooks.on_response?.(response);
+    const result = await endpoint.parse_response(response).catch((error) => {
+      if (error instanceof Error && error.name === "AbortError") {
+        return new AbortedError(error.message);
+      }
+      return new UnexpectedError("Failed to parse response", { cause: error });
+    });
 
     return result;
   }
@@ -226,40 +238,3 @@ export function http_client<const endpoints extends EndpointDefinitions>({
 
   return map(all_endpoints);
 }
-
-import { z } from "zod";
-
-const get_user = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  data: {
-    schema: z.object({
-      id: z.string(),
-    }),
-  },
-});
-
-const call2 = fetch_endpoint_factory({
-  endpoint: get_user,
-  origin: "https://ok.com",
-  custom_fetch: fetch,
-});
-
-const result2 = await call2({
-  params: {
-    id: "1",
-  },
-});
-
-const client = http_client({
-  origin: "https://ok.com",
-  endpoints: {
-    get_user,
-  },
-});
-
-const result3 = await client.get_user({
-  params: {
-    id: "1",
-  },
-});

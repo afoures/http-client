@@ -387,8 +387,8 @@ export class Endpoint<
 export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any>;
 
 async function parse_as_json(response: Response): Promise<Json.Value | null> {
+  const text = await response.text();
   try {
-    const text = await response.text();
     if (text) return JSON.parse(text);
     return null;
   } catch (e) {

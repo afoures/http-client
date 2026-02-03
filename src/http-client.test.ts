@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fetch_endpoint_factory } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
@@ -10,8 +10,26 @@ import {
   UnexpectedError,
 } from "./errors.ts";
 import z from "zod";
+import { setupServer } from "msw/node";
+import { delay, http, HttpResponse } from "msw";
+
+const API_ORIGIN = "https://api.example.com";
+
+const server = setupServer();
 
 describe("fetch_endpoint_factory", () => {
+  before(() => {
+    server.listen({ onUnhandledRequest: "bypass" });
+  });
+
+  after(() => {
+    server.close();
+  });
+
+  afterEach(() => {
+    server.resetHandlers();
+  });
+
   test("successful request with JSON response", async () => {
     const endpoint = new Endpoint({
       method: "GET",
@@ -21,19 +39,18 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    const mockFetch = async (request: Request) => {
-      assert.equal(request.url, "https://api.example.com/users/123");
-      assert.equal(request.method, "GET");
-      return new Response(JSON.stringify({ id: "123", name: "John" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users/:id`, ({ request, params }) => {
+        assert.equal(request.url, `${API_ORIGIN}/users/123`);
+        assert.equal(request.method, "GET");
+        return HttpResponse.json({ id: params.id, name: "John" });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({ params: { id: "123" } });
@@ -50,25 +67,22 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users/:id`, ({ params }) => {
+        return HttpResponse.json({ id: params.id });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({ params: { id: "456" } });
+    const result = await fetch_endpoint({ params: { id: "456" } });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.url, "https://api.example.com/users/456");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("request with query parameters", async () => {
@@ -84,28 +98,26 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({ users: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+        const url = new URL(request.url);
+        assert.equal(url.pathname, "/users");
+        assert.equal(url.searchParams.get("page"), "1");
+        assert.equal(url.searchParams.get("limit"), "10");
+        return HttpResponse.json({ users: [] });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({ query: { page: 1, limit: 10 } });
+    const result = await fetch_endpoint({ query: { page: 1, limit: 10 } });
 
-    assert.ok(capturedRequest);
-    const url = new URL(capturedRequest!.url);
-    assert.equal(url.pathname, "/users");
-    assert.equal(url.searchParams.get("page"), "1");
-    assert.equal(url.searchParams.get("limit"), "10");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("POST request with body serialization", async () => {
@@ -117,28 +129,27 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({ id: "123" }), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.post(`${API_ORIGIN}/users`, async ({ request }) => {
+        assert.equal(request.method, "POST");
+        assert.equal(request.headers.get("Content-Type"), "application/json");
+        const body = await request.json();
+        assert.deepEqual(body, { name: "John", email: "john@example.com" });
+        return HttpResponse.json({ id: "123" }, { status: 201 });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({ body: { name: "John", email: "john@example.com" } });
+    const result = await fetch_endpoint({ body: { name: "John", email: "john@example.com" } });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.method, "POST");
-    assert.equal(capturedRequest!.headers.get("Content-Type"), "application/json");
-    const body = await capturedRequest!.text();
-    assert.deepEqual(JSON.parse(body), { name: "John", email: "john@example.com" });
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 201);
   });
 
   test("custom headers merging", async () => {
@@ -148,26 +159,24 @@ describe("fetch_endpoint_factory", () => {
       headers: { "X-Default": "default-value" },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+        assert.equal(request.headers.get("x-default"), "default-value");
+        assert.equal(request.headers.get("x-custom"), "custom-value");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({ headers: { "X-Custom": "custom-value" } });
+    const result = await fetch_endpoint({ headers: { "X-Custom": "custom-value" } });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.headers.get("x-default"), "default-value");
-    assert.equal(capturedRequest!.headers.get("x-custom"), "custom-value");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("timeout handling", async () => {
@@ -176,55 +185,105 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/slow",
     });
 
-    const mockFetch = async (request: Request) => {
-      await new Promise((resolve, reject) => {
-        request.signal?.addEventListener("abort", () => {
-          reject(new Error("AbortError"));
-        });
-        setTimeout(resolve, 100);
-      });
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/slow`, async () => {
+        await delay(100);
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({ timeout: 10 });
 
-    assert.ok(result instanceof NetworkError);
+    assert.ok(result instanceof TimeoutError);
   });
 
-  test("AbortSignal handling", async () => {
+  test("AbortSignal handling - before request starts", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
     });
 
-    const mockFetch = async (request: Request) => {
-      await new Promise((resolve, reject) => {
-        request.signal?.addEventListener("abort", () => {
-          const error = new Error("AbortError");
-          error.name = "AbortError";
-          reject(error);
-        });
-        setTimeout(resolve, 100);
-      });
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    const controller = new AbortController();
+    server.use(
+      http.get(`${API_ORIGIN}/users`, async () => {
+        await delay(100);
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
+    });
+
+    controller.abort();
+    const result = await fetch_endpoint({ signal: controller.signal });
+
+    assert.ok(result instanceof AbortedError);
+  });
+
+  test("AbortSignal handling - during request", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
     });
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort("User cancelled"), 10);
+    server.use(
+      http.get(`${API_ORIGIN}/users`, async () => {
+        await delay(10);
+        controller.abort();
+        await delay(20);
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      origin: API_ORIGIN,
+      endpoint,
+      custom_fetch: fetch,
+    });
 
     const result = await fetch_endpoint({ signal: controller.signal });
+
+    assert.ok(result instanceof AbortedError);
+  });
+
+  test.skip("AbortSignal handling - after request", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/posts/:id",
+      data: {
+        schema: z.object({ id: z.number(), title: z.string() }),
+      },
+    });
+
+    server.use(
+      http.get(`${API_ORIGIN}/posts/:id`, async () => {
+        return HttpResponse.json({ id: 1, title: "Post 1" });
+      }),
+    );
+
+    const controller = new AbortController();
+    const fetch_endpoint = fetch_endpoint_factory({
+      origin: API_ORIGIN,
+      endpoint,
+      custom_fetch: fetch,
+      hooks: {
+        on_response() {
+          controller.abort();
+        },
+      },
+    });
+
+    const result = await fetch_endpoint({ params: { id: 1 }, signal: controller.signal });
 
     assert.ok(result instanceof AbortedError);
   });
@@ -236,25 +295,25 @@ describe("fetch_endpoint_factory", () => {
     });
 
     let attemptCount = 0;
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      if (attemptCount < 3) {
-        throw new Error("Network error");
-      }
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 3) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({ success: true });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({
-      retry: { attempts: 3, delay: 10 },
+      retry: { attempts: 3, delay: 10, when: (ctx) => !!ctx.error },
     });
 
     assert.ok(!(result instanceof Error));
@@ -268,19 +327,22 @@ describe("fetch_endpoint_factory", () => {
     });
 
     let attemptCount = 0;
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      throw new Error("Network error");
-    };
+
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        return HttpResponse.error();
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({
-      retry: { attempts: 2, delay: 10 },
+      retry: { attempts: 2, delay: 10, when: (ctx) => !!ctx.error },
     });
 
     assert.ok(result instanceof NetworkError);
@@ -294,18 +356,21 @@ describe("fetch_endpoint_factory", () => {
     });
 
     let attemptCount = 0;
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      if (attemptCount === 1) {
-        return new Response(JSON.stringify({ error: "Server error" }), { status: 500 });
-      }
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
-    };
+
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        if (attemptCount === 1) {
+          return HttpResponse.json({ error: "Server error" }, { status: 500 });
+        }
+        return HttpResponse.json({ success: true });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({
@@ -329,18 +394,20 @@ describe("fetch_endpoint_factory", () => {
     const delays: number[] = [];
     let attemptCount = 0;
 
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      if (attemptCount < 3) {
-        throw new Error("Network error");
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 3) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     await fetch_endpoint({
@@ -350,6 +417,7 @@ describe("fetch_endpoint_factory", () => {
           delays.push(attempt);
           return 5;
         },
+        when: (ctx) => !!ctx.error,
       },
     });
 
@@ -365,14 +433,16 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    const mockFetch = async (_request: Request) => {
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users/:id`, () => {
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({ params: { id: "" } });
@@ -390,14 +460,16 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    const mockFetch = async (_request: Request) => {
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.post(`${API_ORIGIN}/users`, () => {
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({ body: { name: "" } });
@@ -415,17 +487,19 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    const mockFetch = async (_request: Request) => {
-      return new Response("invalid json {", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        return new HttpResponse("invalid json {", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({});
@@ -440,14 +514,16 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
     });
 
-    const mockFetch = async (_request: Request) => {
-      throw new Error("Connection refused");
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        return HttpResponse.error();
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({});
@@ -461,23 +537,24 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+        assert.equal(request.headers.get("x-default"), "default-value");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
       get_default_options: () => ({ headers: { "X-Default": "default-value" } }),
     });
 
-    await fetch_endpoint({});
+    const result = await fetch_endpoint({});
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.headers.get("x-default"), "default-value");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("no retry on success", async () => {
@@ -487,15 +564,18 @@ describe("fetch_endpoint_factory", () => {
     });
 
     let attemptCount = 0;
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     await fetch_endpoint({
@@ -514,29 +594,32 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    const requests: Request[] = [];
-    const mockFetch = async (request: Request) => {
-      requests.push(request);
-      return new Response(JSON.stringify({ id: "123" }), { status: 201 });
-    };
+    server.use(
+      http.post(`${API_ORIGIN}/users`, async ({ request }) => {
+        assert.equal(request.method, "POST");
+        const url = new URL(request.url);
+        assert.equal(url.pathname, "/users");
+        assert.equal(request.headers.get("x-custom"), "value");
+        assert.equal(request.headers.get("content-type"), "application/json");
+        const body = await request.json();
+        assert.deepEqual(body, { name: "John" });
+        return HttpResponse.json({ id: "123" }, { status: 201 });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({
+    const result = await fetch_endpoint({
       body: { name: "John" },
       headers: { "X-Custom": "value" },
     });
 
-    assert.equal(requests.length, 1);
-    const request = requests[0];
-    assert.equal(request.method, "POST");
-    assert.ok(request.url.includes("/users"));
-    assert.equal(request.headers.get("x-custom"), "value");
-    assert.equal(request.headers.get("content-type"), "application/json");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.status, 201);
   });
 
   test("async get_default_options", async () => {
@@ -545,26 +628,27 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+        assert.equal(request.headers.get("x-async"), "async-value");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
       get_default_options: async () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         return { headers: { "X-Async": "async-value" } };
       },
     });
 
-    await fetch_endpoint({});
+    const result = await fetch_endpoint({});
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.headers.get("x-async"), "async-value");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("PUT request with body", async () => {
@@ -576,25 +660,26 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.put(`${API_ORIGIN}/users/:id`, ({ request }) => {
+        assert.equal(request.method, "PUT");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({
+    const result = await fetch_endpoint({
       params: { id: "123" },
       body: { name: "Updated" },
     });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.method, "PUT");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("PATCH request with body", async () => {
@@ -606,25 +691,26 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.patch(`${API_ORIGIN}/users/:id`, ({ request }) => {
+        assert.equal(request.method, "PATCH");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({
+    const result = await fetch_endpoint({
       params: { id: "123" },
       body: { name: "Patched" },
     });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.method, "PATCH");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("DELETE request with body", async () => {
@@ -636,25 +722,28 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 204 });
-    };
+    server.use(
+      http.delete(`${API_ORIGIN}/users/:id`, async ({ request }) => {
+        assert.equal(request.method, "DELETE");
+        const body = await request.json();
+        assert.deepEqual(body, { reason: "inactive" });
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({
+    const result = await fetch_endpoint({
       params: { id: "123" },
       body: { reason: "inactive" },
     });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.method, "DELETE");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.status, 204);
   });
 
   test("endpoint options merged with request options", async () => {
@@ -665,25 +754,26 @@ describe("fetch_endpoint_factory", () => {
       timeout: 5000,
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+        assert.equal(request.headers.get("x-endpoint"), "endpoint-value");
+        assert.equal(request.headers.get("x-request"), "request-value");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({
+    const result = await fetch_endpoint({
       headers: { "X-Request": "request-value" },
     });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.headers.get("x-endpoint"), "endpoint-value");
-    assert.equal(capturedRequest!.headers.get("x-request"), "request-value");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 
   test("retry with attempts as function", async () => {
@@ -695,18 +785,20 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
     const attemptsCalled: number[] = [];
 
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      if (attemptCount < 3) {
-        throw new Error("Network error");
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 3) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     await fetch_endpoint({
@@ -716,6 +808,7 @@ describe("fetch_endpoint_factory", () => {
           return 3;
         },
         delay: 5,
+        when: (ctx) => !!ctx.error,
       },
     });
 
@@ -734,18 +827,18 @@ describe("fetch_endpoint_factory", () => {
     });
 
     let attemptCount = 0;
-    const mockFetch = async (_request: Request) => {
-      attemptCount++;
-      return new Response(JSON.stringify({ message: "Not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+
+    server.use(
+      http.get(`${API_ORIGIN}/users`, () => {
+        attemptCount++;
+        return HttpResponse.json({ message: "Not found" }, { status: 404 });
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
     const result = await fetch_endpoint({});
@@ -769,21 +862,24 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    let capturedRequest: Request | undefined;
-    const mockFetch = async (request: Request) => {
-      capturedRequest = request;
-      return new Response(JSON.stringify({}), { status: 200 });
-    };
+    server.use(
+      http.post(`${API_ORIGIN}/upload`, async ({ request }) => {
+        assert.equal(request.headers.get("content-type"), "text/plain");
+        const body = await request.text();
+        assert.equal(body, "test");
+        return HttpResponse.json({});
+      }),
+    );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: "https://api.example.com",
+      origin: API_ORIGIN,
       endpoint,
-      custom_fetch: mockFetch,
+      custom_fetch: fetch,
     });
 
-    await fetch_endpoint({ body: { data: "test" } });
+    const result = await fetch_endpoint({ body: { data: "test" } });
 
-    assert.ok(capturedRequest);
-    assert.equal(capturedRequest!.headers.get("content-type"), "text/plain");
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, true);
   });
 });

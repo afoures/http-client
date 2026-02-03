@@ -1,31 +1,72 @@
-function mergeHeaders(...sources) {
-  const result = new Headers();
-
-  for (const source of sources) {
-    // We convert the source to a Headers object to make it iterable
-    const tempHeaders = new Headers(source);
-
-    tempHeaders.forEach((value, name) => {
-      result.append(name, value);
+async function test({
+  abort,
+  should_clone,
+}: {
+  abort:
+    | "before-starting-fetch"
+    | "right-after-fetching"
+    | "after-cloning-response"
+    | "before-read-body";
+  should_clone: boolean;
+}) {
+  console.log(
+    `testing aborting on "${abort}" ${should_clone ? "with" : "without"} cloning the response...`,
+  );
+  const controller = new AbortController();
+  if (abort === "before-starting-fetch") {
+    controller.abort();
+  }
+  let cloned_response: Response | undefined;
+  const response = await fetch("https://jsonplaceholder.typicode.com/posts/1", {
+    signal: controller.signal,
+  });
+  console.log("fetched", {
+    is_body_used: { initial: response.bodyUsed, clone: cloned_response?.bodyUsed },
+  });
+  if (abort === "right-after-fetching") {
+    controller.abort();
+    console.log("aborted after fetching", {
+      is_body_used: { initial: response.bodyUsed, clone: cloned_response?.bodyUsed },
     });
   }
-
-  return result;
+  if (should_clone) {
+    cloned_response = response.clone();
+  }
+  console.log("cloned response", {
+    used: { initial: response.bodyUsed, clone: cloned_response?.bodyUsed },
+  });
+  if (abort === "after-cloning-response") {
+    controller.abort();
+    console.log("aborted after cloning the response", {
+      is_body_used: { initial: response.bodyUsed, clone: cloned_response?.bodyUsed },
+    });
+  }
+  await response.text();
+  await cloned_response?.text();
+  console.log("read body", {
+    is_body_used: { initial: response.bodyUsed, clone: cloned_response?.bodyUsed },
+  });
+  console.log("--------------------------------");
 }
 
-// Example usage:
-const baseHeaders = {
-  Accept: "text/html",
-  "Content-Type": "text/html",
-  "x-custom": "opu",
-};
-const extraHeaders = {
-  Accept: "application/json",
-  "X-Custom": "Value",
-  "Content-Type": "application/json",
-};
+function on_rejection(error: unknown) {
+  console.error(error);
+  console.log("--------------------------------");
+}
 
-const finalHeaders = mergeHeaders(baseHeaders, extraHeaders);
+async function main() {
+  console.log(`running on node version ${process.version}...\n`);
+  await test({ abort: "before-starting-fetch", should_clone: false }).catch(on_rejection);
+  await test({ abort: "before-starting-fetch", should_clone: true }).catch(on_rejection);
+  console.log();
+  await test({ abort: "right-after-fetching", should_clone: false }).catch(on_rejection);
+  await test({ abort: "right-after-fetching", should_clone: true }).catch(on_rejection);
+  console.log();
+  await test({ abort: "after-cloning-response", should_clone: false }).catch(on_rejection);
+  await test({ abort: "after-cloning-response", should_clone: true }).catch(on_rejection);
+  console.log();
+  await test({ abort: "before-read-body", should_clone: false }).catch(on_rejection);
+  await test({ abort: "before-read-body", should_clone: true }).catch(on_rejection);
+}
 
-console.log(Array.from(finalHeaders.entries()));
-// Output: "text/html, application/json" (Merged, not overridden!)
+main().catch(console.error);

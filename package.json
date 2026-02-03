@@ -13,6 +13,7 @@
   "packageManager": "pnpm@10.10.0",
   "devDependencies": {
     "@types/node": "^24.10.8",
+    "msw": "^2.12.7",
     "oxfmt": "^0.25.0",
     "oxlint": "^1.40.0",
     "typescript": "^5.9.3",
