@@ -1,11 +1,11 @@
 export type {
-  HTTPFetch as HTTPFetchApi,
+  HTTPFetch,
   HTTPMethod,
   HTTPStatus,
   Parser,
   Serializer,
   Schema,
   Pathname,
-} from "./types.ts";
-export { Endpoint, type EndpointDefinition, type AnyEndpoint } from "./endpoint.ts";
-export { http_client, type HttpClientOptions } from "./http-client.ts";
+} from "./lib/types.ts";
+export { Endpoint, type EndpointDefinition, type AnyEndpoint } from "./lib/endpoint.ts";
+export { http_client, type HttpClientOptions } from "./lib/http-client.ts";

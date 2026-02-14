@@ -7,7 +7,7 @@ import type {
   Pretty,
   Schema,
   Serializer,
-} from "../src/types.ts";
+} from "../src/lib/types.ts";
 
 /** Unrendered character (U+200B) used to mark a string type */
 export const ZeroWidthSpace = "\u{200B}";

@@ -1,6 +1,6 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 import { HTTPEndpoint } from "./http-endpoint.ts";
-import { type HTTPFetch, type Pretty } from "../src/types.ts";
+import { type HTTPFetch, type Pretty } from "../src/lib/types.ts";
 
 export type AnyEndpoint = HTTPEndpoint<any, any, any, any, any, any, any>;
 
