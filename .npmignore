@@ -1,0 +1,21 @@
+# Source files
+src/
+tests/
+examples/
+
+# Config files
+tsconfig.json
+tsdown.config.ts
+vitest.config.ts
+.cursor/
+
+# Development files
+.gitignore
+.npmignore
+AGENT.md
+.changes/
+changelogs/
+
+# CI/CD
+.github/
+
