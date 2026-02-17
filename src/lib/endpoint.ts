@@ -114,9 +114,10 @@ export class Endpoint<
         const result = await schema["~standard"].validate(init.params);
 
         if (result.issues !== undefined) {
-          return new SerializationError(
-            `Params validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
-          );
+          return new SerializationError("Params serialization failed", {
+            operation: "generate_url",
+            cause: result.issues,
+          });
         }
 
         // Use transformed params
@@ -154,9 +155,10 @@ export class Endpoint<
       const result = await schema["~standard"].validate(init.query);
 
       if (result.issues !== undefined) {
-        return new SerializationError(
-          `Query validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
-        );
+        return new SerializationError("Query serialization failed", {
+          cause: result.issues,
+          operation: "generate_url",
+        });
       }
 
       // Use transformed query
@@ -226,9 +228,10 @@ export class Endpoint<
 
     if (result.issues !== undefined) {
       // Validation failed
-      return new SerializationError(
-        `Body validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
-      );
+      return new SerializationError("Body serialization failed", {
+        operation: "serialize_body",
+        cause: result.issues,
+      });
     }
 
     // Use transformed content
@@ -298,11 +301,10 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          return new DeserializationError(
-            `Error response validation failed: ${result.issues
-              .map((i: any) => i.message)
-              .join(", ")}`,
-          );
+          return new DeserializationError("Error deserialization failed", {
+            cause: result.issues,
+            operation: "parse_response",
+          });
         }
 
         error = result.value;
@@ -355,9 +357,10 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          return new DeserializationError(
-            `Response validation failed: ${result.issues.map((i: any) => i.message).join(", ")}`,
-          );
+          return new DeserializationError("Response deserialization failed", {
+            cause: result.issues,
+            operation: "parse_response",
+          });
         }
 
         return {

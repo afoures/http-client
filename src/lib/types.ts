@@ -4,6 +4,8 @@ import type { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "
 
 export type Pretty<T> = { [K in keyof T]: T[K] } & {};
 
+type is_any<T> = boolean extends (T extends never ? true : false) ? true : false;
+
 export type MaybePromise<T> = T | Promise<T>;
 
 const ZeroWidthSpace = "\u{200B}";
@@ -152,26 +154,32 @@ export namespace HTTPFetch {
     redirect_to: string | null;
   };
 
-  export type TypedParamsInit<
-    pathname extends Pathname.Relative,
-    params_schema extends Schema._,
-  > = [params_schema] extends [never]
-    ? pathname extends Pathname.WithParams
-      ? { params: Pathname.Params<pathname> }
-      : {}
-    : { params: Schema.infer_input<params_schema> };
+  export type TypedParamsInit<pathname extends Pathname.Relative, params_schema extends Schema._> =
+    is_any<params_schema> extends true
+      ? { params: any }
+      : [params_schema] extends [never]
+        ? pathname extends Pathname.WithParams
+          ? { params: Pathname.Params<pathname> }
+          : {}
+        : { params: Schema.infer_input<params_schema> };
 
-  export type TypedQueryInit<query_schema extends Schema._> = [query_schema] extends [never]
-    ? {}
-    : undefined extends Schema.infer_input<query_schema>
-      ? { query?: Schema.infer_input<query_schema> }
-      : { query: Schema.infer_input<query_schema> };
+  export type TypedQueryInit<query_schema extends Schema._> =
+    is_any<query_schema> extends true
+      ? { query: any }
+      : [query_schema] extends [never]
+        ? {}
+        : undefined extends Schema.infer_input<query_schema>
+          ? { query?: Schema.infer_input<query_schema> }
+          : { query: Schema.infer_input<query_schema> };
 
-  export type TypedBodyInit<body_schema extends Schema._> = [body_schema] extends [never]
-    ? {}
-    : undefined extends Schema.infer_input<body_schema>
-      ? { body?: Schema.infer_input<body_schema> }
-      : { body: Schema.infer_input<body_schema> };
+  export type TypedBodyInit<body_schema extends Schema._> =
+    is_any<body_schema> extends true
+      ? { body: any }
+      : [body_schema] extends [never]
+        ? {}
+        : undefined extends Schema.infer_input<body_schema>
+          ? { body?: Schema.infer_input<body_schema> }
+          : { body: Schema.infer_input<body_schema> };
 
   export type DefaultRequestInit = {
     headers?: HeadersInitWithReducer;

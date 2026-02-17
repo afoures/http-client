@@ -11,8 +11,8 @@ import {
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 import { extract_args, merge_options, remove_custom_options, sleep } from "./utils.ts";
 
-interface EndpointDefinitions {
-  [name: string]: AnyEndpoint | EndpointDefinitions;
+export interface EndpointMap {
+  [name: string]: AnyEndpoint | EndpointMap;
 }
 
 type CustomFetch = (request: Request) => Promise<Response>;
@@ -22,7 +22,7 @@ type Hooks = {
   on_response?: (response: Response) => void;
 };
 
-type map_to_fetch_endpoint_functions<endpoints extends EndpointDefinitions> = Pretty<{
+type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
     infer pathname,
@@ -43,7 +43,7 @@ type map_to_fetch_endpoint_functions<endpoints extends EndpointDefinitions> = Pr
           error_schema
         >
       >
-    : endpoints[name] extends EndpointDefinitions
+    : endpoints[name] extends EndpointMap
       ? map_to_fetch_endpoint_functions<endpoints[name]>
       : never;
 }>;
@@ -102,14 +102,26 @@ export function fetch_endpoint_factory<
         params: args.params,
         query: args.query,
       } as any)
-      .catch((error) => new UnexpectedError("Failed to generate URL", { cause: error }));
+      .catch(
+        (error) =>
+          new UnexpectedError("Failed to generate URL", {
+            cause: error,
+            operation: "generate_url",
+          }),
+      );
     if (url instanceof Error) return url;
 
     const serialized = await endpoint
       .serialize_body({
         body: args.body,
       } as any)
-      .catch((error) => new UnexpectedError("Failed to serialize body", { cause: error }));
+      .catch(
+        (error) =>
+          new UnexpectedError("Failed to serialize body", {
+            cause: error,
+            operation: "serialize_body",
+          }),
+      );
     if (serialized instanceof Error) return serialized;
 
     headers.delete("Content-Type");
@@ -141,7 +153,10 @@ export function fetch_endpoint_factory<
           signal: abort_signal,
         });
       } catch (local_error) {
-        error = new UnexpectedError("Failed to create request", { cause: local_error });
+        error = new UnexpectedError("Failed to create request", {
+          cause: local_error,
+          operation: "create_request",
+        });
         break; // no retry
       }
 
@@ -152,11 +167,11 @@ export function fetch_endpoint_factory<
         error = undefined; // clear any previous error on success
       } catch (local_error) {
         if (local_error instanceof Error && local_error.name === "TimeoutError") {
-          error = new TimeoutError(local_error.message);
+          error = new TimeoutError(local_error.message, { cause: local_error, operation: "fetch" });
         } else if (local_error instanceof Error && local_error.name === "AbortError") {
-          error = new AbortedError(local_error.message);
+          error = new AbortedError(local_error.message, { cause: local_error, operation: "fetch" });
         } else {
-          error = new NetworkError("Network error", { cause: local_error });
+          error = new NetworkError("Network error", { cause: local_error, operation: "fetch" });
         }
       }
 
@@ -178,7 +193,10 @@ export function fetch_endpoint_factory<
           await sleep(delay, abort_signal);
         }
       } catch (local_error) {
-        error = new UnexpectedError("Failed to check retry policy", { cause: local_error });
+        error = new UnexpectedError("Failed to check retry policy", {
+          cause: local_error,
+          operation: "retry_policy",
+        });
         break; // no retry
       }
       // oxlint-disable-next-line no-constant-condition
@@ -186,14 +204,20 @@ export function fetch_endpoint_factory<
 
     if (error) return error;
     if (!response) {
-      return new UnexpectedError("", { cause: "No response received" });
+      return new UnexpectedError("", {
+        cause: "No response received",
+        operation: "parse_response",
+      });
     }
     hooks.on_response?.(response);
     const result = await endpoint.parse_response(response).catch((error) => {
       if (error instanceof Error && error.name === "AbortError") {
-        return new AbortedError(error.message);
+        return new AbortedError(error.message, { cause: error, operation: "parse_response" });
       }
-      return new UnexpectedError("Failed to parse response", { cause: error });
+      return new UnexpectedError("Failed to parse response", {
+        cause: error,
+        operation: "parse_response",
+      });
     });
 
     return result;
@@ -202,20 +226,20 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
-export type HttpClientOptions<endpoints extends EndpointDefinitions> = {
+export type HttpClientOptions<endpoints extends EndpointMap> = {
   origin: string;
   endpoints: endpoints;
   options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
   fetch?: CustomFetch;
 };
 
-export function http_client<const endpoints extends EndpointDefinitions>({
+export function http_client<const endpoints extends EndpointMap>({
   origin,
   endpoints: all_endpoints,
   options,
   fetch: custom_fetch = fetch,
 }: HttpClientOptions<endpoints>) {
-  function map<endpoints extends EndpointDefinitions>(
+  function map<endpoints extends EndpointMap>(
     endpoints: endpoints,
   ): map_to_fetch_endpoint_functions<endpoints> {
     return Object.fromEntries(
