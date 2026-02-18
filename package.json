@@ -6,6 +6,8 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "node --test src/**/*.test.ts",
+    "bench:endpoint": "node src/lib/endpoint.bench.ts",
+    "bench:http-client": "node src/lib/http-client.bench.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt",
@@ -34,16 +36,17 @@
   "packageManager": "pnpm@10.10.0",
   "devDependencies": {
     "@afoures/auto-release": "^0.3.0",
-    "@types/node": "^24.10.8",
-    "msw": "^2.12.7",
+    "@arktype/attest": "^0.56.0",
+    "@types/node": "^24.10.13",
+    "msw": "^2.12.10",
     "oxfmt": "^0.25.0",
-    "oxlint": "^1.40.0",
+    "oxlint": "^1.48.0",
     "tsdown": "^0.20.3",
     "typescript": "^5.9.3",
-    "zod": "^4.3.5"
+    "zod": "^4.3.6"
   },
   "dependencies": {
-    "@remix-run/route-pattern": "^0.16.0",
+    "@remix-run/route-pattern": "^0.18.0",
     "@standard-schema/spec": "^1.1.0"
   }
 }
