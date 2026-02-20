@@ -10,8 +10,6 @@ New error type hierarchy for better error handling:
 
 All errors include a `context` property with the operation that failed.
 
-# Example
-
 ```typescript
 const result = await api.users.get({ params: { id: '123' }, timeout: 5000 })
 
