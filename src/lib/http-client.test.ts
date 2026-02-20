@@ -153,11 +153,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("custom headers merging", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      headers: { "X-Default": "default-value" },
-    });
+    const endpoint = new Endpoint(
+      {
+        method: "GET",
+        pathname: "/users",
+      },
+      {
+        headers: { "X-Default": "default-value" },
+      },
+    );
 
     server.use(
       http.get(`${API_ORIGIN}/users`, ({ request }) => {
@@ -747,12 +751,16 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("endpoint options merged with request options", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      headers: { "X-Endpoint": "endpoint-value" },
-      timeout: 5000,
-    });
+    const endpoint = new Endpoint(
+      {
+        method: "GET",
+        pathname: "/users",
+      },
+      {
+        headers: { "X-Endpoint": "endpoint-value" },
+        timeout: 5000,
+      },
+    );
 
     server.use(
       http.get(`${API_ORIGIN}/users`, ({ request }) => {

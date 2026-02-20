@@ -36,9 +36,7 @@ export type EndpointDefinition<
     ? { body?: Serializer.Body<body_schema> }
     : [body_schema] extends [never]
       ? { body?: never }
-      : { body?: ErrorMessage<"this http method does not support body"> }) &
-  HTTPFetch.OptionalRequestInit &
-  HTTPFetch.DefaultRequestInit;
+      : { body?: ErrorMessage<"this http method does not support body"> });
 
 export class Endpoint<
   http_method extends HTTPMethod.Any,
@@ -72,22 +70,22 @@ export class Endpoint<
       data_schema,
       error_schema
     >,
+    options?: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
   ) {
-    const { method, pathname, params, query, body, data, error, ...options } = definition;
-    this.#method = method;
-    this.#pattern = new RoutePattern(pathname, {
+    this.#method = definition.method;
+    this.#pattern = new RoutePattern(definition.pathname, {
       ignoreCase: false,
     });
     this.#serializers = {
-      params: as_serializer(params),
-      query: as_serializer(query, "urlencoded"),
-      body: as_serializer(body, "json"),
+      params: as_serializer(definition.params),
+      query: as_serializer(definition.query, "urlencoded"),
+      body: as_serializer(definition.body, "json"),
     };
     this.#parsers = {
-      data: as_parser(data, "json"),
-      error: as_parser(error, "text"),
+      data: as_parser(definition.data, "json"),
+      error: as_parser(definition.error, "text"),
     };
-    this.#options = options;
+    this.#options = options ?? {};
   }
 
   get method() {
