@@ -88,6 +88,12 @@ export function fetch_endpoint_factory<
         HTTPFetch.DefaultRequestInit
     >,
   ) {
+    if (!URL.canParse(origin)) {
+      return new UnexpectedError(`Invalid origin: ${origin}`, {
+        operation: "origin_validation",
+      });
+    }
+
     const { args, options } = extract_args(input);
 
     const { headers, ...merged_options } = merge_options(

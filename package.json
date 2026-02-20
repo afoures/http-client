@@ -1,7 +1,17 @@
 {
-  "name": "http-client",
-  "version": "1.0.0",
-  "description": "",
+  "name": "@afoures/http-client",
+  "version": "0.0.0",
+  "description": "A typesafe and robust HTTP client",
+  "homepage": "https://github.com/afoures/http-client#readme",
+  "bugs": {
+    "url": "https://github.com/afoures/http-client/issues"
+  },
+  "license": "MIT",
+  "author": "Antoine Fourès <contact@afoures.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/afoures/http-client.git"
+  },
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
@@ -19,6 +29,7 @@
     "package.json",
     "README.md"
   ],
+  "keywords": [],
   "type": "module",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
@@ -30,10 +41,11 @@
     },
     "./package.json": "./package.json"
   },
-  "keywords": [],
-  "author": "",
-  "license": "MIT",
   "packageManager": "pnpm@10.10.0",
+  "dependencies": {
+    "@remix-run/route-pattern": "^0.18.0",
+    "@standard-schema/spec": "^1.1.0"
+  },
   "devDependencies": {
     "@afoures/auto-release": "^0.3.0",
     "@arktype/attest": "^0.56.0",
@@ -44,9 +56,5 @@
     "tsdown": "^0.20.3",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
-  },
-  "dependencies": {
-    "@remix-run/route-pattern": "^0.18.0",
-    "@standard-schema/spec": "^1.1.0"
   }
 }
