@@ -1,4 +1,4 @@
-# @afoures/http-client
+# http-client
 
 A typesafe and robust HTTP client with schema validation.
 

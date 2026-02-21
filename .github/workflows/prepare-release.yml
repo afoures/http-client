@@ -11,8 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   prepare-release:
@@ -36,9 +35,9 @@ jobs:
       - name: Check configuration
         run: pnpm auto-release check
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Generate release PR
         run: pnpm auto-release generate-release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API_TOKEN: ${{ secrets.GH_PAT }}

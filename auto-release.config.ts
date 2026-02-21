@@ -15,7 +15,7 @@ export default define_config({
     platform: github({
       owner: "afoures",
       repo: "http-client",
-      token: process.env.GITHUB_TOKEN!,
+      token: process.env.GITHUB_API_TOKEN!,
     }),
   },
 });
