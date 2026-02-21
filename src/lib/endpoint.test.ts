@@ -533,7 +533,7 @@ describe("Endpoint.serialize_body", () => {
       body: { name: "ab", age: -1 } as any,
     });
     assert.ok(result instanceof SerializationError);
-    assert.ok(result.message.includes("Body validation failed"));
+    assert.equal(result.context.operation, "serialize_body");
   });
 
   test("POST request with invalid content type - validation error", async () => {
@@ -550,7 +550,7 @@ describe("Endpoint.serialize_body", () => {
       body: { name: 123 } as any, // wrong type
     });
     assert.ok(result instanceof SerializationError);
-    assert.ok(result.message.includes("Body validation failed"));
+    assert.equal(result.context.operation, "serialize_body");
   });
 
   test("POST request with missing required fields - validation error", async () => {
@@ -569,7 +569,7 @@ describe("Endpoint.serialize_body", () => {
       body: { name: "John" },
     });
     assert.ok(result instanceof SerializationError);
-    assert.ok(result.message.includes("Body validation failed"));
+    assert.equal(result.context.operation, "serialize_body");
   });
 });
 
@@ -1048,7 +1048,7 @@ describe("Endpoint.parse_response", () => {
     });
     const result = await endpoint.parse_response(response);
     assert.ok(result instanceof DeserializationError);
-    assert.ok(result.message.includes("validation"));
+    assert.equal(result.context.operation, "parse_response");
   });
 
   // 7. Response Metadata

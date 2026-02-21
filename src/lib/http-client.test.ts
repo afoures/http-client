@@ -452,7 +452,7 @@ describe("fetch_endpoint_factory", () => {
     const result = await fetch_endpoint({ params: { id: "" } });
 
     assert.ok(result instanceof SerializationError);
-    assert.ok(result.message.includes("Params validation failed"));
+    assert.equal(result.context.operation, "generate_url");
   });
 
   test("body serialization error handling", async () => {
@@ -479,7 +479,7 @@ describe("fetch_endpoint_factory", () => {
     const result = await fetch_endpoint({ body: { name: "" } });
 
     assert.ok(result instanceof SerializationError);
-    assert.ok(result.message.includes("Body validation failed"));
+    assert.equal(result.context.operation, "serialize_body");
   });
 
   test("response parsing error handling", async () => {
@@ -509,7 +509,7 @@ describe("fetch_endpoint_factory", () => {
     const result = await fetch_endpoint({});
 
     assert.ok(result instanceof UnexpectedError);
-    assert.ok(result.message.includes("Failed to parse response"));
+    assert.equal(result.context.operation, "parse_response");
   });
 
   test("network error handling", async () => {
