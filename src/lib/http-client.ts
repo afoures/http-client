@@ -57,13 +57,13 @@ export function fetch_endpoint_factory<
   data_schema extends Schema._,
   error_schema extends Schema._,
 >({
-  origin,
+  base_url,
   endpoint,
   custom_fetch,
   get_default_options = () => ({}),
   hooks = {},
 }: {
-  origin: string;
+  base_url: string;
   endpoint: Endpoint<
     http_method,
     pathname,
@@ -88,9 +88,9 @@ export function fetch_endpoint_factory<
         HTTPFetch.DefaultRequestInit
     >,
   ) {
-    if (!URL.canParse(origin)) {
-      return new UnexpectedError(`Invalid origin: ${origin}`, {
-        operation: "origin_validation",
+    if (!URL.canParse(base_url)) {
+      return new UnexpectedError(`Invalid base_url: ${base_url}`, {
+        operation: "base_url_validation",
       });
     }
 
@@ -104,7 +104,7 @@ export function fetch_endpoint_factory<
 
     const url = await endpoint
       .generate_url({
-        origin,
+        base_url,
         params: args.params,
         query: args.query,
       } as any)
@@ -233,14 +233,14 @@ export function fetch_endpoint_factory<
 }
 
 export type HttpClientOptions<endpoints extends EndpointMap> = {
-  origin: string;
+  base_url: string;
   endpoints: endpoints;
   options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
   fetch?: CustomFetch;
 };
 
 export function http_client<const endpoints extends EndpointMap>({
-  origin,
+  base_url,
   endpoints: all_endpoints,
   options,
   fetch: custom_fetch = fetch,
@@ -255,7 +255,7 @@ export function http_client<const endpoints extends EndpointMap>({
             key,
             fetch_endpoint_factory({
               endpoint: endpoint_or_object,
-              origin,
+              base_url,
               custom_fetch,
               get_default_options: options,
             }),

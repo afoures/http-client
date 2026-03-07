@@ -21,7 +21,7 @@ const endpointWithSchema = new Endpoint({
 
 bench("http_client - single endpoint", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
     },
@@ -31,7 +31,7 @@ bench("http_client - single endpoint", () => {
 
 bench("http_client - two endpoints", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
@@ -42,7 +42,7 @@ bench("http_client - two endpoints", () => {
 
 bench("http_client - three endpoints", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
@@ -54,7 +54,7 @@ bench("http_client - three endpoints", () => {
 
 bench("http_client - five endpoints", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
@@ -68,7 +68,7 @@ bench("http_client - five endpoints", () => {
 
 bench("http_client - ten endpoints", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
@@ -87,7 +87,7 @@ bench("http_client - ten endpoints", () => {
 
 bench("http_client - nested structure (2 levels)", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       api: {
         v1: {
@@ -102,7 +102,7 @@ bench("http_client - nested structure (2 levels)", () => {
 
 bench("http_client - nested structure (3 levels)", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       api: {
         v1: {
@@ -119,7 +119,7 @@ bench("http_client - nested structure (3 levels)", () => {
 
 bench("http_client - with options callback", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: basicEndpoint,
     },
@@ -132,7 +132,7 @@ bench("http_client - with options callback", () => {
 
 bench("http_client - with complex endpoints", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       users: endpointWithSchema,
       posts: new Endpoint({
@@ -152,7 +152,7 @@ bench("http_client - with complex endpoints", () => {
 
 bench("http_client - mixed nesting levels", () => {
   const client = http_client({
-    origin: "https://api.example.com",
+    base_url: "https://api.example.com",
     endpoints: {
       public: {
         users: basicEndpoint,

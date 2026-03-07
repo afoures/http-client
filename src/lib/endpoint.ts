@@ -98,11 +98,10 @@ export class Endpoint<
 
   async generate_url(
     init: Pretty<
-      { origin: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
+      { base_url: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
         HTTPFetch.TypedQueryInit<query_schema>
     >,
   ): Promise<URL | SerializationError> {
-    // Step 1: Handle pathname params
     let pathname_params: Record<string, string> = {};
 
     if ("params" in init && init.params !== undefined) {
@@ -144,7 +143,6 @@ export class Endpoint<
     // Generate pathname using RoutePattern.href()
     const pathname = this.#pattern.href(pathname_params);
 
-    // Step 2: Handle query parameters
     let search_params = new URLSearchParams();
 
     if ("query" in init && init.query !== undefined && this.#serializers.query) {
@@ -192,8 +190,9 @@ export class Endpoint<
       }
     }
 
-    // Step 3: Construct URL
-    const url = new URL(pathname, init.origin);
+    // remove leading slash from pathname if it exists to allow relative origin
+    // https://developer.mozilla.org/en-US/docs/Web/API/URL_API/Resolving_relative_references
+    const url = new URL(pathname.startsWith("/") ? pathname.slice(1) : pathname, init.base_url);
 
     // Append query string
     const query_string = search_params.toString();

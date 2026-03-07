@@ -13,7 +13,7 @@ import z from "zod";
 import { setupServer } from "msw/node";
 import { delay, http, HttpResponse } from "msw";
 
-const API_ORIGIN = "https://api.example.com";
+const API_BASE_URL = "https://api.example.com";
 
 const server = setupServer();
 
@@ -40,15 +40,15 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users/:id`, ({ request, params }) => {
-        assert.equal(request.url, `${API_ORIGIN}/users/123`);
+      http.get(`${API_BASE_URL}/users/:id`, ({ request, params }) => {
+        assert.equal(request.url, `${API_BASE_URL}/users/123`);
         assert.equal(request.method, "GET");
         return HttpResponse.json({ id: params.id, name: "John" });
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -68,13 +68,13 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users/:id`, ({ params }) => {
+      http.get(`${API_BASE_URL}/users/:id`, ({ params }) => {
         return HttpResponse.json({ id: params.id });
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -99,7 +99,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
         const url = new URL(request.url);
         assert.equal(url.pathname, "/users");
         assert.equal(url.searchParams.get("page"), "1");
@@ -109,7 +109,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -130,7 +130,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.post(`${API_ORIGIN}/users`, async ({ request }) => {
+      http.post(`${API_BASE_URL}/users`, async ({ request }) => {
         assert.equal(request.method, "POST");
         assert.equal(request.headers.get("Content-Type"), "application/json");
         const body = await request.json();
@@ -140,7 +140,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -164,7 +164,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
         assert.equal(request.headers.get("x-default"), "default-value");
         assert.equal(request.headers.get("x-custom"), "custom-value");
         return HttpResponse.json({});
@@ -172,7 +172,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -190,14 +190,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/slow`, async () => {
+      http.get(`${API_BASE_URL}/slow`, async () => {
         await delay(100);
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -215,14 +215,14 @@ describe("fetch_endpoint_factory", () => {
 
     const controller = new AbortController();
     server.use(
-      http.get(`${API_ORIGIN}/users`, async () => {
+      http.get(`${API_BASE_URL}/users`, async () => {
         await delay(100);
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -241,7 +241,7 @@ describe("fetch_endpoint_factory", () => {
 
     const controller = new AbortController();
     server.use(
-      http.get(`${API_ORIGIN}/users`, async () => {
+      http.get(`${API_BASE_URL}/users`, async () => {
         await delay(10);
         controller.abort();
         await delay(20);
@@ -250,7 +250,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -270,14 +270,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/posts/:id`, async () => {
+      http.get(`${API_BASE_URL}/posts/:id`, async () => {
         return HttpResponse.json({ id: 1, title: "Post 1" });
       }),
     );
 
     const controller = new AbortController();
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
       hooks: {
@@ -301,7 +301,7 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         if (attemptCount < 3) {
           return HttpResponse.error();
@@ -311,7 +311,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -333,14 +333,14 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         return HttpResponse.error();
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -362,7 +362,7 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         if (attemptCount === 1) {
           return HttpResponse.json({ error: "Server error" }, { status: 500 });
@@ -372,7 +372,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -399,7 +399,7 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         if (attemptCount < 3) {
           return HttpResponse.error();
@@ -409,7 +409,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -438,13 +438,13 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users/:id`, () => {
+      http.get(`${API_BASE_URL}/users/:id`, () => {
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -465,13 +465,13 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.post(`${API_ORIGIN}/users`, () => {
+      http.post(`${API_BASE_URL}/users`, () => {
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -492,7 +492,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         return new HttpResponse("invalid json {", {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -501,7 +501,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -519,13 +519,13 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         return HttpResponse.error();
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -542,14 +542,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
         assert.equal(request.headers.get("x-default"), "default-value");
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
       get_default_options: () => ({ headers: { "X-Default": "default-value" } }),
@@ -570,14 +570,14 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -599,7 +599,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.post(`${API_ORIGIN}/users`, async ({ request }) => {
+      http.post(`${API_BASE_URL}/users`, async ({ request }) => {
         assert.equal(request.method, "POST");
         const url = new URL(request.url);
         assert.equal(url.pathname, "/users");
@@ -612,7 +612,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -633,14 +633,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
         assert.equal(request.headers.get("x-async"), "async-value");
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
       get_default_options: async () => {
@@ -665,14 +665,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.put(`${API_ORIGIN}/users/:id`, ({ request }) => {
+      http.put(`${API_BASE_URL}/users/:id`, ({ request }) => {
         assert.equal(request.method, "PUT");
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -696,14 +696,14 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.patch(`${API_ORIGIN}/users/:id`, ({ request }) => {
+      http.patch(`${API_BASE_URL}/users/:id`, ({ request }) => {
         assert.equal(request.method, "PATCH");
         return HttpResponse.json({});
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -727,7 +727,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.delete(`${API_ORIGIN}/users/:id`, async ({ request }) => {
+      http.delete(`${API_BASE_URL}/users/:id`, async ({ request }) => {
         assert.equal(request.method, "DELETE");
         const body = await request.json();
         assert.deepEqual(body, { reason: "inactive" });
@@ -736,7 +736,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -763,7 +763,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, ({ request }) => {
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
         assert.equal(request.headers.get("x-endpoint"), "endpoint-value");
         assert.equal(request.headers.get("x-request"), "request-value");
         return HttpResponse.json({});
@@ -771,7 +771,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -794,7 +794,7 @@ describe("fetch_endpoint_factory", () => {
     const attemptsCalled: number[] = [];
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         if (attemptCount < 3) {
           return HttpResponse.error();
@@ -804,7 +804,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -837,14 +837,14 @@ describe("fetch_endpoint_factory", () => {
     let attemptCount = 0;
 
     server.use(
-      http.get(`${API_ORIGIN}/users`, () => {
+      http.get(`${API_BASE_URL}/users`, () => {
         attemptCount++;
         return HttpResponse.json({ message: "Not found" }, { status: 404 });
       }),
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });
@@ -871,7 +871,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     server.use(
-      http.post(`${API_ORIGIN}/upload`, async ({ request }) => {
+      http.post(`${API_BASE_URL}/upload`, async ({ request }) => {
         assert.equal(request.headers.get("content-type"), "text/plain");
         const body = await request.text();
         assert.equal(body, "test");
@@ -880,7 +880,7 @@ describe("fetch_endpoint_factory", () => {
     );
 
     const fetch_endpoint = fetch_endpoint_factory({
-      origin: API_ORIGIN,
+      base_url: API_BASE_URL,
       endpoint,
       custom_fetch: fetch,
     });

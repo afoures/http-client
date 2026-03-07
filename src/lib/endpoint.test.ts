@@ -11,7 +11,7 @@ describe("Endpoint.generate_url", () => {
       pathname: "/users",
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
     });
     assert.ok(url instanceof URL);
     assert.equal(url.toString(), "https://api.example.com/users");
@@ -28,7 +28,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       query: [["ok", "test"]],
     });
     assert.ok(url instanceof URL);
@@ -51,7 +51,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       query: { search: "test", page: 1 },
     });
     assert.ok(url instanceof URL);
@@ -67,7 +67,7 @@ describe("Endpoint.generate_url", () => {
       pathname: "/users/(:id)",
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       params: { id: 123 },
     });
     assert.ok(url instanceof URL);
@@ -87,7 +87,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       params: { id: "abc" },
     });
     assert.ok(url instanceof URL);
@@ -108,7 +108,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       params: { id: "123" },
       query: { include: "posts" },
     });
@@ -133,7 +133,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       params: { id: 123 },
     });
     assert.ok(url instanceof URL);
@@ -157,7 +157,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       params: { id: "abc" },
     });
     assert.ok(url instanceof URL);
@@ -186,7 +186,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       query: { tags: ["react", "typescript"], limit: 10 },
     });
     assert.ok(url instanceof URL);
@@ -215,7 +215,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       query: { q: "  Hello World  ", page: 2 },
     });
     assert.ok(url instanceof URL);
@@ -244,7 +244,7 @@ describe("Endpoint.generate_url", () => {
       },
     });
     const url = await endpoint.generate_url({
-      origin: "https://api.example.com",
+      base_url: "https://api.example.com",
       query: [
         ["status", "active"],
         ["role", "admin"],
@@ -255,6 +255,21 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.pathname, "/filters");
     assert.equal(url.searchParams.get("status"), "active");
     assert.equal(url.searchParams.get("role"), "admin");
+  });
+
+  test("base_url with relative pathname", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users/:id",
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com/api/",
+      params: { id: 123 },
+    });
+    assert.ok(url instanceof URL);
+    assert.equal(url.origin, "https://api.example.com");
+    assert.equal(url.pathname, "/api/users/123");
+    assert.equal(url.search, "");
   });
 });
 
