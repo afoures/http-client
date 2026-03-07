@@ -1,6 +1,6 @@
 {
   "name": "@afoures/http-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A typesafe and robust HTTP client",
   "homepage": "https://github.com/afoures/http-client#readme",
   "bugs": {
