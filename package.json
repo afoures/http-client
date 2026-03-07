@@ -47,13 +47,13 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "devDependencies": {
-    "@afoures/auto-release": "^0.3.0",
+    "@afoures/auto-release": "^0.4.1",
     "@arktype/attest": "^0.56.0",
-    "@types/node": "^24.10.13",
+    "@types/node": "^24.12.0",
     "msw": "^2.12.10",
-    "oxfmt": "^0.25.0",
-    "oxlint": "^1.48.0",
-    "tsdown": "^0.20.3",
+    "oxfmt": "^0.36.0",
+    "oxlint": "^1.51.0",
+    "tsdown": "^0.21.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   }
