@@ -29,7 +29,7 @@ import { Endpoint, http_client } from '@afoures/http-client'
 import { z } from 'zod'
 
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: {
     users: {
       list: new Endpoint({

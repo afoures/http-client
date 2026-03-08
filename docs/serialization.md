@@ -17,7 +17,7 @@ const endpoint = new Endpoint({
 })
 
 const url = await endpoint.generate_url({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   params: { id: '123' },
 })
 // https://api.example.com/users/123
@@ -54,7 +54,7 @@ const endpoint = new Endpoint({
 })
 
 const url = await endpoint.generate_url({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   params: { id: 123 },
 })
 // https://api.example.com/users/user-123
@@ -79,7 +79,7 @@ const endpoint = new Endpoint({
 })
 
 const url = await endpoint.generate_url({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   query: { page: 1, search: 'john' },
 })
 // https://api.example.com/users?page=1&search=john
@@ -104,7 +104,7 @@ const endpoint = new Endpoint({
 })
 
 const url = await endpoint.generate_url({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   query: { tags: ['admin', 'active'] },
 })
 // https://api.example.com/users?tags=admin,active

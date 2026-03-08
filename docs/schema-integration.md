@@ -180,7 +180,7 @@ const UserSchema = z.object({
 const CreateUserSchema = UserSchema.omit({ id: true })
 
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: {
     users: {
       list: new Endpoint({

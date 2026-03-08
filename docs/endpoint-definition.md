@@ -97,7 +97,7 @@ Generates a full URL with params and query serialized:
 
 ```typescript
 const url = await endpoint.generate_url({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   params: { id: '123' },
   query: { include: 'posts' },
 })

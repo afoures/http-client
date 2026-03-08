@@ -9,7 +9,7 @@ import { Endpoint, http_client } from '@afoures/http-client'
 import { z } from 'zod'
 
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: {
     users: new Endpoint({
       method: 'GET',
@@ -28,7 +28,7 @@ Nest endpoints in objects for logical grouping:
 
 ```typescript
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: {
     users: {
       list: new Endpoint({ method: 'GET', pathname: '/users' }),
@@ -60,7 +60,7 @@ Provide sync or async default options for all requests:
 
 ```typescript
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: { /* ... */ },
   options: async () => {
     const token = await getAuthToken()
@@ -84,7 +84,7 @@ Provide a custom fetch function for proxying, logging, or modifying requests:
 
 ```typescript
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: { /* ... */ },
   fetch: async (request) => {
     console.log('Request:', request.url)

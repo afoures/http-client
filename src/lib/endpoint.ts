@@ -190,7 +190,7 @@ export class Endpoint<
       }
     }
 
-    // remove leading slash from pathname if it exists to allow relative origin
+    // remove leading slash from pathname if it exists to allow relative pathname resolving
     // https://developer.mozilla.org/en-US/docs/Web/API/URL_API/Resolving_relative_references
     const url = new URL(pathname.startsWith("/") ? pathname.slice(1) : pathname, init.base_url);
 

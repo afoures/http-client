@@ -8,7 +8,7 @@ This is the changelog for `http-client`.
 
 - Remove `/` prefix to computed pathname to allow for native URL relative pathname resolving.
   
-  Also renamed `origin` to `base_url` to better match behavior.
+  Also renamed `http_client` `origin` parameter to `base_url` to better match behavior.
 
 ## 0.1.0
 

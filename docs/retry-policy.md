@@ -177,7 +177,7 @@ const result = await api.users.get({
 
 ```typescript
 const api = http_client({
-  origin: 'https://api.example.com',
+  base_url: 'https://api.example.com',
   endpoints: {
     users: new Endpoint({
       method: 'GET',
