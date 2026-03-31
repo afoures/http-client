@@ -254,36 +254,36 @@ export namespace Json {
 export namespace Serializer {
   export type Any = {
     schema: Schema.Any;
-    serialization?: string | ((data: any) => any);
+    serialize?: string | ((data: any) => any);
   };
 
   export type Params<pathname extends Pathname.Relative, schema extends Schema._> =
     schema extends Schema._<any, Pathname.Params<pathname>>
       ? {
           schema: schema;
-          serialization?: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
+          serialize?: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
         }
       : {
           schema: schema;
-          serialization: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
+          serialize: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
         };
 
   export type QueryString<schema extends Schema._> =
     schema extends Schema._<any, Array<Array<string>> | Record<string, string> | undefined>
       ? {
           schema: schema;
-          serialization?:
+          serialize?:
             | "urlencoded"
             | ((data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams);
         }
       : {
           schema: schema;
-          serialization: (data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams;
+          serialize: (data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams;
         };
 
   export type Body<schema extends Schema._> = {
     schema: schema;
-    serialization:
+    serialize:
       | "json"
       | ((data: Schema.infer_output<NoInfer<schema>, any>) => {
           body: BodyInit | null;
@@ -295,20 +295,20 @@ export namespace Serializer {
 export namespace Parser {
   export type Any = {
     schema: Schema.Any;
-    deserialization: string | ((data: any) => any);
+    parse: string | ((data: any) => any);
   };
 
   export type Data<schema extends Schema._> =
     schema extends Schema._<string, any>
       ? {
           schema: schema;
-          deserialization:
+          parse:
             | "text"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         }
       : {
           schema: schema;
-          deserialization:
+          parse:
             | "json"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         };
@@ -317,13 +317,13 @@ export namespace Parser {
     schema extends Schema._<string, any>
       ? {
           schema: schema;
-          deserialization:
+          parse:
             | "text"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         }
       : {
           schema: schema;
-          deserialization:
+          parse:
             | "json"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         };

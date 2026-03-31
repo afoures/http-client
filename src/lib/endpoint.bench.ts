@@ -49,7 +49,7 @@ bench("Endpoint - with body schema", () => {
         name: z.string(),
         email: z.string(),
       }),
-      serialization: "json",
+      serialize: "json",
     },
   });
   return {} as typeof endpoint;
@@ -64,7 +64,7 @@ bench("Endpoint - with data schema", () => {
         id: z.string(),
         name: z.string(),
       }),
-      deserialization: "json",
+      parse: "json",
     },
   });
   return {} as typeof endpoint;
@@ -79,7 +79,7 @@ bench("Endpoint - with error schema", () => {
         message: z.string(),
         code: z.number(),
       }),
-      deserialization: "json",
+      parse: "json",
     },
   });
   return {} as typeof endpoint;
@@ -97,15 +97,15 @@ bench("Endpoint - full schema (all generics)", () => {
     },
     body: {
       schema: z.object({ name: z.string(), email: z.string() }),
-      serialization: "json",
+      serialize: "json",
     },
     data: {
       schema: z.object({ id: z.string(), name: z.string() }),
-      deserialization: "json",
+      parse: "json",
     },
     error: {
       schema: z.string(),
-      deserialization: "text",
+      parse: "text",
     },
   });
   return {} as typeof endpoint;
@@ -128,7 +128,7 @@ bench("Endpoint - nested object schema", () => {
           }),
         }),
       }),
-      serialization: "json",
+      serialize: "json",
     },
   });
   return {} as typeof endpoint;
@@ -145,7 +145,7 @@ bench("Endpoint - array schema", () => {
           email: z.string(),
         }),
       ),
-      serialization: "json",
+      serialize: "json",
     },
     data: {
       schema: z.array(
@@ -154,7 +154,7 @@ bench("Endpoint - array schema", () => {
           name: z.string(),
         }),
       ),
-      deserialization: "json",
+      parse: "json",
     },
   });
   return {} as typeof endpoint;
@@ -175,20 +175,20 @@ bench("Endpoint - multiple pathname params", () => {
   return {} as typeof endpoint;
 }).types([6026, "instantiations"]);
 
-bench("Endpoint - with custom serialization", () => {
+bench("Endpoint - with custom serialize", () => {
   const endpoint = new Endpoint({
     method: "POST",
     pathname: "/users",
     body: {
       schema: z.object({ data: z.string() }),
-      serialization: (data) => ({
+      serialize: (data) => ({
         body: data.data,
         content_type: "text/plain",
       }),
     },
     query: {
       schema: z.object({ tags: z.array(z.string()) }),
-      serialization: (data) => {
+      serialize: (data) => {
         const params = new URLSearchParams();
         params.set("tags", data.tags.join(","));
         return params;
@@ -198,20 +198,20 @@ bench("Endpoint - with custom serialization", () => {
   return {} as typeof endpoint;
 }).types([2057, "instantiations"]);
 
-bench("Endpoint - with custom deserialization", () => {
+bench("Endpoint - with custom parse", () => {
   const endpoint = new Endpoint({
     method: "GET",
     pathname: "/users/:id",
     data: {
       schema: z.object({ value: z.string() }),
-      deserialization: async (body) => {
+      parse: async (body) => {
         const text = await new Response(body).text();
         return JSON.parse(text);
       },
     },
     error: {
       schema: z.object({ errors: z.array(z.string()) }),
-      deserialization: async (body) => {
+      parse: async (body) => {
         const text = await new Response(body).text();
         return { errors: text.split(",") };
       },
@@ -230,7 +230,7 @@ bench("Endpoint - union types in schema", () => {
         status: z.enum(["active", "inactive", "pending"]),
         metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
       }),
-      serialization: "json",
+      serialize: "json",
     },
   });
   return {} as typeof endpoint;

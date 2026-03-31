@@ -43,7 +43,7 @@ const api = http_client({
         },
         data: {
           schema: z.array(z.object({ id: z.string(), name: z.string() })),
-          deserialization: 'json',
+          parse: 'json',
         },
       }),
       get: new Endpoint({
@@ -51,7 +51,7 @@ const api = http_client({
         pathname: '/users/(:id)',
         data: {
           schema: z.object({ id: z.string(), name: z.string() }),
-          deserialization: 'json',
+          parse: 'json',
         },
       }),
       create: new Endpoint({
@@ -59,11 +59,11 @@ const api = http_client({
         pathname: '/users',
         body: {
           schema: z.object({ name: z.string(), email: z.string().email() }),
-          serialization: 'json',
+          serialize: 'json',
         },
         data: {
           schema: z.object({ id: z.string(), name: z.string() }),
-          deserialization: 'json',
+          parse: 'json',
         },
       }),
     },

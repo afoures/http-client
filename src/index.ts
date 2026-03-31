@@ -14,7 +14,7 @@ export {
   TimeoutError,
   AbortedError,
   SerializationError,
-  DeserializationError,
+  ParseError,
   NetworkError,
   UnexpectedError,
 } from "./lib/errors.ts";

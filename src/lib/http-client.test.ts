@@ -36,7 +36,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       data: {
         schema: z.object({ id: z.string(), name: z.string() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
 
@@ -95,7 +95,7 @@ describe("fetch_endpoint_factory", () => {
           page: z.number().transform(String),
           limit: z.number().transform(String),
         }),
-        serialization: "urlencoded",
+        serialize: "urlencoded",
       },
     });
 
@@ -121,13 +121,13 @@ describe("fetch_endpoint_factory", () => {
     assert.equal(result.ok, true);
   });
 
-  test("POST request with body serialization", async () => {
+  test("POST request with body serialize", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string(), email: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -268,7 +268,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/posts/:id",
       data: {
         schema: z.object({ id: z.number(), title: z.string() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
 
@@ -458,13 +458,13 @@ describe("fetch_endpoint_factory", () => {
     assert.equal(result.context.operation, "generate_url");
   });
 
-  test("body serialization error handling", async () => {
+  test("body serialize error handling", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string().min(1) }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -492,7 +492,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
 
@@ -600,7 +600,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -667,7 +667,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -699,7 +699,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -731,7 +731,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ reason: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -839,7 +839,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       error: {
         schema: z.object({ message: z.string() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
 
@@ -872,7 +872,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/upload",
       body: {
         schema: z.object({ data: z.string() }),
-        serialization: (data) => ({
+        serialize: (data) => ({
           body: data.data,
           content_type: "text/plain",
         }),

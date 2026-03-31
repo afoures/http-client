@@ -74,15 +74,15 @@ if (result instanceof SerializationError) {
 }
 ```
 
-### `DeserializationError`
+### `ParseError`
 
 Failed to parse response:
 
 ```typescript
 const result = await api.users.get({ params: { id: '123' } })
 
-if (result instanceof DeserializationError) {
-  console.log(result.kind) // "DeserializationError"
+if (result instanceof ParseError) {
+  console.log(result.kind) // "ParseError"
   console.log(result.cause) // Schema validation issues
 }
 ```

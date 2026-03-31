@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { Endpoint } from "./endpoint.ts";
 import z from "zod";
-import { DeserializationError, SerializationError } from "./errors.ts";
+import { ParseError, SerializationError } from "./errors.ts";
 
 describe("Endpoint.generate_url", () => {
   test("basic pathname without params or query", async () => {
@@ -118,7 +118,7 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.searchParams.get("include"), "posts");
   });
 
-  test("with pathname params - custom serialization", async () => {
+  test("with pathname params - custom serialize", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users/(:id)",
@@ -126,8 +126,8 @@ describe("Endpoint.generate_url", () => {
         schema: z.object({
           id: z.number(),
         }),
-        serialization: (data) => {
-          // Custom serialization: pad number with zeros to 6 digits
+        serialize: (data) => {
+          // Custom serialize: pad number with zeros to 6 digits
           return { id: String(data.id).padStart(6, "0") };
         },
       },
@@ -142,7 +142,7 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.search, "");
   });
 
-  test("with pathname params - custom serialization with schema transform", async () => {
+  test("with pathname params - custom serialize with schema transform", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users/(:id)",
@@ -150,8 +150,8 @@ describe("Endpoint.generate_url", () => {
         schema: z.object({
           id: z.string().transform((s) => s.toUpperCase()),
         }),
-        serialization: (data) => {
-          // Custom serialization: add prefix
+        serialize: (data) => {
+          // Custom serialize: add prefix
           return { id: `user-${data.id}` };
         },
       },
@@ -162,12 +162,12 @@ describe("Endpoint.generate_url", () => {
     });
     assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
-    // Schema transforms "abc" to "ABC", then custom serialization adds prefix
+    // Schema transforms "abc" to "ABC", then custom serialize adds prefix
     assert.equal(url.pathname, "/users/user-ABC");
     assert.equal(url.search, "");
   });
 
-  test("with query string - custom serialization function", async () => {
+  test("with query string - custom serialize function", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
@@ -176,8 +176,8 @@ describe("Endpoint.generate_url", () => {
           tags: z.array(z.string()),
           limit: z.number(),
         }),
-        serialization: (data) => {
-          // Custom serialization: serialize array as comma-separated values
+        serialize: (data) => {
+          // Custom serialize: serialize array as comma-separated values
           const params = new URLSearchParams();
           params.set("tags", data.tags.join(","));
           params.set("limit", String(data.limit));
@@ -196,7 +196,7 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.searchParams.get("limit"), "10");
   });
 
-  test("with query string - custom serialization with schema transform", async () => {
+  test("with query string - custom serialize with schema transform", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/search",
@@ -205,8 +205,8 @@ describe("Endpoint.generate_url", () => {
           q: z.string().transform((s) => s.trim().toLowerCase()),
           page: z.number().transform((n) => n * 10),
         }),
-        serialization: (data) => {
-          // Custom serialization: encode query with special format
+        serialize: (data) => {
+          // Custom serialize: encode query with special format
           const params = new URLSearchParams();
           params.set("query", encodeURIComponent(data.q));
           params.set("offset", String(data.page));
@@ -222,19 +222,19 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/search");
     // Schema transforms: "  Hello World  " -> "hello world", page 2 -> 20
-    // Custom serialization: maps q -> query, page -> offset
+    // Custom serialize: maps q -> query, page -> offset
     assert.equal(url.searchParams.get("query"), "hello%20world");
     assert.equal(url.searchParams.get("offset"), "20");
   });
 
-  test("with query string - custom serialization for array schema", async () => {
+  test("with query string - custom serialize for array schema", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/filters",
       query: {
         schema: z.array(z.tuple([z.string(), z.string()])),
-        serialization: (data) => {
-          // Custom serialization: serialize tuples as key=value pairs
+        serialize: (data) => {
+          // Custom serialize: serialize tuples as key=value pairs
           const params = new URLSearchParams();
           data.forEach(([key, value]) => {
             params.append(key, value);
@@ -303,13 +303,13 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, undefined);
   });
 
-  test("POST request with JSON serialization - object schema", async () => {
+  test("POST request with JSON serialize - object schema", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "John" } });
@@ -318,13 +318,13 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with JSON serialization - array schema", async () => {
+  test("POST request with JSON serialize - array schema", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
       body: {
         schema: z.array(z.object({ id: z.number() })),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -335,7 +335,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with JSON serialization - schema transformations", async () => {
+  test("POST request with JSON serialize - schema transformations", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
@@ -344,7 +344,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string().transform((s) => s.toUpperCase()),
           age: z.number().transform((n) => n * 2),
         }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -356,13 +356,13 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("PUT request with JSON serialization", async () => {
+  test("PUT request with JSON serialize", async () => {
     const endpoint = new Endpoint({
       method: "PUT",
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "Jane" } });
@@ -371,13 +371,13 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("PATCH request with JSON serialization", async () => {
+  test("PATCH request with JSON serialize", async () => {
     const endpoint = new Endpoint({
       method: "PATCH",
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "Bob" } });
@@ -386,13 +386,13 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("DELETE request with JSON serialization", async () => {
+  test("DELETE request with JSON serialize", async () => {
     const endpoint = new Endpoint({
       method: "DELETE",
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ reason: z.string() }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -403,7 +403,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with custom serialization - FormData", async () => {
+  test("POST request with custom serialize - FormData", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/upload",
@@ -412,7 +412,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string(),
           file: z.string(),
         }),
-        serialization: (data) => {
+        serialize: (data) => {
           const formData = new FormData();
           formData.append("name", data.name);
           formData.append("file", data.file);
@@ -431,7 +431,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "multipart/form-data");
   });
 
-  test("POST request with custom serialization - URLSearchParams", async () => {
+  test("POST request with custom serialize - URLSearchParams", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/submit",
@@ -440,7 +440,7 @@ describe("Endpoint.serialize_body", () => {
           username: z.string(),
           password: z.string(),
         }),
-        serialization: (data) => {
+        serialize: (data) => {
           const params = new URLSearchParams();
           params.set("username", data.username);
           params.set("password", data.password);
@@ -462,7 +462,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(params.get("password"), "secret");
   });
 
-  test("POST request with custom serialization - string", async () => {
+  test("POST request with custom serialize - string", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/text",
@@ -470,7 +470,7 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({
           message: z.string(),
         }),
-        serialization: (data) => {
+        serialize: (data) => {
           return {
             body: data.message,
             content_type: "text/plain",
@@ -486,7 +486,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "text/plain");
   });
 
-  test("POST request with custom serialization - null body", async () => {
+  test("POST request with custom serialize - null body", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/empty",
@@ -494,7 +494,7 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({
           action: z.string(),
         }),
-        serialization: () => {
+        serialize: () => {
           return {
             body: null,
             content_type: "application/json",
@@ -510,7 +510,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with custom serialization - schema transformations", async () => {
+  test("POST request with custom serialize - schema transformations", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/transform",
@@ -519,8 +519,8 @@ describe("Endpoint.serialize_body", () => {
           value: z.string().transform((s) => s.toUpperCase()),
           count: z.number().transform((n) => n * 2),
         }),
-        serialization: (data) => {
-          // Custom serialization receives transformed data
+        serialize: (data) => {
+          // Custom serialize receives transformed data
           return {
             body: `${data.value}:${data.count}`,
             content_type: "text/plain",
@@ -532,7 +532,7 @@ describe("Endpoint.serialize_body", () => {
       body: { value: "hello", count: 5 },
     });
     // Schema transforms: "hello" -> "HELLO", 5 -> 10
-    // Custom serialization formats as "HELLO:10"
+    // Custom serialize formats as "HELLO:10"
     assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, "HELLO:10");
     assert.equal(result.content_type, "text/plain");
@@ -547,7 +547,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string().min(3),
           age: z.number().positive(),
         }),
-        serialization: "json",
+        serialize: "json",
       },
     });
 
@@ -566,7 +566,7 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({
           name: z.string(),
         }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -586,7 +586,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string(),
           email: z.string().email(),
         }),
-        serialization: "json",
+        serialize: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -627,7 +627,7 @@ describe("Endpoint.parse_response", () => {
           id: z.number(),
           name: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: 1, name: "Test" }), {
@@ -635,7 +635,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { id: 1, name: "Test" });
@@ -653,7 +653,7 @@ describe("Endpoint.parse_response", () => {
           id: z.number(),
           name: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: 2, name: "Created" }), {
@@ -661,7 +661,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 201);
     assert.deepEqual(result.data, { id: 2, name: "Created" });
@@ -675,14 +675,14 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           id: z.number(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(null, {
       status: 204,
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 204);
     assert.equal(result.data, null);
@@ -697,7 +697,7 @@ describe("Endpoint.parse_response", () => {
       status: 204,
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 204);
     assert.equal(result.data, null);
@@ -713,13 +713,13 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.equal(result.data, null);
   });
 
-  test("200 OK with custom deserialization", async () => {
+  test("200 OK with custom parse", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
@@ -727,7 +727,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           value: z.string(),
         }),
-        deserialization: async (body) => {
+        parse: async (body) => {
           const text = await readStream(body);
           return JSON.parse(text);
         },
@@ -738,7 +738,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { value: "custom" });
@@ -753,7 +753,7 @@ describe("Endpoint.parse_response", () => {
           name: z.string().transform((s) => s.toUpperCase()),
           age: z.number().transform((n) => n * 2),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ name: "john", age: 25 }), {
@@ -761,7 +761,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { name: "JOHN", age: 50 });
@@ -779,7 +779,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/new" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 301);
     assert.equal(result.redirect_to, "https://example.com/new");
@@ -795,7 +795,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/target" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 302);
     assert.equal(result.redirect_to, "https://example.com/target");
@@ -811,7 +811,7 @@ describe("Endpoint.parse_response", () => {
       headers: { Location: "https://example.com/permanent" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 308);
     assert.equal(result.redirect_to, "https://example.com/permanent");
@@ -827,7 +827,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           message: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ message: "Invalid input" }), {
@@ -835,7 +835,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.deepEqual(result.error, { message: "Invalid input" });
@@ -847,7 +847,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users/(:id)",
       error: {
         schema: z.string(),
-        deserialization: "text",
+        parse: "text",
       },
     });
     const response = new Response("Not Found", {
@@ -855,13 +855,13 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 404);
     assert.equal(result.error, "Not Found");
   });
 
-  test("422 Unprocessable Entity with custom error deserialization", async () => {
+  test("422 Unprocessable Entity with custom error parse", async () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
@@ -869,7 +869,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           errors: z.array(z.string()),
         }),
-        deserialization: async (body) => {
+        parse: async (body) => {
           const text = await readStream(body);
           return { errors: text.split(",") };
         },
@@ -880,7 +880,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 422);
     assert.deepEqual(result.error, {
@@ -898,7 +898,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.equal(result.error, "Error message");
@@ -912,7 +912,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           code: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ code: "UNAUTHORIZED" }), {
@@ -920,7 +920,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 401);
     assert.deepEqual(result.error, { code: "UNAUTHORIZED" });
@@ -937,7 +937,7 @@ describe("Endpoint.parse_response", () => {
           message: z.string(),
           code: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ message: "Internal error", code: "ERR_500" }), {
@@ -945,7 +945,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 500);
     assert.deepEqual(result.error, {
@@ -960,7 +960,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       error: {
         schema: z.string(),
-        deserialization: "text",
+        parse: "text",
       },
     });
     const response = new Response("Service unavailable", {
@@ -968,13 +968,13 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 503);
     assert.equal(result.error, "Service unavailable");
   });
 
-  test("502 Bad Gateway with custom error deserialization", async () => {
+  test("502 Bad Gateway with custom error parse", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/proxy",
@@ -982,7 +982,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           upstream: z.string(),
         }),
-        deserialization: async (body) => {
+        parse: async (body) => {
           const text = await readStream(body);
           return { upstream: `gateway-${text}` };
         },
@@ -993,7 +993,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "text/plain" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 502);
     assert.deepEqual(result.error, { upstream: "gateway-error" });
@@ -1009,7 +1009,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           id: z.number(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response("", {
@@ -1017,7 +1017,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(result instanceof DeserializationError);
+    assert.ok(result instanceof ParseError);
   });
 
   test("400 Bad Request with no body", async () => {
@@ -1026,14 +1026,14 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       error: {
         schema: z.string(),
-        deserialization: "text",
+        parse: "text",
       },
     });
     const response = new Response(null, {
       status: 400,
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, false);
     assert.equal(result.status, 400);
     assert.equal(result.error, "");
@@ -1050,7 +1050,7 @@ describe("Endpoint.parse_response", () => {
           id: z.number(),
           name: z.string(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: "invalid" }), {
@@ -1058,7 +1058,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(result instanceof DeserializationError);
+    assert.ok(result instanceof ParseError);
   });
 
   test("400 Bad Request with invalid error format", async () => {
@@ -1070,7 +1070,7 @@ describe("Endpoint.parse_response", () => {
           message: z.string(),
           code: z.number(),
         }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ message: "Error", code: "not-a-number" }), {
@@ -1078,7 +1078,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(result instanceof DeserializationError);
+    assert.ok(result instanceof ParseError);
     assert.equal(result.context.operation, "parse_response");
   });
 
@@ -1090,7 +1090,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const headers = new Headers();
@@ -1101,7 +1101,7 @@ describe("Endpoint.parse_response", () => {
       headers,
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.headers.get("X-Custom-Header"), "test-value");
     assert.equal(result.headers.get("Content-Type"), "application/json");
@@ -1113,7 +1113,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
-        deserialization: "json",
+        parse: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: 1 }), {
@@ -1121,7 +1121,7 @@ describe("Endpoint.parse_response", () => {
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof DeserializationError));
+    assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.raw_response, response);
   });

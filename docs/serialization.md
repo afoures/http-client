@@ -41,7 +41,7 @@ const endpoint = new Endpoint({
 
 ### Custom Serialization
 
-Provide a `serialization` function to transform validated params:
+Provide a `serialize` function to transform validated params:
 
 ```typescript
 const endpoint = new Endpoint({
@@ -49,7 +49,7 @@ const endpoint = new Endpoint({
   pathname: '/users/(:id)',
   params: {
     schema: z.object({ id: z.number() }),
-    serialization: (data) => ({ id: `user-${data.id}` }),
+    serialize: (data) => ({ id: `user-${data.id}` }),
   },
 })
 
@@ -95,7 +95,7 @@ const endpoint = new Endpoint({
     schema: z.object({
       tags: z.array(z.string()),
     }),
-    serialization: (data) => {
+    serialize: (data) => {
       const params = new URLSearchParams()
       params.set('tags', data.tags.join(','))
       return params
@@ -116,7 +116,7 @@ Request bodies are serialized for POST, PUT, PATCH, and DELETE methods.
 
 ### JSON
 
-Use `serialization: 'json'` to serialize the body as JSON:
+Use `serialize: 'json'` to serialize the body as JSON:
 
 ```typescript
 const endpoint = new Endpoint({
@@ -127,7 +127,7 @@ const endpoint = new Endpoint({
       name: z.string(),
       email: z.string().email(),
     }),
-    serialization: 'json',
+    serialize: 'json',
   },
 })
 
@@ -151,7 +151,7 @@ const endpoint = new Endpoint({
       file: z.instanceof(File),
       name: z.string(),
     }),
-    serialization: (data) => {
+    serialize: (data) => {
       const formData = new FormData()
       formData.append('file', data.file)
       formData.append('name', data.name)
@@ -172,7 +172,7 @@ const endpoint = new Endpoint({
       username: z.string(),
       password: z.string(),
     }),
-    serialization: (data) => {
+    serialize: (data) => {
       const params = new URLSearchParams()
       params.set('username', data.username)
       params.set('password', data.password)
@@ -190,7 +190,7 @@ const endpoint = new Endpoint({
   pathname: '/echo',
   body: {
     schema: z.string(),
-    serialization: (text) => ({
+    serialize: (text) => ({
       body: text,
       content_type: 'text/plain',
     }),

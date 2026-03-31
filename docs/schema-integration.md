@@ -15,7 +15,7 @@ const endpoint = new Endpoint({
       name: z.string().min(1),
       email: z.string().email(),
     }),
-    serialization: 'json',
+    serialize: 'json',
   },
   data: {
     schema: z.object({
@@ -23,7 +23,7 @@ const endpoint = new Endpoint({
       name: z.string(),
       createdAt: z.string().datetime(),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 ```
@@ -45,7 +45,7 @@ const endpoint = new Endpoint({
     schema: z.object({
       createdAt: z.string().transform(s => new Date(s)), // parse ISO to Date
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 
@@ -69,7 +69,7 @@ const endpoint = new Endpoint({
       email: 'string',
       age: 'number?',
     }),
-    serialization: 'json',
+    serialize: 'json',
   },
   data: {
     schema: type({
@@ -77,7 +77,7 @@ const endpoint = new Endpoint({
       name: 'string',
       'email?': 'string',
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 ```
@@ -95,7 +95,7 @@ const endpoint = new Endpoint({
       id: 'string',
       'createdAt': 'string.parse(v => new Date(v))',
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 ```
@@ -113,14 +113,14 @@ const endpoint = new Endpoint({
       name: v.pipe(v.string(), v.minLength(1)),
       email: v.pipe(v.string(), v.email()),
     }),
-    serialization: 'json',
+    serialize: 'json',
   },
   data: {
     schema: v.object({
       id: v.string(),
       name: v.string(),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 ```
@@ -138,7 +138,7 @@ const endpoint = new Endpoint({
       id: v.string(),
       createdAt: v.pipe(v.string(), v.transform(s => new Date(s))),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 ```
@@ -195,18 +195,18 @@ const api = http_client({
       list: new Endpoint({
         method: 'GET',
         pathname: '/users',
-        data: { schema: z.array(UserSchema), deserialization: 'json' },
+        data: { schema: z.array(UserSchema), parse: 'json' },
       }),
       get: new Endpoint({
         method: 'GET',
         pathname: '/users/(:id)',
-        data: { schema: UserSchema, deserialization: 'json' },
+        data: { schema: UserSchema, parse: 'json' },
       }),
       create: new Endpoint({
         method: 'POST',
         pathname: '/users',
-        body: { schema: CreateUserSchema, serialization: 'json' },
-        data: { schema: UserSchema, deserialization: 'json' },
+        body: { schema: CreateUserSchema, serialize: 'json' },
+        data: { schema: UserSchema, parse: 'json' },
       }),
     },
   },

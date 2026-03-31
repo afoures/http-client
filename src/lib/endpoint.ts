@@ -1,4 +1,4 @@
-import { DeserializationError, SerializationError } from "./errors.ts";
+import { ParseError, SerializationError } from "./errors.ts";
 import {
   type ErrorMessage,
   type HTTPFetch,
@@ -120,9 +120,8 @@ export class Endpoint<
         // Use transformed params
         const transformed_params = result.value;
 
-        // Apply custom serialization if provided
-        if (this.#serializers.params.serialization) {
-          pathname_params = this.#serializers.params.serialization(transformed_params as any);
+        if (this.#serializers.params.serialize) {
+          pathname_params = this.#serializers.params.serialize(transformed_params as any);
         } else {
           // Convert to string values for RoutePattern
           pathname_params = Object.fromEntries(
@@ -160,11 +159,9 @@ export class Endpoint<
       // Use transformed query
       const transformed_query = result.value;
 
-      if (typeof this.#serializers.query.serialization === "function") {
-        // Custom serialization function
-        search_params = this.#serializers.query.serialization(transformed_query as any);
-      } else if (this.#serializers.query.serialization === "urlencoded") {
-        // Default urlencoded serialization
+      if (typeof this.#serializers.query.serialize === "function") {
+        search_params = this.#serializers.query.serialize(transformed_query as any);
+      } else if (this.#serializers.query.serialize === "urlencoded") {
         if (Array.isArray(transformed_query)) {
           // Array schema (tuples) - serialize tuples as key-value pairs
           // For tuples like [["ok", "test"]], serialize each tuple element
@@ -234,12 +231,9 @@ export class Endpoint<
     // Use transformed content
     const transformed_content = result.value;
 
-    // Apply custom serialization if provided
-    if (typeof this.#serializers.body.serialization === "function") {
-      // Custom serialization function
-      return this.#serializers.body.serialization(transformed_content as any);
+    if (typeof this.#serializers.body.serialize === "function") {
+      return this.#serializers.body.serialize(transformed_content as any);
     } else {
-      // Default JSON serialization
       return {
         body: JSON.stringify(transformed_content),
         content_type: "application/json",
@@ -254,7 +248,7 @@ export class Endpoint<
     | HTTPFetch.ServerErrorResponse<Schema.infer_output<error_schema, string>>
     | HTTPFetch.SuccessfulResponse<Schema.infer_output<data_schema, void>>
     | HTTPFetch.RedirectMessage
-    | DeserializationError
+    | ParseError
   > {
     const raw_response = response;
     const cloned_response = response.clone();
@@ -283,13 +277,11 @@ export class Endpoint<
         const parser = this.#parsers.error;
         let parsed;
 
-        if (typeof parser.deserialization === "function") {
-          // Custom deserialization function
-          parsed = await parser.deserialization(cloned_response.body);
-        } else if (parser.deserialization === "json") {
+        if (typeof parser.parse === "function") {
+          parsed = await parser.parse(cloned_response.body);
+        } else if (parser.parse === "json") {
           parsed = await parse_as_json(cloned_response);
-        } else if (parser.deserialization === "text") {
-          // Default to text deserialization
+        } else if (parser.parse === "text") {
           parsed = await cloned_response.text();
         }
 
@@ -298,7 +290,7 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          return new DeserializationError("Error deserialization failed", {
+          return new ParseError("Error parsing failed", {
             cause: result.issues,
             operation: "parse_response",
           });
@@ -338,14 +330,11 @@ export class Endpoint<
         const parser = this.#parsers.data;
         let parsed;
 
-        if (typeof parser.deserialization === "function") {
-          // Custom deserialization function
-          parsed = await parser.deserialization(cloned_response.body);
-        } else if (parser.deserialization === "json") {
-          // JSON deserialization
+        if (typeof parser.parse === "function") {
+          parsed = await parser.parse(cloned_response.body);
+        } else if (parser.parse === "json") {
           parsed = await parse_as_json(cloned_response);
-        } else if (parser.deserialization === "text") {
-          // Text deserialization
+        } else if (parser.parse === "text") {
           parsed = await cloned_response.text();
         }
 
@@ -354,7 +343,7 @@ export class Endpoint<
         const result = await schema["~standard"].validate(parsed);
 
         if (result.issues !== undefined) {
-          return new DeserializationError("Response deserialization failed", {
+          return new ParseError("Response parsing failed", {
             cause: result.issues,
             operation: "parse_response",
           });
@@ -400,30 +389,30 @@ async function parse_as_json(response: Response): Promise<Json.Value | null> {
 
 function as_serializer<serializer extends Serializer.Any>(
   serializer: any,
-  default_serialization?: serializer["serialization"] & string,
+  default_serialize?: serializer["serialize"] & string,
 ): serializer | null {
   if (!serializer || typeof serializer !== "object" || !("schema" in serializer)) return null;
 
   if (
-    default_serialization === undefined ||
-    ("serialization" in serializer && typeof serializer.serialization !== "undefined")
+    default_serialize === undefined ||
+    ("serialize" in serializer && typeof serializer.serialize !== "undefined")
   )
     return serializer;
 
-  return { serialization: default_serialization, ...serializer };
+  return { serialize: default_serialize, ...serializer };
 }
 
 function as_parser<parser extends Parser.Any>(
   parser: any,
-  default_deserialization?: parser["deserialization"] & string,
+  default_parse?: parser["parse"] & string,
 ): parser | null {
   if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
   if (
-    default_deserialization === undefined ||
-    ("deserialization" in parser && typeof parser.deserialization !== "undefined")
+    default_parse === undefined ||
+    ("parse" in parser && typeof parser.parse !== "undefined")
   )
     return parser;
 
-  return { deserialization: default_deserialization, ...parser };
+  return { parse: default_parse, ...parser };
 }

@@ -43,12 +43,12 @@ export class SerializationError extends HttpClientError {
   }
 }
 
-export class DeserializationError extends HttpClientError {
+export class ParseError extends HttpClientError {
   public readonly context: BaseContext;
 
   constructor(message: string, { cause, ...context }: ErrorCause & BaseContext) {
     super(message, { cause });
-    this.name = "DeserializationError";
+    this.name = "ParseError";
     this.context = context;
   }
 }

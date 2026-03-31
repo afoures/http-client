@@ -13,11 +13,11 @@ const endpointWithSchema = new Endpoint({
   pathname: "/users",
   body: {
     schema: z.object({ name: z.string(), email: z.string() }),
-    serialization: "json",
+    serialize: "json",
   },
   data: {
     schema: z.object({ id: z.string(), name: z.string() }),
-    deserialization: "json",
+    parse: "json",
   },
 });
 
@@ -142,11 +142,11 @@ bench("http_client - with complex endpoints", () => {
         pathname: "/posts",
         body: {
           schema: z.object({ title: z.string(), content: z.string() }),
-          serialization: "json",
+          serialize: "json",
         },
         data: {
           schema: z.object({ id: z.string(), title: z.string() }),
-          deserialization: "json",
+          parse: "json",
         },
       }),
     },

@@ -58,7 +58,7 @@ Define a `data` parser for successful responses:
 
 ### JSON
 
-Use `deserialization: 'json'` to parse the response body as JSON:
+Use `parse: 'json'` to parse the response body as JSON:
 
 ```typescript
 const endpoint = new Endpoint({
@@ -69,7 +69,7 @@ const endpoint = new Endpoint({
       id: z.string(),
       name: z.string(),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 
@@ -87,7 +87,7 @@ const endpoint = new Endpoint({
   pathname: '/health',
   data: {
     schema: z.string(),
-    deserialization: 'text',
+    parse: 'text',
   },
 })
 ```
@@ -100,7 +100,7 @@ const endpoint = new Endpoint({
   pathname: '/data',
   data: {
     schema: z.object({ value: z.number() }),
-    deserialization: async (body) => {
+    parse: async (body) => {
       const text = await new Response(body).text()
       return JSON.parse(text)
     },
@@ -132,13 +132,13 @@ Define an `error` parser for error responses:
 const endpoint = new Endpoint({
   method: 'POST',
   pathname: '/users',
-  body: { schema: z.object({ name: z.string() }), serialization: 'json' },
+  body: { schema: z.object({ name: z.string() }), serialize: 'json' },
   error: {
     schema: z.object({
       message: z.string(),
       code: z.string(),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 
@@ -157,7 +157,7 @@ const endpoint = new Endpoint({
   pathname: '/users/(:id)',
   error: {
     schema: z.string(),
-    deserialization: 'text',
+    parse: 'text',
   },
 })
 
@@ -196,7 +196,7 @@ const endpoint = new Endpoint({
       name: z.string().transform(s => s.toUpperCase()),
       createdAt: z.string().transform(s => new Date(s)),
     }),
-    deserialization: 'json',
+    parse: 'json',
   },
 })
 
@@ -207,15 +207,15 @@ if (result.ok) {
 }
 ```
 
-## Deserialization Errors
+## Parse Errors
 
-If response parsing fails validation, a `DeserializationError` is returned:
+If response parsing fails validation, a `ParseError` is returned:
 
 ```typescript
 const result = await endpoint.parse_response(response)
 
-if (result instanceof DeserializationError) {
-  console.log(result.message) // "Response deserialization failed"
+if (result instanceof ParseError) {
+  console.log(result.message) // "Response parsing failed"
   console.log(result.cause)    // Schema validation issues
 }
 ```
