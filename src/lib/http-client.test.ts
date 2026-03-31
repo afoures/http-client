@@ -36,6 +36,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       data: {
         schema: z.object({ id: z.string(), name: z.string() }),
+        deserialization: "json",
       },
     });
 
@@ -126,6 +127,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string(), email: z.string() }),
+        serialization: "json",
       },
     });
 
@@ -266,6 +268,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/posts/:id",
       data: {
         schema: z.object({ id: z.number(), title: z.string() }),
+        deserialization: "json",
       },
     });
 
@@ -461,6 +464,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string().min(1) }),
+        serialization: "json",
       },
     });
 
@@ -488,6 +492,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
+        deserialization: "json",
       },
     });
 
@@ -595,6 +600,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
 
@@ -661,6 +667,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
 
@@ -692,6 +699,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
 
@@ -723,6 +731,7 @@ describe("fetch_endpoint_factory", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ reason: z.string() }),
+        serialization: "json",
       },
     });
 

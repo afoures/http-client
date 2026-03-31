@@ -49,6 +49,7 @@ bench("Endpoint - with body schema", () => {
         name: z.string(),
         email: z.string(),
       }),
+      serialization: "json",
     },
   });
   return {} as typeof endpoint;
@@ -63,6 +64,7 @@ bench("Endpoint - with data schema", () => {
         id: z.string(),
         name: z.string(),
       }),
+      deserialization: "json",
     },
   });
   return {} as typeof endpoint;
@@ -95,9 +97,11 @@ bench("Endpoint - full schema (all generics)", () => {
     },
     body: {
       schema: z.object({ name: z.string(), email: z.string() }),
+      serialization: "json",
     },
     data: {
       schema: z.object({ id: z.string(), name: z.string() }),
+      deserialization: "json",
     },
     error: {
       schema: z.string(),
@@ -124,6 +128,7 @@ bench("Endpoint - nested object schema", () => {
           }),
         }),
       }),
+      serialization: "json",
     },
   });
   return {} as typeof endpoint;
@@ -140,6 +145,7 @@ bench("Endpoint - array schema", () => {
           email: z.string(),
         }),
       ),
+      serialization: "json",
     },
     data: {
       schema: z.array(
@@ -148,6 +154,7 @@ bench("Endpoint - array schema", () => {
           name: z.string(),
         }),
       ),
+      deserialization: "json",
     },
   });
   return {} as typeof endpoint;
@@ -219,17 +226,11 @@ bench("Endpoint - union types in schema", () => {
     pathname: "/users",
     body: {
       schema: z.object({
-        role: z.union([
-          z.literal("admin"),
-          z.literal("user"),
-          z.literal("guest"),
-        ]),
+        role: z.union([z.literal("admin"), z.literal("user"), z.literal("guest")]),
         status: z.enum(["active", "inactive", "pending"]),
-        metadata: z.record(
-          z.string(),
-          z.union([z.string(), z.number(), z.boolean()]),
-        ),
+        metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
       }),
+      serialization: "json",
     },
   });
   return {} as typeof endpoint;

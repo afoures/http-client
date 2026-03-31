@@ -293,8 +293,8 @@ describe("Endpoint.serialize_body", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      body: undefined as any,
-    } as any);
+      body: undefined,
+    });
     const result = await endpoint.serialize_body({
       body: undefined as never,
     });
@@ -309,6 +309,7 @@ describe("Endpoint.serialize_body", () => {
       pathname: "/users",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "John" } });
@@ -323,6 +324,7 @@ describe("Endpoint.serialize_body", () => {
       pathname: "/users",
       body: {
         schema: z.array(z.object({ id: z.number() })),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -342,6 +344,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string().transform((s) => s.toUpperCase()),
           age: z.number().transform((n) => n * 2),
         }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -359,6 +362,7 @@ describe("Endpoint.serialize_body", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "Jane" } });
@@ -373,6 +377,7 @@ describe("Endpoint.serialize_body", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ name: z.string() }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({ body: { name: "Bob" } });
@@ -387,6 +392,7 @@ describe("Endpoint.serialize_body", () => {
       pathname: "/users/(:id)",
       body: {
         schema: z.object({ reason: z.string() }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -541,11 +547,12 @@ describe("Endpoint.serialize_body", () => {
           name: z.string().min(3),
           age: z.number().positive(),
         }),
+        serialization: "json",
       },
     });
 
     const result = await endpoint.serialize_body({
-      body: { name: "ab", age: -1 } as any,
+      body: { name: "ab", age: -1 },
     });
     assert.ok(result instanceof SerializationError);
     assert.equal(result.context.operation, "serialize_body");
@@ -559,10 +566,12 @@ describe("Endpoint.serialize_body", () => {
         schema: z.object({
           name: z.string(),
         }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({
-      body: { name: 123 } as any, // wrong type
+      // @ts-expect-error - wrong type
+      body: { name: 123 },
     });
     assert.ok(result instanceof SerializationError);
     assert.equal(result.context.operation, "serialize_body");
@@ -577,6 +586,7 @@ describe("Endpoint.serialize_body", () => {
           name: z.string(),
           email: z.string().email(),
         }),
+        serialization: "json",
       },
     });
     const result = await endpoint.serialize_body({
@@ -617,6 +627,7 @@ describe("Endpoint.parse_response", () => {
           id: z.number(),
           name: z.string(),
         }),
+        deserialization: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: 1, name: "Test" }), {
@@ -636,14 +647,15 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      body: undefined as any,
+      body: undefined,
       data: {
         schema: z.object({
           id: z.number(),
           name: z.string(),
         }),
+        deserialization: "json",
       },
-    } as any);
+    });
     const response = new Response(JSON.stringify({ id: 2, name: "Created" }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
@@ -663,6 +675,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           id: z.number(),
         }),
+        deserialization: "json",
       },
     });
     const response = new Response(null, {
@@ -740,6 +753,7 @@ describe("Endpoint.parse_response", () => {
           name: z.string().transform((s) => s.toUpperCase()),
           age: z.number().transform((n) => n * 2),
         }),
+        deserialization: "json",
       },
     });
     const response = new Response(JSON.stringify({ name: "john", age: 25 }), {
@@ -995,6 +1009,7 @@ describe("Endpoint.parse_response", () => {
         schema: z.object({
           id: z.number(),
         }),
+        deserialization: "json",
       },
     });
     const response = new Response("", {
@@ -1035,6 +1050,7 @@ describe("Endpoint.parse_response", () => {
           id: z.number(),
           name: z.string(),
         }),
+        deserialization: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: "invalid" }), {
@@ -1074,6 +1090,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
+        deserialization: "json",
       },
     });
     const headers = new Headers();
@@ -1096,6 +1113,7 @@ describe("Endpoint.parse_response", () => {
       pathname: "/users",
       data: {
         schema: z.object({ id: z.number() }),
+        deserialization: "json",
       },
     });
     const response = new Response(JSON.stringify({ id: 1 }), {

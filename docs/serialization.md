@@ -114,9 +114,9 @@ const url = await endpoint.generate_url({
 
 Request bodies are serialized for POST, PUT, PATCH, and DELETE methods.
 
-### JSON (Default)
+### JSON
 
-For JSON-compatible schemas, JSON serialization is automatic:
+Use `serialization: 'json'` to serialize the body as JSON:
 
 ```typescript
 const endpoint = new Endpoint({
@@ -127,6 +127,7 @@ const endpoint = new Endpoint({
       name: z.string(),
       email: z.string().email(),
     }),
+    serialization: 'json',
   },
 })
 

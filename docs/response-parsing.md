@@ -56,7 +56,9 @@ type ServerErrorResponse<Error> = {
 
 Define a `data` parser for successful responses:
 
-### JSON (Default)
+### JSON
+
+Use `deserialization: 'json'` to parse the response body as JSON:
 
 ```typescript
 const endpoint = new Endpoint({
@@ -67,6 +69,7 @@ const endpoint = new Endpoint({
       id: z.string(),
       name: z.string(),
     }),
+    deserialization: 'json',
   },
 })
 
@@ -129,7 +132,7 @@ Define an `error` parser for error responses:
 const endpoint = new Endpoint({
   method: 'POST',
   pathname: '/users',
-  body: { schema: z.object({ name: z.string() }) },
+  body: { schema: z.object({ name: z.string() }), serialization: 'json' },
   error: {
     schema: z.object({
       message: z.string(),
@@ -193,6 +196,7 @@ const endpoint = new Endpoint({
       name: z.string().transform(s => s.toUpperCase()),
       createdAt: z.string().transform(s => new Date(s)),
     }),
+    deserialization: 'json',
   },
 })
 

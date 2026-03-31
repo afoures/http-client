@@ -14,7 +14,7 @@ const api = http_client({
     users: new Endpoint({
       method: 'GET',
       pathname: '/users',
-      data: { schema: z.array(z.object({ id: z.string() })) },
+      data: { schema: z.array(z.object({ id: z.string() })), deserialization: 'json' },
     }),
   },
 })

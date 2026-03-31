@@ -281,30 +281,21 @@ export namespace Serializer {
           serialization: (data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams;
         };
 
-  export type Body<schema extends Schema._> =
-    schema extends Schema._<any, Json.Value>
-      ? {
-          schema: schema;
-          serialization?:
-            | "json"
-            | ((data: Schema.infer_output<NoInfer<schema>>) => {
-                body: BodyInit | null;
-                content_type: string;
-              });
-        }
-      : {
-          schema: schema;
-          serialization: (data: Schema.infer_output<NoInfer<schema>>) => {
-            body: BodyInit | null;
-            content_type: string;
-          };
-        };
+  export type Body<schema extends Schema._> = {
+    schema: schema;
+    serialization:
+      | "json"
+      | ((data: Schema.infer_output<NoInfer<schema>, any>) => {
+          body: BodyInit | null;
+          content_type: string;
+        });
+  };
 }
 
 export namespace Parser {
   export type Any = {
     schema: Schema.Any;
-    deserialization?: string | ((data: any) => any);
+    deserialization: string | ((data: any) => any);
   };
 
   export type Data<schema extends Schema._> =
@@ -313,22 +304,14 @@ export namespace Parser {
           schema: schema;
           deserialization:
             | "text"
-            | "json"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         }
-      : schema extends Schema._<Json.Value, any>
-        ? {
-            schema: schema;
-            deserialization?:
-              | "json"
-              | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-          }
-        : {
-            schema: schema;
-            deserialization: (
-              body: Response["body"],
-            ) => Promise<Schema.infer_input<NoInfer<schema>>>;
-          };
+      : {
+          schema: schema;
+          deserialization:
+            | "json"
+            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
+        };
 
   export type Error<schema extends Schema._> =
     schema extends Schema._<string, any>
@@ -336,20 +319,12 @@ export namespace Parser {
           schema: schema;
           deserialization:
             | "text"
-            | "json"
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         }
-      : schema extends Schema._<Json.Value, any>
-        ? {
-            schema: schema;
-            deserialization:
-              | "json"
-              | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-          }
-        : {
-            schema: schema;
-            deserialization: (
-              body: Response["body"],
-            ) => Promise<Schema.infer_input<NoInfer<schema>>>;
-          };
+      : {
+          schema: schema;
+          deserialization:
+            | "json"
+            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
+        };
 }
