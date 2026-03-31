@@ -2,6 +2,50 @@
 
 This is the changelog for `http-client`.
 
+## 0.2.0
+
+### Features
+
+- Rename `serialization` to `serialize` on all serializer definitions and `deserialization` to `parse` on all parser definitions. `DeserializationError` has been renamed to `ParseError`.
+  
+  ```typescript
+  // Before
+  body: {
+    schema: z.object({ name: z.string() }),
+    serialization: 'json',
+  }
+  data: {
+    schema: z.object({ id: z.string() }),
+    deserialization: 'json',
+  }
+  
+  // After
+  body: {
+    schema: z.object({ name: z.string() }),
+    serialize: 'json',
+  }
+  data: {
+    schema: z.object({ id: z.string() }),
+    parse: 'json',
+  }
+  ```
+
+- `serialize` is now required on body definitions and `parse` is now required on data and error parser definitions.
+  
+  Previously these were optional and defaulted to `"json"` when the schema type was JSON-compatible. You must now always explicitly specify the serialization/parse strategy.
+  
+  ```typescript
+  body: {
+    schema: z.object({ name: z.string() }),
+    serialize: 'json', // was optional, now required
+  }
+  
+  data: {
+    schema: z.object({ id: z.string() }),
+    parse: 'json', // was optional, now required
+  }
+  ```
+
 ## 0.1.1
 
 ### Bug Fixes
