@@ -1,4 +1,4 @@
-import { ParseError, SerializationError } from "./errors.ts";
+import { ParseError, SerializationError, type ErrorContext } from "./errors.ts";
 import {
   type ErrorMessage,
   type HTTPFetch,
@@ -114,7 +114,8 @@ export class Endpoint<
           return new SerializationError("Params serialization failed", {
             operation: "generate_url",
             cause: result.issues,
-          });
+            input: { params: init.params },
+          } as ErrorContext);
         }
 
         // Use transformed params
@@ -149,12 +150,13 @@ export class Endpoint<
       const schema = this.#serializers.query.schema;
       const result = await schema["~standard"].validate(init.query);
 
-      if (result.issues !== undefined) {
-        return new SerializationError("Query serialization failed", {
-          cause: result.issues,
-          operation: "generate_url",
-        });
-      }
+        if (result.issues !== undefined) {
+          return new SerializationError("Query serialization failed", {
+            cause: result.issues,
+            operation: "generate_url",
+            input: { query: init.query },
+          } as ErrorContext);
+        }
 
       // Use transformed query
       const transformed_query = result.value;
@@ -225,7 +227,8 @@ export class Endpoint<
       return new SerializationError("Body serialization failed", {
         operation: "serialize_body",
         cause: result.issues,
-      });
+        input: { body: init.body },
+      } as ErrorContext);
     }
 
     // Use transformed content
@@ -293,7 +296,12 @@ export class Endpoint<
           return new ParseError("Error parsing failed", {
             cause: result.issues,
             operation: "parse_response",
-          });
+            response: {
+              status,
+              headers,
+              body: parsed,
+            },
+          } as ErrorContext);
         }
 
         error = result.value;
@@ -346,7 +354,12 @@ export class Endpoint<
           return new ParseError("Response parsing failed", {
             cause: result.issues,
             operation: "parse_response",
-          });
+            response: {
+              status,
+              headers,
+              body: parsed,
+            },
+          } as ErrorContext);
         }
 
         return {

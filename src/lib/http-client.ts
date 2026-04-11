@@ -88,9 +88,13 @@ export function fetch_endpoint_factory<
         HTTPFetch.DefaultRequestInit
     >,
   ) {
+    let start_time = Date.now();
+
     if (!URL.canParse(base_url)) {
       return new UnexpectedError(`Invalid base_url: ${base_url}`, {
         operation: "base_url_validation",
+        request: { url: base_url, method: endpoint.method, baseUrl: base_url },
+        timing: { startTime: start_time },
       });
     }
 
@@ -113,6 +117,17 @@ export function fetch_endpoint_factory<
           new UnexpectedError("Failed to generate URL", {
             cause: error,
             operation: "generate_url",
+            request: {
+              url: base_url,
+              method: endpoint.method,
+              baseUrl: base_url,
+            },
+            input: {
+              params: args.params,
+              query: args.query,
+            },
+
+            timing: { startTime: start_time },
           }),
       );
     if (url instanceof Error) return url;
@@ -126,6 +141,16 @@ export function fetch_endpoint_factory<
           new UnexpectedError("Failed to serialize body", {
             cause: error,
             operation: "serialize_body",
+            request: {
+              url: url instanceof URL ? url.toString() : base_url,
+              method: endpoint.method,
+              baseUrl: base_url,
+            },
+            input: {
+              body: args.body,
+            },
+
+            timing: { startTime: start_time },
           }),
       );
     if (serialized instanceof Error) return serialized;
@@ -162,6 +187,14 @@ export function fetch_endpoint_factory<
         error = new UnexpectedError("Failed to create request", {
           cause: local_error,
           operation: "create_request",
+          request: {
+            url: url instanceof URL ? url.toString() : base_url,
+            method: endpoint.method,
+            headers,
+            timeout: options.timeout,
+            baseUrl: base_url,
+          },
+          timing: { startTime: start_time, attempt: 1 },
         });
         break; // no retry
       }
@@ -172,12 +205,52 @@ export function fetch_endpoint_factory<
         response = await custom_fetch(request);
         error = undefined; // clear any previous error on success
       } catch (local_error) {
+        const duration = Date.now() - start_time;
         if (local_error instanceof Error && local_error.name === "TimeoutError") {
-          error = new TimeoutError(local_error.message, { cause: local_error, operation: "fetch" });
+          error = new TimeoutError(local_error.message, {
+            cause: local_error,
+            operation: "fetch",
+            request: {
+              url: request.url,
+              method: request.method,
+              timeout: options.timeout,
+            },
+            timing: {
+              startTime: start_time,
+              duration,
+              attempt,
+            },
+          });
         } else if (local_error instanceof Error && local_error.name === "AbortError") {
-          error = new AbortedError(local_error.message, { cause: local_error, operation: "fetch" });
+          error = new AbortedError(local_error.message, {
+            cause: local_error,
+            operation: "fetch",
+            request: {
+              url: request.url,
+              method: request.method,
+              timeout: options.timeout,
+            },
+            timing: {
+              startTime: start_time,
+              duration,
+              attempt,
+            },
+          });
         } else {
-          error = new NetworkError("Network error", { cause: local_error, operation: "fetch" });
+          error = new NetworkError("Network error", {
+            cause: local_error,
+            operation: "fetch",
+            request: {
+              url: request.url,
+              method: request.method,
+              timeout: options.timeout,
+            },
+            timing: {
+              startTime: start_time,
+              duration,
+              attempt,
+            },
+          });
         }
       }
 
@@ -202,6 +275,18 @@ export function fetch_endpoint_factory<
         error = new UnexpectedError("Failed to check retry policy", {
           cause: local_error,
           operation: "retry_policy",
+          request: {
+            url: url instanceof URL ? url.toString() : base_url,
+            method: endpoint.method,
+            timeout: options.timeout,
+            baseUrl: base_url,
+          },
+          timing: {
+            startTime: start_time,
+            attempt,
+            maxAttempts:
+              typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
+          },
         });
         break; // no retry
       }
@@ -210,19 +295,58 @@ export function fetch_endpoint_factory<
 
     if (error) return error;
     if (!response) {
-      return new UnexpectedError("", {
+      return new UnexpectedError("No response received", {
         cause: "No response received",
         operation: "parse_response",
+        request: {
+          url: url instanceof URL ? url.toString() : base_url,
+          method: endpoint.method,
+          timeout: options.timeout,
+          baseUrl: base_url,
+        },
+        timing: { startTime: start_time, attempt },
       });
     }
     hooks.on_response?.(response);
-    const result = await endpoint.parse_response(response).catch((error) => {
+    const result = await endpoint.parse_response(response).catch(async (error) => {
+      const response_body = await response
+        .clone()
+        .text()
+        .catch(() => undefined);
+
       if (error instanceof Error && error.name === "AbortError") {
-        return new AbortedError(error.message, { cause: error, operation: "parse_response" });
+        return new AbortedError(error.message, {
+          cause: error,
+          operation: "parse_response",
+          request: {
+            url: response.url,
+            method: request?.method,
+          },
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            body: response_body,
+          },
+          timing: { startTime: start_time, attempt },
+        });
       }
       return new UnexpectedError("Failed to parse response", {
         cause: error,
         operation: "parse_response",
+        request: {
+          url: response.url,
+          method: request?.method,
+          timeout: options.timeout,
+          baseUrl: base_url,
+        },
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+          body: response_body,
+        },
+        timing: { startTime: start_time, attempt },
       });
     });
 
