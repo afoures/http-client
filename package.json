@@ -47,12 +47,12 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "devDependencies": {
-    "@afoures/auto-release": "^0.4.1",
+    "@afoures/auto-release": "^0.5.0",
     "@arktype/attest": "^0.56.0",
-    "@types/node": "^24.12.0",
-    "msw": "^2.12.10",
+    "@types/node": "^24.12.2",
+    "msw": "^2.13.2",
     "oxfmt": "^0.36.0",
-    "oxlint": "^1.51.0",
+    "oxlint": "^1.59.0",
     "tsdown": "^0.21.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
