@@ -1,4 +1,4 @@
-import { ParseError, SerializationError, type ErrorContext } from "./errors.ts";
+import { ParseError, SerializationError } from "./errors.ts";
 import {
   type ErrorMessage,
   type HTTPFetch,
@@ -12,6 +12,90 @@ import {
   type Serializer,
 } from "./types.ts";
 import { RoutePattern } from "@remix-run/route-pattern";
+
+const RESPONSE = {
+  success(
+    method: HTTPMethod.Any,
+    data: any,
+    raw_response: Response,
+  ): HTTPFetch.SuccessfulResponse<any> {
+    const response: HTTPFetch.SuccessfulResponse<any> = {
+      ok: true,
+      method,
+      url: raw_response.url,
+      status: raw_response.status as HTTPStatus.SuccessfulResponse,
+      data,
+      headers: raw_response.headers,
+      raw_response,
+    };
+    Object.defineProperty(response, "raw_response", {
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return response;
+  },
+  redirect(method: HTTPMethod.Any, raw_response: Response): HTTPFetch.RedirectMessage {
+    const redirect_to = raw_response.headers.get("Location") || null;
+    const response: HTTPFetch.RedirectMessage = {
+      ok: false,
+      method,
+      url: raw_response.url,
+      status: raw_response.status as HTTPStatus.RedirectMessage,
+      redirect_to,
+      headers: raw_response.headers,
+      raw_response,
+    };
+    Object.defineProperty(response, "raw_response", {
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return response;
+  },
+  client_error(
+    method: HTTPMethod.Any,
+    error: any,
+    raw_response: Response,
+  ): HTTPFetch.ClientErrorResponse<any> {
+    const response: HTTPFetch.ClientErrorResponse<any> = {
+      ok: false,
+      method,
+      url: raw_response.url,
+      status: raw_response.status as HTTPStatus.ClientErrorResponse,
+      error,
+      headers: raw_response.headers,
+      raw_response,
+    };
+    Object.defineProperty(response, "raw_response", {
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return response;
+  },
+  server_error(
+    method: HTTPMethod.Any,
+    error: any,
+    raw_response: Response,
+  ): HTTPFetch.ServerErrorResponse<any> {
+    const response: HTTPFetch.ServerErrorResponse<any> = {
+      ok: false,
+      method,
+      url: raw_response.url,
+      status: raw_response.status as HTTPStatus.ServerErrorResponse,
+      error,
+      headers: raw_response.headers,
+      raw_response,
+    };
+    Object.defineProperty(response, "raw_response", {
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    return response;
+  },
+};
 
 export type EndpointDefinition<
   http_method extends HTTPMethod.Any,
@@ -115,7 +199,7 @@ export class Endpoint<
             operation: "generate_url",
             cause: result.issues,
             input: { params: init.params },
-          } as ErrorContext);
+          });
         }
 
         // Use transformed params
@@ -150,13 +234,13 @@ export class Endpoint<
       const schema = this.#serializers.query.schema;
       const result = await schema["~standard"].validate(init.query);
 
-        if (result.issues !== undefined) {
-          return new SerializationError("Query serialization failed", {
-            cause: result.issues,
-            operation: "generate_url",
-            input: { query: init.query },
-          } as ErrorContext);
-        }
+      if (result.issues !== undefined) {
+        return new SerializationError("Query serialization failed", {
+          cause: result.issues,
+          operation: "generate_url",
+          input: { query: init.query },
+        });
+      }
 
       // Use transformed query
       const transformed_query = result.value;
@@ -228,7 +312,7 @@ export class Endpoint<
         operation: "serialize_body",
         cause: result.issues,
         input: { body: init.body },
-      } as ErrorContext);
+      });
     }
 
     // Use transformed content
@@ -245,7 +329,7 @@ export class Endpoint<
   }
 
   async parse_response(
-    response: Response,
+    raw_response: Response,
   ): Promise<
     | HTTPFetch.ClientErrorResponse<Schema.infer_output<error_schema, string>>
     | HTTPFetch.ServerErrorResponse<Schema.infer_output<error_schema, string>>
@@ -253,26 +337,15 @@ export class Endpoint<
     | HTTPFetch.RedirectMessage
     | ParseError
   > {
-    const raw_response = response;
-    const cloned_response = response.clone();
-
-    const status = cloned_response.status;
-    const headers = cloned_response.headers;
+    const response = raw_response.clone();
 
     // Handle redirects (30x)
-    if (status >= 300 && status < 400) {
-      const redirect_to = headers.get("Location") || null;
-      return {
-        ok: false,
-        status: status as HTTPStatus.RedirectMessage,
-        redirect_to,
-        headers,
-        raw_response,
-      } as HTTPFetch.RedirectMessage;
+    if (raw_response.status >= 300 && raw_response.status < 400) {
+      return RESPONSE.redirect(this.#method, raw_response);
     }
 
     // Handle client and server errors (40x and 50x)
-    if (status >= 400 && status < 600) {
+    if (raw_response.status >= 400 && raw_response.status < 600) {
       let error: any;
 
       if (this.#parsers.error) {
@@ -281,11 +354,11 @@ export class Endpoint<
         let parsed;
 
         if (typeof parser.parse === "function") {
-          parsed = await parser.parse(cloned_response.body);
+          parsed = await parser.parse(response.body);
         } else if (parser.parse === "json") {
-          parsed = await parse_as_json(cloned_response);
+          parsed = await parse_as_json(response);
         } else if (parser.parse === "text") {
-          parsed = await cloned_response.text();
+          parsed = await response.text();
         }
 
         // Validate with schema
@@ -297,39 +370,29 @@ export class Endpoint<
             cause: result.issues,
             operation: "parse_response",
             response: {
-              status,
-              headers,
+              status: raw_response.status,
+              headers: raw_response.headers,
               body: parsed,
             },
-          } as ErrorContext);
+          });
         }
 
         error = result.value;
       } else {
         // No error parser - default to text
-        error = await cloned_response.text();
+        error = await response.text();
       }
 
-      return {
-        ok: false,
-        status: status,
-        error,
-        headers,
-        raw_response,
-      } as HTTPFetch.ClientErrorResponse<any> | HTTPFetch.ServerErrorResponse<any>;
+      return raw_response.status >= 400 && raw_response.status < 500
+        ? RESPONSE.client_error(this.#method, error, raw_response)
+        : RESPONSE.server_error(this.#method, error, raw_response);
     }
 
     // Handle successful responses (20x)
-    if (status >= 200 && status < 300) {
+    if (raw_response.status >= 200 && raw_response.status < 300) {
       // 204 No Content - special handling
-      if (status === 204) {
-        return {
-          ok: true,
-          status: 204,
-          data: null,
-          headers,
-          raw_response,
-        } as HTTPFetch.SuccessfulResponse<any>;
+      if (raw_response.status === 204) {
+        return RESPONSE.success(this.#method, null, raw_response);
       }
 
       // Other success statuses
@@ -339,11 +402,11 @@ export class Endpoint<
         let parsed;
 
         if (typeof parser.parse === "function") {
-          parsed = await parser.parse(cloned_response.body);
+          parsed = await parser.parse(response.body);
         } else if (parser.parse === "json") {
-          parsed = await parse_as_json(cloned_response);
+          parsed = await parse_as_json(response);
         } else if (parser.parse === "text") {
-          parsed = await cloned_response.text();
+          parsed = await response.text();
         }
 
         // Validate with schema
@@ -355,29 +418,17 @@ export class Endpoint<
             cause: result.issues,
             operation: "parse_response",
             response: {
-              status,
-              headers,
+              status: raw_response.status,
+              headers: raw_response.headers,
               body: parsed,
             },
-          } as ErrorContext);
+          });
         }
 
-        return {
-          ok: true,
-          status: status,
-          data: result.value,
-          headers,
-          raw_response,
-        } as HTTPFetch.SuccessfulResponse<any>;
+        return RESPONSE.success(this.#method, result.value, raw_response);
       } else {
         // No data parser - return null
-        return {
-          ok: true,
-          status: status,
-          data: null as any,
-          headers,
-          raw_response,
-        } as HTTPFetch.SuccessfulResponse<any>;
+        return RESPONSE.success(this.#method, null, raw_response);
       }
     }
 
@@ -421,10 +472,7 @@ function as_parser<parser extends Parser.Any>(
 ): parser | null {
   if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
-  if (
-    default_parse === undefined ||
-    ("parse" in parser && typeof parser.parse !== "undefined")
-  )
+  if (default_parse === undefined || ("parse" in parser && typeof parser.parse !== "undefined"))
     return parser;
 
   return { parse: default_parse, ...parser };

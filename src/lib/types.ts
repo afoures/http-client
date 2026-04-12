@@ -119,6 +119,8 @@ export namespace RetryPolicy {
 
 export namespace HTTPFetch {
   type SharedResponseContent = {
+    method: HTTPMethod.Any;
+    url?: string;
     headers: Headers;
     raw_response: Response;
   };
