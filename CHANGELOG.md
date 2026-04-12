@@ -2,6 +2,14 @@
 
 This is the changelog for `http-client`.
 
+## 0.3.0
+
+### Features
+
+- Add `url` and `method` properties to `SuccessfulResponse`, `RedirectMessage`, `ClientErrorResponse` and `ServerErrorResponse`.
+
+- Add request, response, timing and input context to errors returned by the `http_client`. It should help when investigating issues.
+
 ## 0.2.0
 
 ### Features
