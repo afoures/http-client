@@ -2,6 +2,12 @@
 
 This is the changelog for `http-client`.
 
+## 0.4.0
+
+### Features
+
+- Add `$infer` namespace to infer `data`, `error`, `query`, `params`, `body` types from an http_client.
+
 ## 0.3.0
 
 ### Features
