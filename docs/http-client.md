@@ -145,3 +145,46 @@ if (result.ok) {
   console.log(result.error)
 }
 ```
+
+## Type Inference
+
+The `$infer` namespace provides helpers to extract types from endpoint functions:
+
+```typescript
+import { $infer, http_client, Endpoint } from '@afoures/http-client'
+import { z } from 'zod'
+
+const api = http_client({
+  base_url: 'https://api.example.com',
+  endpoints: {
+    users: {
+      list: new Endpoint({
+        method: 'GET',
+        pathname: '/users',
+        data: { schema: z.array(z.object({ id: z.string(), name: z.string() })), parse: 'json' },
+      }),
+      create: new Endpoint({
+        method: 'POST',
+        pathname: '/users',
+        body: { schema: z.object({ name: z.string() }) },
+        data: { schema: z.object({ id: z.string(), name: z.string() }), parse: 'json' },
+      }),
+    },
+  },
+})
+
+type UsersListQuery = $infer.Query<typeof api.users.list>
+type UsersListData = $infer.Data<typeof api.users.list>
+type UsersListParams = $infer.Params<typeof api.users.list>
+type UsersListError = $infer.Error<typeof api.users.list>
+
+type UsersCreateBody = $infer.Body<typeof api.users.create>
+type UsersCreateData = $infer.Data<typeof api.users.create>
+```
+
+Available type helpers:
+- `$infer.Query` - Extracts the query parameter type
+- `$infer.Params` - Extracts the URL params type
+- `$infer.Body` - Extracts the request body type
+- `$infer.Data` - Extracts the successful response data type
+- `$infer.Error` - Extracts the error response type (client or server errors)

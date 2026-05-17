@@ -392,3 +392,28 @@ export function http_client<const endpoints extends EndpointMap>({
 
   return map(all_endpoints);
 }
+
+type AnyFetchEndpointFunction = ReturnType<
+  typeof fetch_endpoint_factory<any, any, any, any, any, any, any>
+>;
+
+export namespace $infer {
+  export type Query<fetch_endpoint extends AnyFetchEndpointFunction> =
+    Parameters<fetch_endpoint>[0] extends { query: infer query } ? query : never;
+
+  export type Params<fetch_endpoint extends AnyFetchEndpointFunction> =
+    Parameters<fetch_endpoint>[0] extends { params: infer params } ? params : never;
+
+  export type Body<fetch_endpoint extends AnyFetchEndpointFunction> =
+    Parameters<fetch_endpoint>[0] extends { body: infer body } ? body : never;
+
+  export type Data<fetch_endpoint extends AnyFetchEndpointFunction> =
+    ReturnType<fetch_endpoint> extends HTTPFetch.SuccessfulResponse<infer data> ? data : never;
+
+  export type Error<fetch_endpoint extends AnyFetchEndpointFunction> =
+    ReturnType<fetch_endpoint> extends HTTPFetch.ClientErrorResponse<infer error>
+      ? error
+      : ReturnType<fetch_endpoint> extends HTTPFetch.ServerErrorResponse<infer error>
+        ? error
+        : never;
+}

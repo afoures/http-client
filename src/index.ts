@@ -8,7 +8,12 @@ export type {
   Pathname,
 } from "./lib/types.ts";
 export { Endpoint, type EndpointDefinition, type AnyEndpoint } from "./lib/endpoint.ts";
-export { http_client, type HttpClientOptions, type EndpointMap } from "./lib/http-client.ts";
+export {
+  http_client,
+  type HttpClientOptions,
+  type EndpointMap,
+  type $infer,
+} from "./lib/http-client.ts";
 export {
   HttpClientError,
   TimeoutError,
