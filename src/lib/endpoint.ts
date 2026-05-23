@@ -433,7 +433,7 @@ export class Endpoint<
     }
 
     // Fallback for other status codes (shouldn't happen in practice)
-    throw new Error(`Unhandled status code: ${status}`);
+    throw new Error(`Unhandled status code: ${raw_response.status}`);
   }
 }
 
@@ -457,13 +457,9 @@ function as_serializer<serializer extends Serializer.Any>(
 ): serializer | null {
   if (!serializer || typeof serializer !== "object" || !("schema" in serializer)) return null;
 
-  if (
-    default_serialize === undefined ||
-    ("serialize" in serializer && typeof serializer.serialize !== "undefined")
-  )
-    return serializer;
+  if (default_serialize === undefined) return serializer;
 
-  return { serialize: default_serialize, ...serializer };
+  return { ...serializer, serialize: serializer.serialize ?? default_serialize };
 }
 
 function as_parser<parser extends Parser.Any>(
@@ -472,8 +468,7 @@ function as_parser<parser extends Parser.Any>(
 ): parser | null {
   if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
-  if (default_parse === undefined || ("parse" in parser && typeof parser.parse !== "undefined"))
-    return parser;
+  if (default_parse === undefined) return parser;
 
-  return { parse: default_parse, ...parser };
+  return { ...parser, parse: parser.parse ?? default_parse };
 }

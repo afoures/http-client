@@ -89,6 +89,7 @@ export function merge_options(
 }
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
   return new Promise<void>((resolve, reject) => {
     signal?.addEventListener("abort", on_abort, { once: true });
 

@@ -866,6 +866,169 @@ describe("fetch_endpoint_factory", () => {
     assert.equal(attemptCount, 1);
   });
 
+  // Pins bug: fetch_endpoint reads `retry`/`signal`/`timeout` from per-call
+  // options instead of from merge_options(...), so client- and endpoint-level
+  // defaults are silently dropped.
+
+  test("retry from endpoint defaults applies when no per-call retry", async () => {
+    let attemptCount = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 3) return HttpResponse.error();
+        return HttpResponse.json({});
+      }),
+    );
+
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users" },
+      { retry: { attempts: 3, delay: 5, when: (ctx) => !!ctx.error } },
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({});
+
+    assert.ok(
+      !(result instanceof Error),
+      `expected endpoint-default retry to recover, got ${result instanceof Error ? result.name : "unexpected non-error"}`,
+    );
+    assert.equal(attemptCount, 3);
+  });
+
+  test("retry from client defaults applies when no per-call retry", async () => {
+    let attemptCount = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 3) return HttpResponse.error();
+        return HttpResponse.json({});
+      }),
+    );
+
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+      get_default_options: () => ({
+        retry: { attempts: 3, delay: 5, when: (ctx) => !!ctx.error },
+      }),
+    });
+
+    const result = await fetch_endpoint({});
+
+    assert.ok(
+      !(result instanceof Error),
+      `expected client-default retry to recover, got ${result instanceof Error ? result.name : "unexpected non-error"}`,
+    );
+    assert.equal(attemptCount, 3);
+  });
+
+  test("timeout from endpoint defaults applies when no per-call timeout", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/slow`, async () => {
+        await delay(200);
+        return HttpResponse.json({});
+      }),
+    );
+
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/slow" },
+      { timeout: 10 },
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({});
+
+    assert.ok(
+      result instanceof TimeoutError,
+      `expected TimeoutError from endpoint-default timeout, got ${result instanceof Error ? result.name : "success"}`,
+    );
+  });
+
+  test("signal from endpoint defaults applies when no per-call signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})),
+    );
+
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users" },
+      { signal: controller.signal },
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({});
+
+    assert.ok(
+      result instanceof AbortedError,
+      `expected AbortedError from endpoint-default signal, got ${result instanceof Error ? result.name : "success"}`,
+    );
+  });
+
+  // Pins bug: `response` is not reset between retry iterations, so a retry
+  // attempt that throws a network error inherits the previous attempt's
+  // Response in the retry-policy context.
+  test("retry context does not carry stale response after a network error", async () => {
+    let attemptCount = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        attemptCount++;
+        if (attemptCount === 1) return HttpResponse.json({}, { status: 503 });
+        return HttpResponse.error();
+      }),
+    );
+
+    const contexts: Array<{ hasResponse: boolean; hasError: boolean }> = [];
+
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      retry: {
+        attempts: 3,
+        delay: 5,
+        when: (ctx) => {
+          contexts.push({ hasResponse: !!ctx.response, hasError: !!ctx.error });
+          return true;
+        },
+      },
+    });
+
+    // After attempt 1 (503): hasResponse=true, hasError=false.
+    // After attempt 2 (network error): a fresh response was never assigned,
+    // so the retry-policy context must report hasResponse=false. Today it
+    // reports true because `response` is never reset between iterations.
+    assert.ok(contexts.length >= 2, `expected >= 2 retry checks, got ${contexts.length}`);
+    assert.deepEqual(
+      contexts[1],
+      { hasResponse: false, hasError: true },
+      "stale response leaked into retry context after network error",
+    );
+  });
+
   test("Content-Type header override", async () => {
     const endpoint = new Endpoint({
       method: "POST",

@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { merge_options, merge_headers } from "./utils.ts";
+import { merge_options, merge_headers, sleep } from "./utils.ts";
 
 describe("merge_headers", () => {
   test("basic header merging from plain object", () => {
@@ -255,5 +255,29 @@ describe("merge_options", () => {
     );
     assert.equal(result.headers.get("x-first"), "value1");
     assert.equal(result.headers.get("x-third"), "value3");
+  });
+});
+
+describe("sleep", () => {
+  test("rejects immediately when signal is already aborted", async () => {
+    const signal = AbortSignal.abort("preset-reason");
+    const started = Date.now();
+    await assert.rejects(
+      () => sleep(100, signal),
+      (err: unknown) => err === "preset-reason",
+    );
+    assert.ok(
+      Date.now() - started < 50,
+      "sleep should have rejected immediately, not waited for the timeout",
+    );
+  });
+
+  test("rejects when signal is aborted during sleep", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort("mid-sleep"), 5);
+    await assert.rejects(
+      () => sleep(500, controller.signal),
+      (err: unknown) => err === "mid-sleep",
+    );
   });
 });

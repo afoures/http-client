@@ -159,9 +159,9 @@ export function fetch_endpoint_factory<
     if (serialized.content_type) headers.set("Content-Type", serialized.content_type);
 
     const retry_policy: Required<RetryPolicy.Configuration> = {
-      when: options.retry?.when ?? ((ctx) => ctx.response?.ok === false),
-      attempts: options.retry?.attempts ?? 0,
-      delay: options.retry?.delay ?? 0,
+      when: merged_options.retry?.when ?? ((ctx) => ctx.response?.ok === false),
+      attempts: merged_options.retry?.attempts ?? 0,
+      delay: merged_options.retry?.delay ?? 0,
     };
 
     let attempt = 0;
@@ -170,9 +170,10 @@ export function fetch_endpoint_factory<
     let error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
 
     do {
+      response = undefined;
       const signals: Array<AbortSignal> = [];
-      if (options.signal) signals.push(options.signal);
-      if (options.timeout) signals.push(AbortSignal.timeout(options.timeout));
+      if (merged_options.signal) signals.push(merged_options.signal);
+      if (merged_options.timeout) signals.push(AbortSignal.timeout(merged_options.timeout));
       const abort_signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
 
       try {
@@ -191,7 +192,7 @@ export function fetch_endpoint_factory<
             url: url instanceof URL ? url.toString() : base_url,
             method: endpoint.method,
             headers,
-            timeout: options.timeout,
+            timeout: merged_options.timeout,
             baseUrl: base_url,
           },
           timing: { startTime: start_time, attempt: 1 },
@@ -213,7 +214,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: options.timeout,
+              timeout: merged_options.timeout,
             },
             timing: {
               startTime: start_time,
@@ -228,7 +229,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: options.timeout,
+              timeout: merged_options.timeout,
             },
             timing: {
               startTime: start_time,
@@ -243,7 +244,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: options.timeout,
+              timeout: merged_options.timeout,
             },
             timing: {
               startTime: start_time,
@@ -278,7 +279,7 @@ export function fetch_endpoint_factory<
           request: {
             url: url instanceof URL ? url.toString() : base_url,
             method: endpoint.method,
-            timeout: options.timeout,
+            timeout: merged_options.timeout,
             baseUrl: base_url,
           },
           timing: {
@@ -301,7 +302,7 @@ export function fetch_endpoint_factory<
         request: {
           url: url instanceof URL ? url.toString() : base_url,
           method: endpoint.method,
-          timeout: options.timeout,
+          timeout: merged_options.timeout,
           baseUrl: base_url,
         },
         timing: { startTime: start_time, attempt },
@@ -337,7 +338,7 @@ export function fetch_endpoint_factory<
         request: {
           url: response.url,
           method: request?.method,
-          timeout: options.timeout,
+          timeout: merged_options.timeout,
           baseUrl: base_url,
         },
         response: {

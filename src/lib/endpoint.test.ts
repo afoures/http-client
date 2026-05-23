@@ -1125,4 +1125,46 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.ok, true);
     assert.equal(result.raw_response, response);
   });
+
+  test("data parser with explicit `parse: undefined` falls back to JSON default", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/u",
+      data: {
+        schema: z.object({ x: z.number() }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parse: undefined as any,
+      },
+    });
+    const response = new Response(JSON.stringify({ x: 1 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const result = await endpoint.parse_response(response);
+    assert.ok(
+      !(result instanceof ParseError),
+      `expected JSON default to apply, got ParseError: ${result instanceof ParseError ? result.message : ""}`,
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, { x: 1 });
+  });
+
+  test("query serializer with explicit `serialize: undefined` falls back to urlencoded default", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/u",
+      query: {
+        schema: z.object({ x: z.number().transform(String) }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize: undefined as any,
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://example.com",
+      query: { x: 1 },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.searchParams.get("x"), "1");
+  });
 });
