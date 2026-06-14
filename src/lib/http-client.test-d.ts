@@ -81,7 +81,10 @@ type _in_timeout = Expect<Equals<GetUserInput["timeout"], number | undefined>>;
 
 // optional path param flows through the mapped fetch input
 type _in_optional_param = Expect<
-  Equals<Parameters<typeof client.get_user_optional>[0]["params"], { id: string | number | undefined }>
+  Equals<
+    Parameters<typeof client.get_user_optional>[0]["params"],
+    { id: string | number | undefined }
+  >
 >;
 
 // positive: a fully-formed call with request-init options type-checks

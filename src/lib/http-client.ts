@@ -404,40 +404,40 @@ type AnyFetchEndpointFunction = ReturnType<
   typeof fetch_endpoint_factory<any, any, any, any, any, any>
 >;
 
-/** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
-type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
-  ? endpoint
-  : endpoint extends Endpoint<
-        infer http_method,
-        infer pathname,
-        infer params_schema,
-        infer query_schema,
-        infer body_schema,
-        infer responses
-      >
-    ? ReturnType<
-        typeof fetch_endpoint_factory<
-          http_method,
-          pathname,
-          params_schema,
-          query_schema,
-          body_schema,
-          responses
+export namespace $infer {
+  /** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
+  type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
+    ? endpoint
+    : endpoint extends Endpoint<
+          infer http_method,
+          infer pathname,
+          infer params_schema,
+          infer query_schema,
+          infer body_schema,
+          infer responses
         >
-      >
+      ? ReturnType<
+          typeof fetch_endpoint_factory<
+            http_method,
+            pathname,
+            params_schema,
+            query_schema,
+            body_schema,
+            responses
+          >
+        >
+      : never;
+
+  type fetch_input<endpoint> = Parameters<as_fetch_endpoint<endpoint>>[0];
+  type fetch_output<endpoint> = Awaited<ReturnType<as_fetch_endpoint<endpoint>>>;
+
+  /** Read an input key, yielding `never` only when the key genuinely does not exist. */
+  type infer_init<endpoint, key extends PropertyKey> = key extends keyof fetch_input<endpoint>
+    ? fetch_input<endpoint>[key]
     : never;
 
-type fetch_input<endpoint> = Parameters<as_fetch_endpoint<endpoint>>[0];
-type fetch_output<endpoint> = Awaited<ReturnType<as_fetch_endpoint<endpoint>>>;
+  type AnyEndpointInput = AnyFetchEndpointFunction | AnyEndpoint;
 
-/** Read an input key, yielding `never` only when the key genuinely does not exist. */
-type infer_init<endpoint, key extends PropertyKey> = key extends keyof fetch_input<endpoint>
-  ? fetch_input<endpoint>[key]
-  : never;
-
-type AnyEndpointInput = AnyFetchEndpointFunction | AnyEndpoint;
-
-export namespace $infer {
   export type Params<endpoint extends AnyEndpointInput> = infer_init<endpoint, "params">;
 
   export type Query<endpoint extends AnyEndpointInput> = infer_init<endpoint, "query">;

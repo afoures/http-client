@@ -22,6 +22,24 @@ const get_user = new Endpoint({
   },
 });
 
+// wildcard response statuses (`2xx` / `4xx` / `5xx`) acting as per-class defaults
+const wildcard = new Endpoint({
+  method: "GET",
+  pathname: "/wild",
+  responses: {
+    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
+    "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
+    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+  },
+});
+
+const path_optional = new Endpoint({
+  method: "GET",
+  pathname: "/search(/:query)",
+  query: { schema: z.object({ q: z.string() }).optional() },
+  responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
+});
+
 const search_optional = new Endpoint({
   method: "GET",
   pathname: "/search",
@@ -38,11 +56,19 @@ const create_optional = new Endpoint({
 
 const client = http_client({
   base_url: "https://api.example.com",
-  endpoints: { get_user, search_optional, create_optional },
+  endpoints: { get_user, wildcard, path_optional, search_optional, create_optional },
 });
 
 // --- inputs resolve to the schema input type ---
 type _params = Expect<Equals<$infer.Params<typeof client.get_user>, { id: string }>>;
+type _optional_params = Expect<
+  Equals<
+    $infer.Params<typeof client.path_optional>,
+    {
+      query: string | number | undefined;
+    }
+  >
+>;
 type _query = Expect<
   Equals<$infer.Query<typeof client.get_user>, { include: string; page: string }>
 >;
@@ -64,9 +90,24 @@ type _query_from_endpoint = Expect<
 type _data_200 = Expect<
   Equals<$infer.Data<typeof client.get_user, 200>, { id: string; name: string }>
 >;
+type _data_2xx = Expect<
+  Equals<$infer.Data<typeof client.get_user>, { id: string; name: string } | null | void>
+>;
 type _error_404 = Expect<
   Equals<$infer.Error<typeof client.get_user, 404>, { message: string; code: number }>
 >;
+type _error_4xx = Expect<
+  Equals<$infer.Error<typeof client.get_user>, { message: string; code: number } | string>
+>;
+type _error_500 = Expect<Equals<$infer.Error<typeof client.get_user, 500>, string>>;
+
+// --- wildcard setup ---
+type _data_w_200 = Expect<Equals<$infer.Data<typeof client.wildcard, 200>, { ok: boolean }>>;
+type _data_w_2xx = Expect<Equals<$infer.Data<typeof client.wildcard>, { ok: boolean } | null>>;
+type _error_w_404 = Expect<Equals<$infer.Error<typeof client.wildcard, 404>, { error: string }>>;
+type _error_w_4xx = Expect<Equals<$infer.Error<typeof client.wildcard>, { error: string }>>;
+type _error_w_500 = Expect<Equals<$infer.Error<typeof client.wildcard, 500>, { fatal: string }>>;
+type _error_w_5xx = Expect<Equals<$infer.Error<typeof client.wildcard>, { fatal: string }>>;
 
 // --- Result includes transport errors; Response excludes them but stays narrowable ---
 const _is_result: $infer.Result<typeof client.get_user> = null as unknown as NetworkError;
@@ -77,14 +118,3 @@ const _not_response: $infer.Response<typeof client.get_user> = null as unknown a
 const _response = null as unknown as $infer.Response<typeof client.get_user>;
 const _response_ok: boolean = _response.ok;
 const _response_status: number = _response.status;
-
-// reference the type aliases so `noUnusedLocals`-style tools stay quiet
-export type {
-  _params,
-  _query,
-  _optional_query,
-  _optional_body,
-  _query_from_endpoint,
-  _data_200,
-  _error_404,
-};
