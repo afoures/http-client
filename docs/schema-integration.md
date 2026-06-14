@@ -17,13 +17,15 @@ const endpoint = new Endpoint({
     }),
     serialize: "json",
   },
-  data: {
-    schema: z.object({
-      id: z.string(),
-      name: z.string(),
-      createdAt: z.string().datetime(),
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: z.object({
+        id: z.string(),
+        name: z.string(),
+        createdAt: z.string().datetime(),
+      }),
+      parse: "json",
+    },
   },
 });
 ```
@@ -41,11 +43,13 @@ const endpoint = new Endpoint({
       page: z.number().transform(String), // number input, string output
     }),
   },
-  data: {
-    schema: z.object({
-      createdAt: z.string().transform((s) => new Date(s)), // parse ISO to Date
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: z.object({
+        createdAt: z.string().transform((s) => new Date(s)), // parse ISO to Date
+      }),
+      parse: "json",
+    },
   },
 });
 
@@ -71,13 +75,15 @@ const endpoint = new Endpoint({
     }),
     serialize: "json",
   },
-  data: {
-    schema: type({
-      id: "string",
-      name: "string",
-      "email?": "string",
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: type({
+        id: "string",
+        name: "string",
+        "email?": "string",
+      }),
+      parse: "json",
+    },
   },
 });
 ```
@@ -90,12 +96,14 @@ import { type } from "arktype";
 const endpoint = new Endpoint({
   method: "GET",
   pathname: "/users",
-  data: {
-    schema: type({
-      id: "string",
-      createdAt: "string.parse(v => new Date(v))",
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: type({
+        id: "string",
+        createdAt: "string.parse(v => new Date(v))",
+      }),
+      parse: "json",
+    },
   },
 });
 ```
@@ -115,12 +123,14 @@ const endpoint = new Endpoint({
     }),
     serialize: "json",
   },
-  data: {
-    schema: v.object({
-      id: v.string(),
-      name: v.string(),
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: v.object({
+        id: v.string(),
+        name: v.string(),
+      }),
+      parse: "json",
+    },
   },
 });
 ```
@@ -133,15 +143,17 @@ import * as v from "valibot";
 const endpoint = new Endpoint({
   method: "GET",
   pathname: "/users",
-  data: {
-    schema: v.object({
-      id: v.string(),
-      createdAt: v.pipe(
-        v.string(),
-        v.transform((s) => new Date(s)),
-      ),
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: v.object({
+        id: v.string(),
+        createdAt: v.pipe(
+          v.string(),
+          v.transform((s) => new Date(s)),
+        ),
+      }),
+      parse: "json",
+    },
   },
 });
 ```
@@ -198,18 +210,18 @@ const api = http_client({
       list: new Endpoint({
         method: "GET",
         pathname: "/users",
-        data: { schema: z.array(UserSchema), parse: "json" },
+        responses: { 200: { schema: z.array(UserSchema), parse: "json" } },
       }),
       get: new Endpoint({
         method: "GET",
         pathname: "/users/(:id)",
-        data: { schema: UserSchema, parse: "json" },
+        responses: { 200: { schema: UserSchema, parse: "json" } },
       }),
       create: new Endpoint({
         method: "POST",
         pathname: "/users",
         body: { schema: CreateUserSchema, serialize: "json" },
-        data: { schema: UserSchema, parse: "json" },
+        responses: { 201: { schema: UserSchema, parse: "json" } },
       }),
     },
   },

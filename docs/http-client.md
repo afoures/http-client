@@ -14,7 +14,7 @@ const api = http_client({
     users: new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: { schema: z.array(z.object({ id: z.string() })), parse: "json" },
+      responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
     }),
   },
 });
@@ -153,44 +153,60 @@ if (result.ok) {
 
 ## Type Inference
 
-The `$infer` namespace provides helpers to extract types from endpoint functions:
+The `$infer` namespace provides helpers to extract types from an endpoint. Each
+helper accepts **either** an `Endpoint` instance or a bound fetch function from a
+client:
 
 ```typescript
 import { $infer, http_client, Endpoint } from "@afoures/http-client";
 import { z } from "zod";
 
+const get_user = new Endpoint({
+  method: "GET",
+  pathname: "/users/(:id)",
+  responses: {
+    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+    404: { schema: z.object({ message: z.string() }), parse: "json" },
+  },
+});
+
 const api = http_client({
   base_url: "https://api.example.com",
   endpoints: {
     users: {
-      list: new Endpoint({
-        method: "GET",
-        pathname: "/users",
-        data: { schema: z.array(z.object({ id: z.string(), name: z.string() })), parse: "json" },
-      }),
+      get: get_user,
       create: new Endpoint({
         method: "POST",
         pathname: "/users",
-        body: { schema: z.object({ name: z.string() }) },
-        data: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+        body: { schema: z.object({ name: z.string() }), serialize: "json" },
+        responses: {
+          201: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+        },
       }),
     },
   },
 });
 
-type UsersListQuery = $infer.Query<typeof api.users.list>;
-type UsersListData = $infer.Data<typeof api.users.list>;
-type UsersListParams = $infer.Params<typeof api.users.list>;
-type UsersListError = $infer.Error<typeof api.users.list>;
+// From a fetch function...
+type UsersGetParams = $infer.Params<typeof api.users.get>;
+type UsersGetData = $infer.Data<typeof api.users.get>; // data for any success status
+type UsersGetError = $infer.Error<typeof api.users.get>;
 
-type UsersCreateBody = $infer.Body<typeof api.users.create>;
-type UsersCreateData = $infer.Data<typeof api.users.create>;
+// ...or directly from an Endpoint instance
+type CreateBody = $infer.Body<typeof get_user>;
+
+// Narrow data/error to a specific status code
+type User = $infer.Data<typeof api.users.get, 200>; // { id: string; name: string }
+type NotFound = $infer.Error<typeof api.users.get, 404>; // { message: string }
 ```
 
-Available type helpers:
+Available type helpers (each takes an `Endpoint` instance or a fetch function):
 
-- `$infer.Query` - Extracts the query parameter type
-- `$infer.Params` - Extracts the URL params type
-- `$infer.Body` - Extracts the request body type
-- `$infer.Data` - Extracts the successful response data type
-- `$infer.Error` - Extracts the error response type (client or server errors)
+- `$infer.Params` - The URL params input type
+- `$infer.Query` - The query parameter input type
+- `$infer.Body` - The request body input type
+- `$infer.Input` - The full request argument (params + query + body + request init)
+- `$infer.Result` - Everything `fetch` can return, including thrown transport error classes (`NetworkError`, `TimeoutError`, `ParseError`, …)
+- `$infer.Response` - The discriminated HTTP response envelope only (drops the transport errors); narrowable on `ok` / `status`
+- `$infer.Data<endpoint, status?>` - Successful response `data`, optionally narrowed to a status code (or wildcard class)
+- `$infer.Error<endpoint, status?>` - Error response `error`, optionally narrowed to a status code (or wildcard class)

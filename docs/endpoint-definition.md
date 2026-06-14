@@ -48,13 +48,19 @@ Serializer for query string parameters. See [Serialization](./serialization.md#q
 
 Serializer for request body. See [Serialization](./serialization.md#body).
 
-### `data`
+### `responses`
 
-Parser for successful response body. See [Response Parsing](./response-parsing.md#data).
+A map of response parsers keyed by status code. Keys can be a specific status
+(`200`, `201`, `404`, `500`, …) or a class wildcard (`"2xx"`, `"4xx"`, `"5xx"`),
+and each value is a `{ schema, parse }` parser. A specific status takes
+precedence over its wildcard. See [Response Parsing](./response-parsing.md).
 
-### `error`
-
-Parser for error response body. See [Response Parsing](./response-parsing.md#error).
+```typescript
+responses: {
+  200: { schema: z.object({ id: z.string() }), parse: "json" },
+  "4xx": { schema: z.object({ message: z.string() }), parse: "json" },
+}
+```
 
 ## Constructor
 
@@ -65,7 +71,7 @@ const endpoint = new Endpoint(
   {
     method: "GET",
     pathname: "/users",
-    // Definition: method, pathname, params, query, body, data, error
+    // Definition: method, pathname, params, query, body, responses
   },
   {
     headers: {

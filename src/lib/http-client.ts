@@ -12,25 +12,31 @@ import {
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 import { extract_args, merge_options, remove_custom_options, sleep } from "./utils.ts";
 
-/**
- * The value type for entries in an {@link EndpointMap}. Uses the real generic
- * bounds (notably `Pathname.Relative` for the pathname) rather than `any`, so
- * that inline `new Endpoint({...})` declarations keep their literal `pathname`
- * inferred — `any` in the contextual type would widen it to `string` and break
- * the dynamic-params discrimination in `EndpointDefinition`.
- */
-type AnyEndpointValue = Endpoint<
-  HTTPMethod.Any,
-  Pathname.Relative,
-  Schema.Any,
-  Schema.Any,
-  Schema.Any,
-  any
->;
-
 export interface EndpointMap {
-  [name: string]: AnyEndpointValue | EndpointMap;
+  [name: string]: AnyEndpoint | EndpointMap;
 }
+
+/**
+ * Structural validator for the endpoints tree, used as the type of the
+ * `endpoints` option instead of constraining the type parameter with
+ * {@link EndpointMap} directly.
+ *
+ * It is a *homomorphic* mapped type over `endpoints` (`[name in keyof endpoints]`),
+ * which makes it transparent when used as a contextual type: an inline
+ * `new Endpoint({...})` keeps its own inferred generics (`pathname`, the schema
+ * type params, the `responses` map) instead of being widened to a constraint's
+ * value type. Constraining the type parameter with `EndpointMap` instead would
+ * contextually widen those generics — collapsing every schema to `Schema.Any`
+ * and forcing a spurious `params: any` on inline endpoints. Each leaf must be an
+ * `Endpoint`; nested objects recurse.
+ */
+type ValidateEndpointMap<endpoints> = {
+  [name in keyof endpoints]: endpoints[name] extends AnyEndpoint
+    ? endpoints[name]
+    : endpoints[name] extends object
+      ? ValidateEndpointMap<endpoints[name]>
+      : never;
+};
 
 type CustomFetch = (request: Request) => Promise<Response>;
 
@@ -39,7 +45,7 @@ type Hooks = {
   on_response?: (response: Response) => void;
 };
 
-type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
+type map_to_fetch_endpoint_functions<endpoints> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
     infer pathname,
@@ -363,22 +369,20 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
-export type HttpClientOptions<endpoints extends EndpointMap> = {
+export type HttpClientOptions<endpoints> = {
   base_url: string;
-  endpoints: endpoints;
+  endpoints: ValidateEndpointMap<endpoints>;
   options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
   fetch?: CustomFetch;
 };
 
-export function http_client<const endpoints extends EndpointMap>({
+export function http_client<const endpoints>({
   base_url,
   endpoints: all_endpoints,
   options,
   fetch: custom_fetch = fetch,
-}: HttpClientOptions<endpoints>) {
-  function map<endpoints extends EndpointMap>(
-    endpoints: endpoints,
-  ): map_to_fetch_endpoint_functions<endpoints> {
+}: HttpClientOptions<endpoints>): map_to_fetch_endpoint_functions<endpoints> {
+  function map(endpoints: EndpointMap): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {
         if (endpoint_or_object instanceof Endpoint) {
@@ -397,7 +401,7 @@ export function http_client<const endpoints extends EndpointMap>({
     );
   }
 
-  return map(all_endpoints);
+  return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<endpoints>;
 }
 
 type AnyFetchEndpointFunction = ReturnType<

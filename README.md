@@ -4,7 +4,7 @@ A typesafe and robust HTTP client with schema validation.
 
 ## Why?
 
-**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Schema validation happens at runtime with full TypeScript inference.
+**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Responses are typed _per status code_ — with `2xx`/`4xx`/`5xx` wildcard fallbacks — so a `200` body and a `404` body each carry their own type. Schema validation happens at runtime with full TypeScript inference.
 
 **Standard Schema compatible**: Works with Zod, ArkType, Valibot, or any schema library implementing the [Standard Schema spec](https://github.com/standard-schema/standard-schema).
 
@@ -37,21 +37,35 @@ const api = http_client({
         pathname: "/users",
         query: {
           schema: z.object({
-            page: z.number().optional(),
-            limit: z.number().optional(),
+            page: z
+              .number()
+              .transform((n) => String(n))
+              .optional(),
+            limit: z
+              .number()
+              .transform((n) => String(n))
+              .optional(),
           }),
         },
-        data: {
-          schema: z.array(z.object({ id: z.string(), name: z.string() })),
-          parse: "json",
+        responses: {
+          200: {
+            schema: z.array(z.object({ id: z.string(), name: z.string() })),
+            parse: "json",
+          },
         },
       }),
       get: new Endpoint({
         method: "GET",
         pathname: "/users/(:id)",
-        data: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: "json",
+        responses: {
+          200: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
+          404: {
+            schema: z.object({ message: z.string() }),
+            parse: "json",
+          },
         },
       }),
       create: new Endpoint({
@@ -61,9 +75,11 @@ const api = http_client({
           schema: z.object({ name: z.string(), email: z.string().email() }),
           serialize: "json",
         },
-        data: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: "json",
+        responses: {
+          201: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
         },
       }),
     },

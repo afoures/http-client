@@ -1,6 +1,8 @@
 # Response Parsing
 
-Endpoints parse HTTP responses into typed results based on status code.
+Endpoints parse HTTP responses into typed results based on status code. The
+result is a discriminated union you narrow on `ok` and `status`; each status
+carries the body type declared for it in the endpoint's `responses` map.
 
 ## Response Types
 
@@ -52,65 +54,90 @@ type ServerErrorResponse<Error> = {
 }
 ```
 
-## Data Parser
+## Defining Responses
 
-Define a `data` parser for successful responses:
-
-### JSON
-
-Use `parse: 'json'` to parse the response body as JSON:
+Responses are declared with a single `responses` map. Each key is a status code
+and each value is a `{ schema, parse }` parser. The parsed body lands on `data`
+for successful (`2xx`) statuses and on `error` for error (`4xx`/`5xx`) statuses,
+typed per status:
 
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
   pathname: "/users/(:id)",
-  data: {
-    schema: z.object({
-      id: z.string(),
-      name: z.string(),
-    }),
-    parse: "json",
+  responses: {
+    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+    404: { schema: z.object({ message: z.string() }), parse: "json" },
   },
 });
 
 const result = await endpoint.parse_response(response);
-if (result.ok) {
-  console.log(result.data); // { id: string, name: string }
+
+if (result.ok && result.status === 200) {
+  console.log(result.data); // { id: string; name: string }
+} else if (!result.ok && result.status === 404) {
+  console.log(result.error.message); // string
 }
 ```
 
-### Text
+### Parse Modes
 
-```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/health",
-  data: {
-    schema: z.string(),
-    parse: "text",
-  },
-});
-```
+Each parser's `parse` controls how the raw body is read before validation:
 
-### Custom Deserialization
+- `"json"` — parse the body as JSON (the default suggestion for object schemas).
+- `"text"` — read the body as text (the default suggestion for string schemas).
+- A function — custom deserialization from the raw `Response["body"]` stream.
 
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
   pathname: "/data",
-  data: {
-    schema: z.object({ value: z.number() }),
-    parse: async (body) => {
-      const text = await new Response(body).text();
-      return JSON.parse(text);
+  responses: {
+    // text body
+    200: { schema: z.string(), parse: "text" },
+    // custom deserialization
+    "2xx": {
+      schema: z.object({ value: z.number() }),
+      parse: async (body) => {
+        const text = await new Response(body).text();
+        return JSON.parse(text);
+      },
     },
   },
 });
 ```
 
-### 204 No Content
+### Status Wildcards
 
-For endpoints that return no content:
+Use `"2xx"`, `"4xx"`, or `"5xx"` as a class default that applies to every status
+in that class. A specific status always takes precedence over its wildcard:
+
+```typescript
+const endpoint = new Endpoint({
+  method: "GET",
+  pathname: "/users/(:id)",
+  responses: {
+    200: { schema: z.object({ id: z.string() }), parse: "json" }, // exact 200
+    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" }, // any other 2xx
+    404: { schema: z.object({ code: z.literal("not_found") }), parse: "json" }, // exact 404
+    "4xx": { schema: z.object({ message: z.string() }), parse: "json" }, // any other 4xx
+    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" }, // any 5xx
+  },
+});
+```
+
+Resolution order for an incoming status is: exact status, then the matching
+`{class}xx` wildcard.
+
+### Defaults When No Parser Matches
+
+If no parser (specific or wildcard) covers a status, the body is still never
+lost:
+
+- **2xx** — `data` is `null` at runtime (typed as `void`).
+- **204 No Content** — always `data: null`, regardless of any parser.
+- **4xx / 5xx** — `error` is the raw response text (typed as `string`).
+- **3xx redirects** — never schema'd; you get `redirect_to` instead (see above).
 
 ```typescript
 const endpoint = new Endpoint({
@@ -119,67 +146,11 @@ const endpoint = new Endpoint({
 });
 
 const result = await endpoint.parse_response(response);
-// result.ok === true, result.status === 204, result.data === null
-```
-
-## Error Parser
-
-Define an `error` parser for error responses:
-
-### JSON
-
-```typescript
-const endpoint = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: { schema: z.object({ name: z.string() }), serialize: "json" },
-  error: {
-    schema: z.object({
-      message: z.string(),
-      code: z.string(),
-    }),
-    parse: "json",
-  },
-});
-
-const result = await endpoint.parse_response(response);
-if (!result.ok && result.status === 400) {
-  console.log(result.error.message);
-  console.log(result.error.code);
+if (result.ok && result.status === 204) {
+  console.log(result.data); // null
 }
-```
-
-### Text
-
-```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/(:id)",
-  error: {
-    schema: z.string(),
-    parse: "text",
-  },
-});
-
-const result = await endpoint.parse_response(response);
-if (!result.ok && result.status === 404) {
-  console.log(result.error); // "Not Found"
-}
-```
-
-### Default (No Schema)
-
-Without an error parser, errors default to text:
-
-```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/(:id)",
-});
-
-const result = await endpoint.parse_response(response);
-if (!result.ok) {
-  console.log(typeof result.error); // "string"
+if (!result.ok && result.status >= 400) {
+  console.log(typeof result.error); // "string" — raw text fallback
 }
 ```
 
@@ -191,12 +162,14 @@ Schemas can transform response data:
 const endpoint = new Endpoint({
   method: "GET",
   pathname: "/users/(:id)",
-  data: {
-    schema: z.object({
-      name: z.string().transform((s) => s.toUpperCase()),
-      createdAt: z.string().transform((s) => new Date(s)),
-    }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: z.object({
+        name: z.string().transform((s) => s.toUpperCase()),
+        createdAt: z.string().transform((s) => new Date(s)),
+      }),
+      parse: "json",
+    },
   },
 });
 

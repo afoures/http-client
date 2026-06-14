@@ -162,6 +162,68 @@ const any_endpoint = null as unknown as Endpoint<"GET", "/any", never, Schema.An
 const any_client = http_client({ base_url: "https://x", endpoints: { any_endpoint } });
 type _any_query = Expect<Equals<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>;
 
+// --- endpoints declared INLINE in the map keep their inferred generics ---
+// Regression guard: the `endpoints` option must not be constrained in a way that
+// contextually widens an inline `new Endpoint({...})` — doing so collapses every
+// schema to `Schema.Any` (losing `query`/`body` typing) and forces a spurious
+// required `params: any`. Defining endpoints by reference (above) hides this, so
+// these cases are intentionally inline.
+
+const inline_client = http_client({
+  base_url: "https://x",
+  endpoints: {
+    // paramless route, optional query → callable with `{}`, query stays typed
+    list: new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: { schema: z.object({ page: z.string() }).optional() },
+      responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
+    }),
+    // parameterized route → `params` required and typed from the schema
+    get: new Endpoint({
+      method: "GET",
+      pathname: "/users/:id",
+      params: { schema: z.object({ id: z.string() }) },
+      responses: { 200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" } },
+    }),
+    // body stays typed (not widened to `any`)
+    create: new Endpoint({
+      method: "POST",
+      pathname: "/things",
+      body: { schema: z.object({ name: z.string() }), serialize: "json" },
+      responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+    }),
+  },
+});
+
+// paramless inline endpoint does NOT require `params` (callable with `{}`)
+inline_client.list({});
+type _inline_no_params = Expect<
+  Equals<"params" extends keyof Parameters<typeof inline_client.list>[0] ? true : false, false>
+>;
+// inline query keeps its schema input type
+type _inline_query = Expect<
+  Equals<Parameters<typeof inline_client.list>[0]["query"], { page: string } | undefined>
+>;
+// inline body keeps its schema input type
+type _inline_body = Expect<
+  Equals<Parameters<typeof inline_client.create>[0]["body"], { name: string }>
+>;
+// inline response schema flows through to the narrowed output
+type _inline_data = Expect<
+  Equals<
+    Extract<Awaited<ReturnType<typeof inline_client.get>>, { ok: true; status: 200 }>["data"],
+    { id: string; name: string }
+  >
+>;
+
+// negative: a parameterized inline route still requires `params`
+// @ts-expect-error — `params` is required
+inline_client.get({});
+// negative: wrong inline body field type is still caught (not silently `any`)
+// @ts-expect-error — `name` must be a string
+inline_client.create({ body: { name: 123 } });
+
 // reference the unused-symbol-sensitive bindings
 void _net;
 void _timeout;
@@ -180,4 +242,8 @@ export type {
   _w_4xx,
   _w_5xx,
   _any_query,
+  _inline_no_params,
+  _inline_query,
+  _inline_body,
+  _inline_data,
 };
