@@ -8,24 +8,24 @@ Endpoints parse HTTP responses into typed results based on status code.
 
 ```typescript
 type SuccessfulResponse<Data> = {
-  ok: true
-  status: 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226
-  data: Data
-  headers: Headers
-  raw_response: Response
-}
+  ok: true;
+  status: 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
+  data: Data;
+  headers: Headers;
+  raw_response: Response;
+};
 ```
 
 ### Redirect (30x)
 
 ```typescript
 type RedirectMessage = {
-  ok: false
-  status: 300 | 301 | 302 | 303 | 304 | 307 | 308
-  redirect_to: string | null
-  headers: Headers
-  raw_response: Response
-}
+  ok: false;
+  status: 300 | 301 | 302 | 303 | 304 | 307 | 308;
+  redirect_to: string | null;
+  headers: Headers;
+  raw_response: Response;
+};
 ```
 
 ### Client Error (40x)
@@ -62,20 +62,20 @@ Use `parse: 'json'` to parse the response body as JSON:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users/(:id)',
+  method: "GET",
+  pathname: "/users/(:id)",
   data: {
     schema: z.object({
       id: z.string(),
       name: z.string(),
     }),
-    parse: 'json',
+    parse: "json",
   },
-})
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 if (result.ok) {
-  console.log(result.data) // { id: string, name: string }
+  console.log(result.data); // { id: string, name: string }
 }
 ```
 
@@ -83,29 +83,29 @@ if (result.ok) {
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/health',
+  method: "GET",
+  pathname: "/health",
   data: {
     schema: z.string(),
-    parse: 'text',
+    parse: "text",
   },
-})
+});
 ```
 
 ### Custom Deserialization
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/data',
+  method: "GET",
+  pathname: "/data",
   data: {
     schema: z.object({ value: z.number() }),
     parse: async (body) => {
-      const text = await new Response(body).text()
-      return JSON.parse(text)
+      const text = await new Response(body).text();
+      return JSON.parse(text);
     },
   },
-})
+});
 ```
 
 ### 204 No Content
@@ -114,11 +114,11 @@ For endpoints that return no content:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'DELETE',
-  pathname: '/users/(:id)',
-})
+  method: "DELETE",
+  pathname: "/users/(:id)",
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 // result.ok === true, result.status === 204, result.data === null
 ```
 
@@ -130,22 +130,22 @@ Define an `error` parser for error responses:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'POST',
-  pathname: '/users',
-  body: { schema: z.object({ name: z.string() }), serialize: 'json' },
+  method: "POST",
+  pathname: "/users",
+  body: { schema: z.object({ name: z.string() }), serialize: "json" },
   error: {
     schema: z.object({
       message: z.string(),
       code: z.string(),
     }),
-    parse: 'json',
+    parse: "json",
   },
-})
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 if (!result.ok && result.status === 400) {
-  console.log(result.error.message)
-  console.log(result.error.code)
+  console.log(result.error.message);
+  console.log(result.error.code);
 }
 ```
 
@@ -153,17 +153,17 @@ if (!result.ok && result.status === 400) {
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users/(:id)',
+  method: "GET",
+  pathname: "/users/(:id)",
   error: {
     schema: z.string(),
-    parse: 'text',
+    parse: "text",
   },
-})
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 if (!result.ok && result.status === 404) {
-  console.log(result.error) // "Not Found"
+  console.log(result.error); // "Not Found"
 }
 ```
 
@@ -173,13 +173,13 @@ Without an error parser, errors default to text:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users/(:id)',
-})
+  method: "GET",
+  pathname: "/users/(:id)",
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 if (!result.ok) {
-  console.log(typeof result.error) // "string"
+  console.log(typeof result.error); // "string"
 }
 ```
 
@@ -189,21 +189,21 @@ Schemas can transform response data:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users/(:id)',
+  method: "GET",
+  pathname: "/users/(:id)",
   data: {
     schema: z.object({
-      name: z.string().transform(s => s.toUpperCase()),
-      createdAt: z.string().transform(s => new Date(s)),
+      name: z.string().transform((s) => s.toUpperCase()),
+      createdAt: z.string().transform((s) => new Date(s)),
     }),
-    parse: 'json',
+    parse: "json",
   },
-})
+});
 
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 if (result.ok) {
-  console.log(result.data.name)      // uppercase string
-  console.log(result.data.createdAt) // Date object
+  console.log(result.data.name); // uppercase string
+  console.log(result.data.createdAt); // Date object
 }
 ```
 
@@ -212,36 +212,36 @@ if (result.ok) {
 If response parsing fails validation, a `ParseError` is returned:
 
 ```typescript
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 
 if (result instanceof ParseError) {
-  console.log(result.message) // "Response parsing failed"
-  console.log(result.cause)    // Schema validation issues
+  console.log(result.message); // "Response parsing failed"
+  console.log(result.cause); // Schema validation issues
 }
 ```
 
 ## Handling All Cases
 
 ```typescript
-const result = await api.users.get({ params: { id: '123' } })
+const result = await api.users.get({ params: { id: "123" } });
 
 if (result instanceof Error) {
   // UnexpectedError, NetworkError, TimeoutError, etc.
-  console.log(result.message)
-  return
+  console.log(result.message);
+  return;
 }
 
 if (result.ok) {
   // 20x success
-  console.log(result.data)
+  console.log(result.data);
 } else if (result.status >= 300 && result.status < 400) {
   // Redirect
-  console.log(result.redirect_to)
+  console.log(result.redirect_to);
 } else if (result.status >= 400 && result.status < 500) {
   // Client error
-  console.log(result.error)
+  console.log(result.error);
 } else {
   // Server error
-  console.log(result.error)
+  console.log(result.error);
 }
 ```

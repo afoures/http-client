@@ -12,8 +12,24 @@ import {
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 import { extract_args, merge_options, remove_custom_options, sleep } from "./utils.ts";
 
+/**
+ * The value type for entries in an {@link EndpointMap}. Uses the real generic
+ * bounds (notably `Pathname.Relative` for the pathname) rather than `any`, so
+ * that inline `new Endpoint({...})` declarations keep their literal `pathname`
+ * inferred — `any` in the contextual type would widen it to `string` and break
+ * the dynamic-params discrimination in `EndpointDefinition`.
+ */
+type AnyEndpointValue = Endpoint<
+  HTTPMethod.Any,
+  Pathname.Relative,
+  Schema.Any,
+  Schema.Any,
+  Schema.Any,
+  any
+>;
+
 export interface EndpointMap {
-  [name: string]: AnyEndpoint | EndpointMap;
+  [name: string]: AnyEndpointValue | EndpointMap;
 }
 
 type CustomFetch = (request: Request) => Promise<Response>;
@@ -388,23 +404,69 @@ type AnyFetchEndpointFunction = ReturnType<
   typeof fetch_endpoint_factory<any, any, any, any, any, any>
 >;
 
+/** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
+type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
+  ? endpoint
+  : endpoint extends Endpoint<
+        infer http_method,
+        infer pathname,
+        infer params_schema,
+        infer query_schema,
+        infer body_schema,
+        infer responses
+      >
+    ? ReturnType<
+        typeof fetch_endpoint_factory<
+          http_method,
+          pathname,
+          params_schema,
+          query_schema,
+          body_schema,
+          responses
+        >
+      >
+    : never;
+
+type fetch_input<endpoint> = Parameters<as_fetch_endpoint<endpoint>>[0];
+type fetch_output<endpoint> = Awaited<ReturnType<as_fetch_endpoint<endpoint>>>;
+
+/** Read an input key, yielding `never` only when the key genuinely does not exist. */
+type infer_init<endpoint, key extends PropertyKey> = key extends keyof fetch_input<endpoint>
+  ? fetch_input<endpoint>[key]
+  : never;
+
+type AnyEndpointInput = AnyFetchEndpointFunction | AnyEndpoint;
+
 export namespace $infer {
-  export type Query<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { query: infer query } ? query : never;
+  export type Params<endpoint extends AnyEndpointInput> = infer_init<endpoint, "params">;
 
-  export type Params<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { params: infer params } ? params : never;
+  export type Query<endpoint extends AnyEndpointInput> = infer_init<endpoint, "query">;
 
-  export type Body<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { body: infer body } ? body : never;
+  export type Body<endpoint extends AnyEndpointInput> = infer_init<endpoint, "body">;
 
-  export type Data<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Extract<Awaited<ReturnType<fetch_endpoint>>, { ok: true }> extends { data: infer data }
+  /** The full request argument (params + query + body + request init). */
+  export type Input<endpoint extends AnyEndpointInput> = fetch_input<endpoint>;
+
+  /** Everything `fetch` can return: HTTP response envelopes PLUS the transport error classes. */
+  export type Result<endpoint extends AnyEndpointInput> = fetch_output<endpoint>;
+
+  /**
+   * The discriminated HTTP response union only — Successful | Redirect | ClientError | ServerError.
+   * Drops the thrown transport errors (UnexpectedError/NetworkError/TimeoutError/AbortedError/ParseError);
+   * stays narrowable on `ok`/`status`.
+   */
+  export type Response<endpoint extends AnyEndpointInput> = Extract<
+    fetch_output<endpoint>,
+    { ok: boolean }
+  >;
+
+  export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
+    Extract<fetch_output<endpoint>, { ok: true; status: status }> extends { data: infer data }
       ? data
       : never;
 
-  export type Error<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Extract<Awaited<ReturnType<fetch_endpoint>>, { ok: false; error: unknown }> extends {
+  export type Error<endpoint extends AnyEndpointInput, status extends number = number> =
+    Extract<fetch_output<endpoint>, { ok: false; status: status; error: unknown }> extends {
       error: infer error;
     }
       ? error

@@ -2,6 +2,7 @@
   "name": "@afoures/http-client",
   "version": "0.4.0",
   "description": "A typesafe and robust HTTP client",
+  "keywords": [],
   "homepage": "https://github.com/afoures/http-client#readme",
   "bugs": {
     "url": "https://github.com/afoures/http-client/issues"
@@ -11,6 +12,23 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/afoures/http-client.git"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "package.json",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsdown",
@@ -24,25 +42,6 @@
     "format": "oxfmt",
     "prepublishOnly": "pnpm run build"
   },
-  "files": [
-    "dist",
-    "docs",
-    "package.json",
-    "README.md"
-  ],
-  "keywords": [],
-  "type": "module",
-  "main": "./dist/index.mjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
-    },
-    "./package.json": "./package.json"
-  },
-  "packageManager": "pnpm@10.10.0",
   "dependencies": {
     "@remix-run/route-pattern": "^0.18.0",
     "@standard-schema/spec": "^1.1.0"
@@ -57,5 +56,6 @@
     "tsdown": "^0.21.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
-  }
+  },
+  "packageManager": "pnpm@10.10.0"
 }
