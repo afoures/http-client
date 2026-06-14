@@ -461,14 +461,26 @@ export namespace $infer {
   >;
 
   export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
-    Extract<fetch_output<endpoint>, { ok: true; status: status }> extends { data: infer data }
-      ? data
+    fetch_output<endpoint> extends infer response
+      ? response extends { ok: true; status: infer member_status extends number; data: infer data }
+        ? // a wildcard arm covers a whole class (e.g. `2xx`), so its `status` is a union;
+          // match when the requested `status` overlaps that union, not just when it equals it.
+          [Extract<member_status, status>] extends [never]
+          ? never
+          : data
+        : never
       : never;
 
   export type Error<endpoint extends AnyEndpointInput, status extends number = number> =
-    Extract<fetch_output<endpoint>, { ok: false; status: status; error: unknown }> extends {
-      error: infer error;
-    }
-      ? error
+    fetch_output<endpoint> extends infer response
+      ? response extends {
+          ok: false;
+          status: infer member_status extends number;
+          error: infer error;
+        }
+        ? [Extract<member_status, status>] extends [never]
+          ? never
+          : error
+        : never
       : never;
 }

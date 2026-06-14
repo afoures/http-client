@@ -105,9 +105,9 @@ type _error_500 = Expect<Equals<$infer.Error<typeof client.get_user, 500>, strin
 type _data_w_200 = Expect<Equals<$infer.Data<typeof client.wildcard, 200>, { ok: boolean }>>;
 type _data_w_2xx = Expect<Equals<$infer.Data<typeof client.wildcard>, { ok: boolean } | null>>;
 type _error_w_404 = Expect<Equals<$infer.Error<typeof client.wildcard, 404>, { error: string }>>;
-type _error_w_4xx = Expect<Equals<$infer.Error<typeof client.wildcard>, { error: string }>>;
+type _error_w_4xx = Expect<Equals<$infer.Error<typeof client.wildcard, 400>, { error: string }>>;
 type _error_w_500 = Expect<Equals<$infer.Error<typeof client.wildcard, 500>, { fatal: string }>>;
-type _error_w_5xx = Expect<Equals<$infer.Error<typeof client.wildcard>, { fatal: string }>>;
+type _error_w_5xx = Expect<Equals<$infer.Error<typeof client.wildcard, 503>, { fatal: string }>>;
 
 // --- Result includes transport errors; Response excludes them but stays narrowable ---
 const _is_result: $infer.Result<typeof client.get_user> = null as unknown as NetworkError;
