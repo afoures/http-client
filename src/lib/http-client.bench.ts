@@ -15,9 +15,11 @@ const endpointWithSchema = new Endpoint({
     schema: z.object({ name: z.string(), email: z.string() }),
     serialize: "json",
   },
-  data: {
-    schema: z.object({ id: z.string(), name: z.string() }),
-    parse: "json",
+  responses: {
+    200: {
+      schema: z.object({ id: z.string(), name: z.string() }),
+      parse: "json",
+    },
   },
 });
 
@@ -29,7 +31,7 @@ bench("http_client - single endpoint", () => {
     },
   });
   return {} as typeof client;
-}).types([7723, "instantiations"]);
+}).types([9996, "instantiations"]);
 
 bench("http_client - two endpoints", () => {
   const client = http_client({
@@ -40,7 +42,7 @@ bench("http_client - two endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([7837, "instantiations"]);
+}).types([10106, "instantiations"]);
 
 bench("http_client - three endpoints", () => {
   const client = http_client({
@@ -52,7 +54,7 @@ bench("http_client - three endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([7871, "instantiations"]);
+}).types([10140, "instantiations"]);
 
 bench("http_client - five endpoints", () => {
   const client = http_client({
@@ -66,7 +68,7 @@ bench("http_client - five endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([7939, "instantiations"]);
+}).types([10208, "instantiations"]);
 
 bench("http_client - ten endpoints", () => {
   const client = http_client({
@@ -85,7 +87,7 @@ bench("http_client - ten endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([8109, "instantiations"]);
+}).types([10378, "instantiations"]);
 
 bench("http_client - nested structure (2 levels)", () => {
   const client = http_client({
@@ -100,7 +102,7 @@ bench("http_client - nested structure (2 levels)", () => {
     },
   });
   return {} as typeof client;
-}).types([7856, "instantiations"]);
+}).types([10127, "instantiations"]);
 
 bench("http_client - nested structure (3 levels)", () => {
   const client = http_client({
@@ -117,7 +119,7 @@ bench("http_client - nested structure (3 levels)", () => {
     },
   });
   return {} as typeof client;
-}).types([7856, "instantiations"]);
+}).types([10127, "instantiations"]);
 
 bench("http_client - with options callback", () => {
   const client = http_client({
@@ -130,7 +132,7 @@ bench("http_client - with options callback", () => {
     }),
   });
   return {} as typeof client;
-}).types([7783, "instantiations"]);
+}).types([10058, "instantiations"]);
 
 bench("http_client - with complex endpoints", () => {
   const client = http_client({
@@ -144,15 +146,17 @@ bench("http_client - with complex endpoints", () => {
           schema: z.object({ title: z.string(), content: z.string() }),
           serialize: "json",
         },
-        data: {
-          schema: z.object({ id: z.string(), title: z.string() }),
-          parse: "json",
+        responses: {
+          200: {
+            schema: z.object({ id: z.string(), title: z.string() }),
+            parse: "json",
+          },
         },
       }),
     },
   });
   return {} as typeof client;
-}).types([9188, "instantiations"]);
+}).types([10964, "instantiations"]);
 
 bench("http_client - mixed nesting levels", () => {
   const client = http_client({
@@ -170,4 +174,4 @@ bench("http_client - mixed nesting levels", () => {
     },
   });
   return {} as typeof client;
-}).types([7958, "instantiations"]);
+}).types([10229, "instantiations"]);

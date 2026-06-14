@@ -3,6 +3,7 @@ import {
   type HTTPFetch,
   type HTTPMethod,
   type MaybePromise,
+  type Parser,
   type Pathname,
   type Pretty,
   type RetryPolicy,
@@ -29,8 +30,7 @@ type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
     infer params_schema,
     infer query_schema,
     infer body_schema,
-    infer data_schema,
-    infer error_schema
+    infer responses
   >
     ? ReturnType<
         typeof fetch_endpoint_factory<
@@ -39,8 +39,7 @@ type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
           params_schema,
           query_schema,
           body_schema,
-          data_schema,
-          error_schema
+          responses
         >
       >
     : endpoints[name] extends EndpointMap
@@ -54,8 +53,7 @@ export function fetch_endpoint_factory<
   params_schema extends Schema._,
   query_schema extends Schema._,
   body_schema extends Schema._,
-  data_schema extends Schema._,
-  error_schema extends Schema._,
+  responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
 >({
   base_url,
   endpoint,
@@ -64,15 +62,7 @@ export function fetch_endpoint_factory<
   hooks = {},
 }: {
   base_url: string;
-  endpoint: Endpoint<
-    http_method,
-    pathname,
-    params_schema,
-    query_schema,
-    body_schema,
-    data_schema,
-    error_schema
-  >;
+  endpoint: Endpoint<http_method, pathname, params_schema, query_schema, body_schema, responses>;
   custom_fetch: CustomFetch;
   get_default_options?: () => MaybePromise<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
@@ -395,7 +385,7 @@ export function http_client<const endpoints extends EndpointMap>({
 }
 
 type AnyFetchEndpointFunction = ReturnType<
-  typeof fetch_endpoint_factory<any, any, any, any, any, any, any>
+  typeof fetch_endpoint_factory<any, any, any, any, any, any>
 >;
 
 export namespace $infer {
@@ -409,12 +399,14 @@ export namespace $infer {
     Parameters<fetch_endpoint>[0] extends { body: infer body } ? body : never;
 
   export type Data<fetch_endpoint extends AnyFetchEndpointFunction> =
-    ReturnType<fetch_endpoint> extends HTTPFetch.SuccessfulResponse<infer data> ? data : never;
+    Extract<Awaited<ReturnType<fetch_endpoint>>, { ok: true }> extends { data: infer data }
+      ? data
+      : never;
 
   export type Error<fetch_endpoint extends AnyFetchEndpointFunction> =
-    ReturnType<fetch_endpoint> extends HTTPFetch.ClientErrorResponse<infer error>
+    Extract<Awaited<ReturnType<fetch_endpoint>>, { ok: false; error: unknown }> extends {
+      error: infer error;
+    }
       ? error
-      : ReturnType<fetch_endpoint> extends HTTPFetch.ServerErrorResponse<infer error>
-        ? error
-        : never;
+      : never;
 }

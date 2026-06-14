@@ -622,12 +622,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({
-          id: z.number(),
-          name: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({
+            id: z.number(),
+            name: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ id: 1, name: "Test" }), {
@@ -648,12 +650,14 @@ describe("Endpoint.parse_response", () => {
       method: "POST",
       pathname: "/users",
       body: undefined,
-      data: {
-        schema: z.object({
-          id: z.number(),
-          name: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        201: {
+          schema: z.object({
+            id: z.number(),
+            name: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ id: 2, name: "Created" }), {
@@ -671,11 +675,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "DELETE",
       pathname: "/users/(:id)",
-      data: {
-        schema: z.object({
-          id: z.number(),
-        }),
-        parse: "json",
+      responses: {
+        // @ts-expect-error - 204 cannot be expressed here
+        204: {
+          schema: z.object({
+            id: z.number(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(null, {
@@ -723,13 +730,15 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({
-          value: z.string(),
-        }),
-        parse: async (body) => {
-          const text = await readStream(body);
-          return JSON.parse(text);
+      responses: {
+        200: {
+          schema: z.object({
+            value: z.string(),
+          }),
+          parse: async (body) => {
+            const text = await readStream(body);
+            return JSON.parse(text);
+          },
         },
       },
     });
@@ -748,12 +757,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({
-          name: z.string().transform((s) => s.toUpperCase()),
-          age: z.number().transform((n) => n * 2),
-        }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({
+            name: z.string().transform((s) => s.toUpperCase()),
+            age: z.number().transform((n) => n * 2),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ name: "john", age: 25 }), {
@@ -823,11 +834,13 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      error: {
-        schema: z.object({
-          message: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        400: {
+          schema: z.object({
+            message: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ message: "Invalid input" }), {
@@ -845,9 +858,11 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users/(:id)",
-      error: {
-        schema: z.string(),
-        parse: "text",
+      responses: {
+        404: {
+          schema: z.string(),
+          parse: "text",
+        },
       },
     });
     const response = new Response("Not Found", {
@@ -865,13 +880,15 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      error: {
-        schema: z.object({
-          errors: z.array(z.string()),
-        }),
-        parse: async (body) => {
-          const text = await readStream(body);
-          return { errors: text.split(",") };
+      responses: {
+        422: {
+          schema: z.object({
+            errors: z.array(z.string()),
+          }),
+          parse: async (body) => {
+            const text = await readStream(body);
+            return { errors: text.split(",") };
+          },
         },
       },
     });
@@ -908,11 +925,13 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/protected",
-      error: {
-        schema: z.object({
-          code: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        401: {
+          schema: z.object({
+            code: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ code: "UNAUTHORIZED" }), {
@@ -932,12 +951,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      error: {
-        schema: z.object({
-          message: z.string(),
-          code: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        500: {
+          schema: z.object({
+            message: z.string(),
+            code: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ message: "Internal error", code: "ERR_500" }), {
@@ -958,9 +979,11 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      error: {
-        schema: z.string(),
-        parse: "text",
+      responses: {
+        503: {
+          schema: z.string(),
+          parse: "text",
+        },
       },
     });
     const response = new Response("Service unavailable", {
@@ -978,13 +1001,15 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/proxy",
-      error: {
-        schema: z.object({
-          upstream: z.string(),
-        }),
-        parse: async (body) => {
-          const text = await readStream(body);
-          return { upstream: `gateway-${text}` };
+      responses: {
+        502: {
+          schema: z.object({
+            upstream: z.string(),
+          }),
+          parse: async (body) => {
+            const text = await readStream(body);
+            return { upstream: `gateway-${text}` };
+          },
         },
       },
     });
@@ -1005,11 +1030,13 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/empty",
-      data: {
-        schema: z.object({
-          id: z.number(),
-        }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({
+            id: z.number(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response("", {
@@ -1024,9 +1051,11 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      error: {
-        schema: z.string(),
-        parse: "text",
+      responses: {
+        400: {
+          schema: z.string(),
+          parse: "text",
+        },
       },
     });
     const response = new Response(null, {
@@ -1045,12 +1074,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({
-          id: z.number(),
-          name: z.string(),
-        }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({
+            id: z.number(),
+            name: z.string(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ id: "invalid" }), {
@@ -1065,12 +1096,14 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
-      error: {
-        schema: z.object({
-          message: z.string(),
-          code: z.number(),
-        }),
-        parse: "json",
+      responses: {
+        400: {
+          schema: z.object({
+            message: z.string(),
+            code: z.number(),
+          }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ message: "Error", code: "not-a-number" }), {
@@ -1088,9 +1121,11 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({ id: z.number() }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({ id: z.number() }),
+          parse: "json",
+        },
       },
     });
     const headers = new Headers();
@@ -1111,9 +1146,11 @@ describe("Endpoint.parse_response", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({ id: z.number() }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({ id: z.number() }),
+          parse: "json",
+        },
       },
     });
     const response = new Response(JSON.stringify({ id: 1 }), {
@@ -1124,30 +1161,6 @@ describe("Endpoint.parse_response", () => {
     assert.ok(!(result instanceof ParseError));
     assert.equal(result.ok, true);
     assert.equal(result.raw_response, response);
-  });
-
-  test("data parser with explicit `parse: undefined` falls back to JSON default", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/u",
-      data: {
-        schema: z.object({ x: z.number() }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        parse: undefined as any,
-      },
-    });
-    const response = new Response(JSON.stringify({ x: 1 }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(
-      !(result instanceof ParseError),
-      `expected JSON default to apply, got ParseError: ${result instanceof ParseError ? result.message : ""}`,
-    );
-    assert.equal(result.ok, true);
-    assert.equal(result.status, 200);
-    assert.deepEqual(result.data, { x: 1 });
   });
 
   test("query serializer with explicit `serialize: undefined` falls back to urlencoded default", async () => {
@@ -1166,5 +1179,185 @@ describe("Endpoint.parse_response", () => {
     });
     assert.ok(url instanceof URL, "expected URL, got SerializationError");
     assert.equal(url.searchParams.get("x"), "1");
+  });
+
+  // 8. Keyed responses (status map)
+
+  test("distinct schemas per status code", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      responses: {
+        200: { schema: z.object({ id: z.number() }), parse: "json" },
+        201: { schema: z.object({ created: z.boolean() }), parse: "json" },
+      },
+    });
+
+    const ok = await endpoint.parse_response(
+      new Response(JSON.stringify({ id: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(ok instanceof ParseError));
+    assert.equal(ok.status, 200);
+    if (ok.status === 200) assert.deepEqual(ok.data, { id: 1 });
+
+    const created = await endpoint.parse_response(
+      new Response(JSON.stringify({ created: true }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(created instanceof ParseError));
+    assert.equal(created.status, 201);
+    if (created.status === 201) assert.deepEqual(created.data, { created: true });
+  });
+
+  test("class token applies to every status in the class", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      responses: {
+        "5xx": { schema: z.object({ message: z.string() }), parse: "json" },
+      },
+    });
+
+    for (const status of [500, 502, 503]) {
+      const result = await endpoint.parse_response(
+        new Response(JSON.stringify({ message: "boom" }), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      assert.ok(!(result instanceof ParseError));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, status);
+      assert.ok("error" in result);
+      assert.deepEqual(result.error, { message: "boom" });
+    }
+  });
+
+  test("exact code overrides class token", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users/(:id)",
+      responses: {
+        "4xx": { schema: z.object({ message: z.string() }), parse: "json" },
+        404: { schema: z.object({ resource: z.string() }), parse: "json" },
+      },
+    });
+
+    const not_found = await endpoint.parse_response(
+      new Response(JSON.stringify({ resource: "user" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(not_found instanceof ParseError));
+    assert.equal(not_found.status, 404);
+    if (not_found.status === 404) assert.deepEqual(not_found.error, { resource: "user" });
+
+    const forbidden = await endpoint.parse_response(
+      new Response(JSON.stringify({ message: "nope" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(forbidden instanceof ParseError));
+    assert.equal(forbidden.status, 403);
+    if (forbidden.status === 403) assert.deepEqual(forbidden.error, { message: "nope" });
+  });
+
+  test("unlisted 2xx falls back to data: null", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      responses: {
+        200: { schema: z.object({ id: z.number() }), parse: "json" },
+      },
+    });
+    const result = await endpoint.parse_response(
+      new Response(JSON.stringify({ anything: true }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(result instanceof ParseError));
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 202);
+    assert.equal(result.data, null);
+  });
+
+  test("unlisted error falls back to the raw text body", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      responses: {
+        400: { schema: z.object({ message: z.string() }), parse: "json" },
+      },
+    });
+    const result = await endpoint.parse_response(
+      new Response("upstream exploded", {
+        status: 503,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+    assert.ok(!(result instanceof ParseError));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 503);
+    assert.equal(result.error, "upstream exploded");
+  });
+
+  test("a shared parser const can cover several keys", async () => {
+    const ApiError = { schema: z.object({ message: z.string() }), parse: "json" } as const;
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      responses: {
+        "4xx": ApiError,
+        "5xx": ApiError,
+      },
+    });
+
+    for (const status of [400, 500]) {
+      const result = await endpoint.parse_response(
+        new Response(JSON.stringify({ message: "shared" }), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      assert.ok(!(result instanceof ParseError));
+      assert.equal(result.status, status);
+      assert.ok("error" in result);
+      assert.deepEqual(result.error, { message: "shared" });
+    }
+  });
+
+  test("204 is always null even when covered by a token or explicit entry", async () => {
+    const tokened = new Endpoint({
+      method: "DELETE",
+      pathname: "/users/(:id)",
+      responses: {
+        "2xx": { schema: z.object({ id: z.number() }), parse: "json" },
+      },
+    });
+    const a = await tokened.parse_response(new Response(null, { status: 204 }));
+    assert.ok(!(a instanceof ParseError));
+    assert.equal(a.status, 204);
+    assert.equal(a.data, null);
+
+    const explicit = new Endpoint({
+      method: "DELETE",
+      pathname: "/users/(:id)",
+      responses: {
+        // @ts-expect-error - 204 cannot be expressed here
+        204: { schema: z.object({ id: z.number() }), parse: "json" },
+      },
+    });
+    const b = await explicit.parse_response(new Response(null, { status: 204 }));
+    assert.ok(!(b instanceof ParseError));
+    assert.equal(b.status, 204);
+    assert.equal(b.data, null);
   });
 });
