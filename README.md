@@ -56,7 +56,7 @@ const api = http_client({
       }),
       get: new Endpoint({
         method: "GET",
-        pathname: "/users/(:id)",
+        pathname: "/users/:id",
         responses: {
           200: {
             schema: z.object({ id: z.string(), name: z.string() }),

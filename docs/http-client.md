@@ -32,17 +32,17 @@ const api = http_client({
   endpoints: {
     users: {
       list: new Endpoint({ method: "GET", pathname: "/users" }),
-      get: new Endpoint({ method: "GET", pathname: "/users/(:id)" }),
+      get: new Endpoint({ method: "GET", pathname: "/users/:id" }),
       create: new Endpoint({ method: "POST", pathname: "/users" }),
-      update: new Endpoint({ method: "PUT", pathname: "/users/(:id)" }),
-      delete: new Endpoint({ method: "DELETE", pathname: "/users/(:id)" }),
+      update: new Endpoint({ method: "PUT", pathname: "/users/:id" }),
+      delete: new Endpoint({ method: "DELETE", pathname: "/users/:id" }),
     },
     posts: {
       list: new Endpoint({ method: "GET", pathname: "/posts" }),
-      get: new Endpoint({ method: "GET", pathname: "/posts/(:id)" }),
+      get: new Endpoint({ method: "GET", pathname: "/posts/:id" }),
       comments: {
-        list: new Endpoint({ method: "GET", pathname: "/posts/(:postId)/comments" }),
-        create: new Endpoint({ method: "POST", pathname: "/posts/(:postId)/comments" }),
+        list: new Endpoint({ method: "GET", pathname: "/posts/:post_id/comments" }),
+        create: new Endpoint({ method: "POST", pathname: "/posts/:post_id/comments" }),
       },
     },
   },
@@ -51,7 +51,7 @@ const api = http_client({
 // Fully typed paths
 await api.users.list({});
 await api.users.get({ params: { id: "123" } });
-await api.posts.comments.create({ params: { postId: "1" }, body: { text: "Nice!" } });
+await api.posts.comments.create({ params: { post_id: "1" }, body: { text: "Nice!" } });
 ```
 
 ## Shared Options
@@ -163,7 +163,7 @@ import { z } from "zod";
 
 const get_user = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   responses: {
     200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
     404: { schema: z.object({ message: z.string() }), parse: "json" },

@@ -13,7 +13,7 @@ If no schema is provided, params are inferred from the pathname pattern:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
 });
 
 const url = await endpoint.generate_url({
@@ -30,7 +30,7 @@ Use a schema to validate and transform params:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   params: {
     schema: z.object({
       id: z.string().uuid(),
@@ -46,7 +46,7 @@ Provide a `serialize` function to transform validated params:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   params: {
     schema: z.object({ id: z.number() }),
     serialize: (data) => ({ id: `user-${data.id}` }),

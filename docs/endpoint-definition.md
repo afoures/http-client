@@ -7,7 +7,7 @@ The `Endpoint` class defines an HTTP endpoint with its method, path, serializers
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   // ...options
 });
 ```

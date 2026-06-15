@@ -64,7 +64,7 @@ typed per status:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   responses: {
     200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
     404: { schema: z.object({ message: z.string() }), parse: "json" },
@@ -115,7 +115,7 @@ in that class. A specific status always takes precedence over its wildcard:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   responses: {
     200: { schema: z.object({ id: z.string() }), parse: "json" }, // exact 200
     "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" }, // any other 2xx
@@ -142,7 +142,7 @@ lost:
 ```typescript
 const endpoint = new Endpoint({
   method: "DELETE",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
 });
 
 const result = await endpoint.parse_response(response);
@@ -161,7 +161,7 @@ Schemas can transform response data:
 ```typescript
 const endpoint = new Endpoint({
   method: "GET",
-  pathname: "/users/(:id)",
+  pathname: "/users/:id",
   responses: {
     200: {
       schema: z.object({
