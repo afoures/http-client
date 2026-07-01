@@ -8,7 +8,7 @@ bench("Endpoint - minimal GET", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([227, "instantiations"]);
+}).types([169, "instantiations"]);
 
 bench("Endpoint - minimal POST", () => {
   const endpoint = new Endpoint({
@@ -16,7 +16,7 @@ bench("Endpoint - minimal POST", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([225, "instantiations"]);
+}).types([167, "instantiations"]);
 
 bench("Endpoint - with pathname params", () => {
   const endpoint = new Endpoint({
@@ -24,7 +24,7 @@ bench("Endpoint - with pathname params", () => {
     pathname: "/users/:id",
   });
   return {} as typeof endpoint;
-}).types([225, "instantiations"]);
+}).types([167, "instantiations"]);
 
 bench("Endpoint - with query schema", () => {
   const endpoint = new Endpoint({
@@ -38,7 +38,7 @@ bench("Endpoint - with query schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1336, "instantiations"]);
+}).types([1278, "instantiations"]);
 
 bench("Endpoint - with body schema", () => {
   const endpoint = new Endpoint({
@@ -53,37 +53,41 @@ bench("Endpoint - with body schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1347, "instantiations"]);
+}).types([622, "instantiations"]);
 
 bench("Endpoint - with data schema", () => {
   const endpoint = new Endpoint({
     method: "GET",
     pathname: "/users/:id",
-    data: {
-      schema: z.object({
-        id: z.string(),
-        name: z.string(),
-      }),
-      parse: "json",
+    responses: {
+      200: {
+        schema: z.object({
+          id: z.string(),
+          name: z.string(),
+        }),
+        parse: "json",
+      },
     },
   });
   return {} as typeof endpoint;
-}).types([1426, "instantiations"]);
+}).types([1245, "instantiations"]);
 
 bench("Endpoint - with error schema", () => {
   const endpoint = new Endpoint({
     method: "GET",
     pathname: "/users",
-    error: {
-      schema: z.object({
-        message: z.string(),
-        code: z.number(),
-      }),
-      parse: "json",
+    responses: {
+      500: {
+        schema: z.object({
+          message: z.string(),
+          code: z.number(),
+        }),
+        parse: "json",
+      },
     },
   });
   return {} as typeof endpoint;
-}).types([1461, "instantiations"]);
+}).types([1266, "instantiations"]);
 
 bench("Endpoint - full schema (all generics)", () => {
   const endpoint = new Endpoint({
@@ -99,17 +103,19 @@ bench("Endpoint - full schema (all generics)", () => {
       schema: z.object({ name: z.string(), email: z.string() }),
       serialize: "json",
     },
-    data: {
-      schema: z.object({ id: z.string(), name: z.string() }),
-      parse: "json",
-    },
-    error: {
-      schema: z.string(),
-      parse: "text",
+    responses: {
+      200: {
+        schema: z.object({ id: z.string(), name: z.string() }),
+        parse: "json",
+      },
+      500: {
+        schema: z.string(),
+        parse: "text",
+      },
     },
   });
   return {} as typeof endpoint;
-}).types([3850, "instantiations"]);
+}).types([3438, "instantiations"]);
 
 bench("Endpoint - nested object schema", () => {
   const endpoint = new Endpoint({
@@ -132,7 +138,7 @@ bench("Endpoint - nested object schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1797, "instantiations"]);
+}).types([666, "instantiations"]);
 
 bench("Endpoint - array schema", () => {
   const endpoint = new Endpoint({
@@ -147,18 +153,20 @@ bench("Endpoint - array schema", () => {
       ),
       serialize: "json",
     },
-    data: {
-      schema: z.array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-        }),
-      ),
-      parse: "json",
+    responses: {
+      200: {
+        schema: z.array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+          }),
+        ),
+        parse: "json",
+      },
     },
   });
   return {} as typeof endpoint;
-}).types([1735, "instantiations"]);
+}).types([1330, "instantiations"]);
 
 bench("Endpoint - multiple pathname params", () => {
   const endpoint = new Endpoint({
@@ -173,7 +181,7 @@ bench("Endpoint - multiple pathname params", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([6026, "instantiations"]);
+}).types([5968, "instantiations"]);
 
 bench("Endpoint - with custom serialize", () => {
   const endpoint = new Endpoint({
@@ -196,29 +204,31 @@ bench("Endpoint - with custom serialize", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([2057, "instantiations"]);
+}).types([1822, "instantiations"]);
 
 bench("Endpoint - with custom parse", () => {
   const endpoint = new Endpoint({
     method: "GET",
     pathname: "/users/:id",
-    data: {
-      schema: z.object({ value: z.string() }),
-      parse: async (body) => {
-        const text = await new Response(body).text();
-        return JSON.parse(text);
+    responses: {
+      200: {
+        schema: z.object({ value: z.string() }),
+        parse: async (body) => {
+          const text = await new Response(body).text();
+          return JSON.parse(text);
+        },
       },
-    },
-    error: {
-      schema: z.object({ errors: z.array(z.string()) }),
-      parse: async (body) => {
-        const text = await new Response(body).text();
-        return { errors: text.split(",") };
+      500: {
+        schema: z.object({ errors: z.array(z.string()) }),
+        parse: async (body) => {
+          const text = await new Response(body).text();
+          return { errors: text.split(",") };
+        },
       },
     },
   });
   return {} as typeof endpoint;
-}).types([2341, "instantiations"]);
+}).types([2082, "instantiations"]);
 
 bench("Endpoint - union types in schema", () => {
   const endpoint = new Endpoint({
@@ -234,4 +244,4 @@ bench("Endpoint - union types in schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([2334, "instantiations"]);
+}).types([1551, "instantiations"]);

@@ -4,7 +4,7 @@ A typesafe and robust HTTP client with schema validation.
 
 ## Why?
 
-**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Schema validation happens at runtime with full TypeScript inference.
+**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Responses are typed _per status code_ — with `2xx`/`4xx`/`5xx` wildcard fallbacks — so a `200` body and a `404` body each carry their own type. Schema validation happens at runtime with full TypeScript inference.
 
 **Standard Schema compatible**: Works with Zod, ArkType, Valibot, or any schema library implementing the [Standard Schema spec](https://github.com/standard-schema/standard-schema).
 
@@ -25,55 +25,71 @@ bun add @afoures/http-client
 ```
 
 ```typescript
-import { Endpoint, http_client } from '@afoures/http-client'
-import { z } from 'zod'
+import { Endpoint, http_client } from "@afoures/http-client";
+import { z } from "zod";
 
 const api = http_client({
-  base_url: 'https://api.example.com',
+  base_url: "https://api.example.com",
   endpoints: {
     users: {
       list: new Endpoint({
-        method: 'GET',
-        pathname: '/users',
+        method: "GET",
+        pathname: "/users",
         query: {
           schema: z.object({
-            page: z.number().optional(),
-            limit: z.number().optional(),
+            page: z
+              .number()
+              .transform((n) => String(n))
+              .optional(),
+            limit: z
+              .number()
+              .transform((n) => String(n))
+              .optional(),
           }),
         },
-        data: {
-          schema: z.array(z.object({ id: z.string(), name: z.string() })),
-          parse: 'json',
+        responses: {
+          200: {
+            schema: z.array(z.object({ id: z.string(), name: z.string() })),
+            parse: "json",
+          },
         },
       }),
       get: new Endpoint({
-        method: 'GET',
-        pathname: '/users/(:id)',
-        data: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: 'json',
+        method: "GET",
+        pathname: "/users/:id",
+        responses: {
+          200: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
+          404: {
+            schema: z.object({ message: z.string() }),
+            parse: "json",
+          },
         },
       }),
       create: new Endpoint({
-        method: 'POST',
-        pathname: '/users',
+        method: "POST",
+        pathname: "/users",
         body: {
           schema: z.object({ name: z.string(), email: z.string().email() }),
-          serialize: 'json',
+          serialize: "json",
         },
-        data: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: 'json',
+        responses: {
+          201: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
         },
       }),
     },
   },
-})
+});
 
 // All endpoints are fully typed
-const list = await api.users.list({ query: { page: 1, limit: 10 } })
-const user = await api.users.get({ params: { id: '123' } })
-const created = await api.users.create({ body: { name: 'John', email: 'john@example.com' } })
+const list = await api.users.list({ query: { page: 1, limit: 10 } });
+const user = await api.users.get({ params: { id: "123" } });
+const created = await api.users.create({ body: { name: "John", email: "john@example.com" } });
 ```
 
 ## Documentation

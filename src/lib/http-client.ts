@@ -3,6 +3,7 @@ import {
   type HTTPFetch,
   type HTTPMethod,
   type MaybePromise,
+  type Parser,
   type Pathname,
   type Pretty,
   type RetryPolicy,
@@ -15,6 +16,28 @@ export interface EndpointMap {
   [name: string]: AnyEndpoint | EndpointMap;
 }
 
+/**
+ * Structural validator for the endpoints tree, used as the type of the
+ * `endpoints` option instead of constraining the type parameter with
+ * {@link EndpointMap} directly.
+ *
+ * It is a *homomorphic* mapped type over `endpoints` (`[name in keyof endpoints]`),
+ * which makes it transparent when used as a contextual type: an inline
+ * `new Endpoint({...})` keeps its own inferred generics (`pathname`, the schema
+ * type params, the `responses` map) instead of being widened to a constraint's
+ * value type. Constraining the type parameter with `EndpointMap` instead would
+ * contextually widen those generics — collapsing every schema to `Schema.Any`
+ * and forcing a spurious `params: any` on inline endpoints. Each leaf must be an
+ * `Endpoint`; nested objects recurse.
+ */
+type ValidateEndpointMap<endpoints> = {
+  [name in keyof endpoints]: endpoints[name] extends AnyEndpoint
+    ? endpoints[name]
+    : endpoints[name] extends object
+      ? ValidateEndpointMap<endpoints[name]>
+      : never;
+};
+
 type CustomFetch = (request: Request) => Promise<Response>;
 
 type Hooks = {
@@ -22,15 +45,14 @@ type Hooks = {
   on_response?: (response: Response) => void;
 };
 
-type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
+type map_to_fetch_endpoint_functions<endpoints> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
     infer pathname,
     infer params_schema,
     infer query_schema,
     infer body_schema,
-    infer data_schema,
-    infer error_schema
+    infer responses
   >
     ? ReturnType<
         typeof fetch_endpoint_factory<
@@ -39,8 +61,7 @@ type map_to_fetch_endpoint_functions<endpoints extends EndpointMap> = Pretty<{
           params_schema,
           query_schema,
           body_schema,
-          data_schema,
-          error_schema
+          responses
         >
       >
     : endpoints[name] extends EndpointMap
@@ -54,8 +75,7 @@ export function fetch_endpoint_factory<
   params_schema extends Schema._,
   query_schema extends Schema._,
   body_schema extends Schema._,
-  data_schema extends Schema._,
-  error_schema extends Schema._,
+  responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
 >({
   base_url,
   endpoint,
@@ -64,15 +84,7 @@ export function fetch_endpoint_factory<
   hooks = {},
 }: {
   base_url: string;
-  endpoint: Endpoint<
-    http_method,
-    pathname,
-    params_schema,
-    query_schema,
-    body_schema,
-    data_schema,
-    error_schema
-  >;
+  endpoint: Endpoint<http_method, pathname, params_schema, query_schema, body_schema, responses>;
   custom_fetch: CustomFetch;
   get_default_options?: () => MaybePromise<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
@@ -357,22 +369,20 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
-export type HttpClientOptions<endpoints extends EndpointMap> = {
+export type HttpClientOptions<endpoints> = {
   base_url: string;
-  endpoints: endpoints;
+  endpoints: ValidateEndpointMap<endpoints>;
   options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
   fetch?: CustomFetch;
 };
 
-export function http_client<const endpoints extends EndpointMap>({
+export function http_client<const endpoints>({
   base_url,
   endpoints: all_endpoints,
   options,
   fetch: custom_fetch = fetch,
-}: HttpClientOptions<endpoints>) {
-  function map<endpoints extends EndpointMap>(
-    endpoints: endpoints,
-  ): map_to_fetch_endpoint_functions<endpoints> {
+}: HttpClientOptions<endpoints>): map_to_fetch_endpoint_functions<endpoints> {
+  function map(endpoints: EndpointMap): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {
         if (endpoint_or_object instanceof Endpoint) {
@@ -391,30 +401,90 @@ export function http_client<const endpoints extends EndpointMap>({
     );
   }
 
-  return map(all_endpoints);
+  return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<endpoints>;
 }
 
 type AnyFetchEndpointFunction = ReturnType<
-  typeof fetch_endpoint_factory<any, any, any, any, any, any, any>
+  typeof fetch_endpoint_factory<any, any, any, any, any, any>
 >;
 
 export namespace $infer {
-  export type Query<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { query: infer query } ? query : never;
+  /** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
+  type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
+    ? endpoint
+    : endpoint extends Endpoint<
+          infer http_method,
+          infer pathname,
+          infer params_schema,
+          infer query_schema,
+          infer body_schema,
+          infer responses
+        >
+      ? ReturnType<
+          typeof fetch_endpoint_factory<
+            http_method,
+            pathname,
+            params_schema,
+            query_schema,
+            body_schema,
+            responses
+          >
+        >
+      : never;
 
-  export type Params<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { params: infer params } ? params : never;
+  type fetch_input<endpoint> = Parameters<as_fetch_endpoint<endpoint>>[0];
+  type fetch_output<endpoint> = Awaited<ReturnType<as_fetch_endpoint<endpoint>>>;
 
-  export type Body<fetch_endpoint extends AnyFetchEndpointFunction> =
-    Parameters<fetch_endpoint>[0] extends { body: infer body } ? body : never;
+  /** Read an input key, yielding `never` only when the key genuinely does not exist. */
+  type infer_init<endpoint, key extends PropertyKey> = key extends keyof fetch_input<endpoint>
+    ? fetch_input<endpoint>[key]
+    : never;
 
-  export type Data<fetch_endpoint extends AnyFetchEndpointFunction> =
-    ReturnType<fetch_endpoint> extends HTTPFetch.SuccessfulResponse<infer data> ? data : never;
+  type AnyEndpointInput = AnyFetchEndpointFunction | AnyEndpoint;
 
-  export type Error<fetch_endpoint extends AnyFetchEndpointFunction> =
-    ReturnType<fetch_endpoint> extends HTTPFetch.ClientErrorResponse<infer error>
-      ? error
-      : ReturnType<fetch_endpoint> extends HTTPFetch.ServerErrorResponse<infer error>
-        ? error
-        : never;
+  export type Params<endpoint extends AnyEndpointInput> = infer_init<endpoint, "params">;
+
+  export type Query<endpoint extends AnyEndpointInput> = infer_init<endpoint, "query">;
+
+  export type Body<endpoint extends AnyEndpointInput> = infer_init<endpoint, "body">;
+
+  /** The full request argument (params + query + body + request init). */
+  export type Input<endpoint extends AnyEndpointInput> = fetch_input<endpoint>;
+
+  /** Everything `fetch` can return: HTTP response envelopes PLUS the transport error classes. */
+  export type Result<endpoint extends AnyEndpointInput> = fetch_output<endpoint>;
+
+  /**
+   * The discriminated HTTP response union only — Successful | Redirect | ClientError | ServerError.
+   * Drops the thrown transport errors (UnexpectedError/NetworkError/TimeoutError/AbortedError/ParseError);
+   * stays narrowable on `ok`/`status`.
+   */
+  export type Response<endpoint extends AnyEndpointInput> = Extract<
+    fetch_output<endpoint>,
+    { ok: boolean }
+  >;
+
+  export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
+    fetch_output<endpoint> extends infer response
+      ? response extends { ok: true; status: infer member_status extends number; data: infer data }
+        ? // a wildcard arm covers a whole class (e.g. `2xx`), so its `status` is a union;
+          // match when the requested `status` overlaps that union, not just when it equals it.
+          [Extract<member_status, status>] extends [never]
+          ? never
+          : data
+        : never
+      : never;
+
+  export type Error<endpoint extends AnyEndpointInput, status extends number = number> =
+    fetch_output<endpoint> extends infer response
+      ? response extends {
+          ok: false;
+          status: infer member_status extends number;
+          error: infer error;
+        }
+        ? [Extract<member_status, status>] extends [never]
+          ? never
+          : error
+        : never
+      : never;
 }

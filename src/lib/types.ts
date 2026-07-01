@@ -65,7 +65,19 @@ export namespace HTTPStatus {
     | 429
     | 431
     | 451;
+
   export type ServerErrorResponse = 500 | 501 | 502 | 503 | 504 | 505 | 506 | 507 | 508 | 510 | 511;
+
+  export type AnySuccessfullResponse = "2xx";
+  export type AnyClientErrorResponse = "4xx";
+  export type AnyServerErrorResponse = "5xx";
+
+  export type Any =
+    | HTTPStatus.InformationalResponse
+    | HTTPStatus.SuccessfulResponse
+    | HTTPStatus.ClientErrorResponse
+    | HTTPStatus.ServerErrorResponse
+    | HTTPStatus.RedirectMessage;
 }
 
 export namespace HTTPMethod {
@@ -125,25 +137,48 @@ export namespace HTTPFetch {
     raw_response: Response;
   };
 
-  export type ClientErrorResponse<Error> = SharedResponseContent & {
+  export type ClientErrorResponse<
+    errors extends Partial<Record<HTTPStatus.ClientErrorResponse, any>>,
+    fallback,
+  > = SharedResponseContent & {
     ok: false;
-    status: HTTPStatus.ClientErrorResponse;
-    error: Error;
-  };
+  } & (
+      | {
+          status: Exclude<HTTPStatus.ClientErrorResponse, keyof errors>;
+          error: fallback;
+        }
+      | {
+          [status in keyof errors & number]: { status: status; error: errors[status] };
+        }[keyof errors & number]
+    );
 
-  export type ServerErrorResponse<Error> = SharedResponseContent & {
+  export type ServerErrorResponse<
+    errors extends Partial<Record<HTTPStatus.ServerErrorResponse, any>>,
+    fallback,
+  > = SharedResponseContent & {
     ok: false;
-    status: HTTPStatus.ServerErrorResponse;
-    error: Error;
-  };
+  } & (
+      | {
+          status: Exclude<HTTPStatus.ServerErrorResponse, keyof errors>;
+          error: fallback;
+        }
+      | {
+          [status in keyof errors & number]: { status: status; error: errors[status] };
+        }[keyof errors & number]
+    );
 
-  export type SuccessfulResponse<Data> = SharedResponseContent & {
+  export type SuccessfulResponse<
+    data extends Partial<Record<Exclude<HTTPStatus.SuccessfulResponse, 204>, any>>,
+    fallback,
+  > = SharedResponseContent & {
     ok: true;
   } & (
       | {
-          status: Exclude<HTTPStatus.SuccessfulResponse, 204>;
-          data: Data;
+          status: Exclude<HTTPStatus.SuccessfulResponse, keyof data>;
+          data: fallback;
         }
+      | { [status in keyof data & number]: { status: status; data: data[status] } }[keyof data &
+          number]
       | {
           status: 204;
           data: null;
@@ -155,6 +190,52 @@ export namespace HTTPFetch {
     status: HTTPStatus.RedirectMessage;
     redirect_to: string | null;
   };
+
+  type extract_applicable_status<
+    map extends Partial<Record<Parser.AllowedStatus, any>>,
+    list extends keyof map,
+  > = Pretty<{ [status in Extract<normalize_key_as_number<keyof map>, list>]: map[status] }>;
+
+  type normalize_key_as_number<key> = key extends number
+    ? key
+    : key extends `${infer n extends number}`
+      ? n
+      : never;
+
+  type extract_default<
+    map extends Partial<Record<Parser.AllowedStatus, any>>,
+    key extends "2xx" | "4xx" | "5xx",
+    default_type,
+  > = key extends keyof map ? map[key] : default_type;
+
+  export type AnyResponse<map extends Partial<Record<Parser.AllowedStatus, any>>> = [
+    keyof map,
+  ] extends [never]
+    ?
+        | SuccessfulResponse<{}, void>
+        | ClientErrorResponse<{}, string>
+        | ServerErrorResponse<{}, string>
+        | RedirectMessage
+    : string extends keyof map
+      ?
+          | SuccessfulResponse<{}, unknown>
+          | ClientErrorResponse<{}, unknown>
+          | ServerErrorResponse<{}, unknown>
+          | RedirectMessage
+      :
+          | SuccessfulResponse<
+              extract_applicable_status<map, Exclude<HTTPStatus.SuccessfulResponse, 204>>,
+              extract_default<map, "2xx", void>
+            >
+          | ClientErrorResponse<
+              extract_applicable_status<map, HTTPStatus.ClientErrorResponse>,
+              extract_default<map, "4xx", string>
+            >
+          | ServerErrorResponse<
+              extract_applicable_status<map, HTTPStatus.ServerErrorResponse>,
+              extract_default<map, "5xx", string>
+            >
+          | RedirectMessage;
 
   export type TypedParamsInit<pathname extends Pathname.Relative, params_schema extends Schema._> =
     is_any<params_schema> extends true
@@ -300,7 +381,7 @@ export namespace Parser {
     parse: string | ((data: any) => any);
   };
 
-  export type Data<schema extends Schema._> =
+  export type ResponseBody<schema extends Schema._> =
     schema extends Schema._<string, any>
       ? {
           schema: schema;
@@ -315,18 +396,15 @@ export namespace Parser {
             | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
         };
 
-  export type Error<schema extends Schema._> =
-    schema extends Schema._<string, any>
-      ? {
-          schema: schema;
-          parse:
-            | "text"
-            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-        }
-      : {
-          schema: schema;
-          parse:
-            | "json"
-            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-        };
+  export type AllowedStatus =
+    | HTTPStatus.AnySuccessfullResponse
+    | Exclude<HTTPStatus.SuccessfulResponse, 204>
+    | HTTPStatus.AnyClientErrorResponse
+    | HTTPStatus.ClientErrorResponse
+    | HTTPStatus.AnyServerErrorResponse
+    | HTTPStatus.ServerErrorResponse;
+
+  export type ResponseBodyByStatus<map extends Partial<Record<Parser.AllowedStatus, Schema._>>> = {
+    [status in keyof map]: map[status] extends Schema._ ? Parser.ResponseBody<map[status]> : never;
+  };
 }

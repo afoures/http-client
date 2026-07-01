@@ -18,8 +18,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     data: any,
     raw_response: Response,
-  ): HTTPFetch.SuccessfulResponse<any> {
-    const response: HTTPFetch.SuccessfulResponse<any> = {
+  ): HTTPFetch.SuccessfulResponse<any, any> {
+    const response: HTTPFetch.SuccessfulResponse<any, any> = {
       ok: true,
       method,
       url: raw_response.url,
@@ -57,8 +57,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     error: any,
     raw_response: Response,
-  ): HTTPFetch.ClientErrorResponse<any> {
-    const response: HTTPFetch.ClientErrorResponse<any> = {
+  ): HTTPFetch.ClientErrorResponse<any, any> {
+    const response: HTTPFetch.ClientErrorResponse<any, any> = {
       ok: false,
       method,
       url: raw_response.url,
@@ -78,8 +78,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     error: any,
     raw_response: Response,
-  ): HTTPFetch.ServerErrorResponse<any> {
-    const response: HTTPFetch.ServerErrorResponse<any> = {
+  ): HTTPFetch.ServerErrorResponse<any, any> {
+    const response: HTTPFetch.ServerErrorResponse<any, any> = {
       ok: false,
       method,
       url: raw_response.url,
@@ -103,14 +103,12 @@ export type EndpointDefinition<
   params_schema extends Schema._,
   query_schema extends Schema._,
   body_schema extends Schema._,
-  data_schema extends Schema._,
-  error_schema extends Schema._,
+  response_schemas extends Partial<Record<Parser.AllowedStatus, Schema._>>,
 > = {
   method: http_method;
   pathname: pathname;
   query?: Serializer.QueryString<query_schema>;
-  data?: Parser.Data<data_schema>;
-  error?: Parser.Error<error_schema>;
+  responses?: Parser.ResponseBodyByStatus<response_schemas>;
 } & (pathname extends Pathname.WithParams
   ? { params?: Serializer.Params<pathname, params_schema> }
   : [params_schema] extends [never]
@@ -122,14 +120,17 @@ export type EndpointDefinition<
       ? { body?: never }
       : { body?: ErrorMessage<"this http method does not support body"> });
 
+type extract_outputs<map extends Partial<Record<string | number, Schema._>>> = {
+  [key in keyof map]: map[key] extends Schema._ ? Schema.infer_output<map[key]> : never;
+};
+
 export class Endpoint<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
   params_schema extends Schema._ = never,
   query_schema extends Schema._ = never,
   body_schema extends Schema._ = never,
-  data_schema extends Schema._ = never,
-  error_schema extends Schema._ = never,
+  response_schemas extends Partial<Record<Parser.AllowedStatus, Schema._>> = {},
 > {
   #method: http_method;
   #pattern: RoutePattern<pathname>;
@@ -138,10 +139,7 @@ export class Endpoint<
     query: Required<Serializer.QueryString<query_schema>> | null;
     body: Required<Serializer.Body<body_schema>> | null;
   };
-  #parsers: {
-    data: Required<Parser.Data<data_schema>> | null;
-    error: Required<Parser.Error<error_schema>> | null;
-  };
+  #parsers: Parser.ResponseBodyByStatus<response_schemas>;
   #options: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit;
 
   constructor(
@@ -151,8 +149,7 @@ export class Endpoint<
       params_schema,
       query_schema,
       body_schema,
-      data_schema,
-      error_schema
+      response_schemas
     >,
     options?: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
   ) {
@@ -165,11 +162,17 @@ export class Endpoint<
       query: as_serializer(definition.query, "urlencoded"),
       body: as_serializer(definition.body, "json"),
     };
-    this.#parsers = {
-      data: as_parser(definition.data, "json"),
-      error: as_parser(definition.error, "text"),
-    };
+    this.#parsers = Object.fromEntries(
+      Object.entries(definition.responses ?? {}).map(([key, schema]) => [key, as_parser(schema)]),
+    ) as Parser.ResponseBodyByStatus<response_schemas>;
     this.#options = options ?? {};
+  }
+
+  #get_parser_for(status: number): Required<Parser.Any> | undefined {
+    return (
+      this.#parsers[status as Parser.AllowedStatus] ??
+      this.#parsers[`${Math.floor(status / 100)}xx` as Parser.AllowedStatus]
+    );
   }
 
   get method() {
@@ -330,114 +333,103 @@ export class Endpoint<
 
   async parse_response(
     raw_response: Response,
-  ): Promise<
-    | HTTPFetch.ClientErrorResponse<Schema.infer_output<error_schema, string>>
-    | HTTPFetch.ServerErrorResponse<Schema.infer_output<error_schema, string>>
-    | HTTPFetch.SuccessfulResponse<Schema.infer_output<data_schema, void>>
-    | HTTPFetch.RedirectMessage
-    | ParseError
-  > {
+  ): Promise<HTTPFetch.AnyResponse<extract_outputs<response_schemas>> | ParseError> {
     const response = raw_response.clone();
+    const status = raw_response.status;
 
-    // Handle redirects (30x)
-    if (raw_response.status >= 300 && raw_response.status < 400) {
-      return RESPONSE.redirect(this.#method, raw_response);
+    // Handle redirects (30x) - never schema'd.
+    if (status >= 300 && status < 400) {
+      return RESPONSE.redirect(this.#method, raw_response) as HTTPFetch.AnyResponse<
+        extract_outputs<response_schemas>
+      >;
     }
 
+    const parser = this.#get_parser_for(status);
+
+    // Parse + validate the body with a resolved parser, or ParseError on failure.
+    const parse_response = async (parser: Required<Parser.Any>): Promise<unknown | ParseError> => {
+      if (parser.parse == null) {
+        return new ParseError("Response parsing failed", {
+          cause: new Error("parser.parse in not defined"),
+          operation: "parse_response",
+          response: {
+            status,
+            headers: raw_response.headers,
+          },
+        });
+      }
+      let parsed;
+      if (typeof parser.parse === "function") {
+        parsed = await parser.parse(response.body);
+      } else if (parser.parse === "json") {
+        parsed = await parse_as_json(response);
+      } else if (parser.parse === "text") {
+        parsed = await response.text();
+      }
+
+      const result = await parser.schema["~standard"].validate(parsed);
+
+      if (result.issues !== undefined) {
+        return new ParseError("Response parsing failed", {
+          cause: result.issues,
+          operation: "parse_response",
+          response: {
+            status,
+            headers: raw_response.headers,
+            body: parsed,
+          },
+        });
+      }
+
+      return result.value;
+    };
+
     // Handle client and server errors (40x and 50x)
-    if (raw_response.status >= 400 && raw_response.status < 600) {
+    if (status >= 400 && status < 600) {
       let error: any;
-
-      if (this.#parsers.error) {
-        // Parse error body using error parser
-        const parser = this.#parsers.error;
-        let parsed;
-
-        if (typeof parser.parse === "function") {
-          parsed = await parser.parse(response.body);
-        } else if (parser.parse === "json") {
-          parsed = await parse_as_json(response);
-        } else if (parser.parse === "text") {
-          parsed = await response.text();
-        }
-
-        // Validate with schema
-        const schema = parser.schema;
-        const result = await schema["~standard"].validate(parsed);
-
-        if (result.issues !== undefined) {
-          return new ParseError("Error parsing failed", {
-            cause: result.issues,
-            operation: "parse_response",
-            response: {
-              status: raw_response.status,
-              headers: raw_response.headers,
-              body: parsed,
-            },
-          });
-        }
-
-        error = result.value;
+      if (parser) {
+        const parsed = await parse_response(parser);
+        if (parsed instanceof ParseError) return parsed;
+        error = parsed;
       } else {
-        // No error parser - default to text
+        // No parser - default to raw text so the body is never lost.
         error = await response.text();
       }
 
-      return raw_response.status >= 400 && raw_response.status < 500
-        ? RESPONSE.client_error(this.#method, error, raw_response)
-        : RESPONSE.server_error(this.#method, error, raw_response);
+      return (
+        status < 500
+          ? RESPONSE.client_error(this.#method, error, raw_response)
+          : RESPONSE.server_error(this.#method, error, raw_response)
+      ) as HTTPFetch.AnyResponse<extract_outputs<response_schemas>>;
     }
 
-    // Handle successful responses (20x)
-    if (raw_response.status >= 200 && raw_response.status < 300) {
-      // 204 No Content - special handling
-      if (raw_response.status === 204) {
-        return RESPONSE.success(this.#method, null, raw_response);
+    // Handle successful response_schemas (20x)
+    if (status >= 200 && status < 300) {
+      // 204 No Content always has a null body, regardless of any parser.
+      if (status === 204) {
+        return RESPONSE.success(this.#method, null, raw_response) as HTTPFetch.AnyResponse<
+          extract_outputs<response_schemas>
+        >;
       }
 
-      // Other success statuses
-      if (this.#parsers.data) {
-        // Parse data body using data parser
-        const parser = this.#parsers.data;
-        let parsed;
-
-        if (typeof parser.parse === "function") {
-          parsed = await parser.parse(response.body);
-        } else if (parser.parse === "json") {
-          parsed = await parse_as_json(response);
-        } else if (parser.parse === "text") {
-          parsed = await response.text();
-        }
-
-        // Validate with schema
-        const schema = parser.schema;
-        const result = await schema["~standard"].validate(parsed);
-
-        if (result.issues !== undefined) {
-          return new ParseError("Response parsing failed", {
-            cause: result.issues,
-            operation: "parse_response",
-            response: {
-              status: raw_response.status,
-              headers: raw_response.headers,
-              body: parsed,
-            },
-          });
-        }
-
-        return RESPONSE.success(this.#method, result.value, raw_response);
-      } else {
-        // No data parser - return null
-        return RESPONSE.success(this.#method, null, raw_response);
+      let data: any = null;
+      if (parser) {
+        const parsed = await parse_response(parser);
+        if (parsed instanceof ParseError) return parsed;
+        data = parsed;
       }
+
+      return RESPONSE.success(this.#method, data, raw_response) as HTTPFetch.AnyResponse<
+        extract_outputs<response_schemas>
+      >;
     }
 
     // Fallback for other status codes (shouldn't happen in practice)
-    throw new Error(`Unhandled status code: ${raw_response.status}`);
+    throw new Error(`Unhandled status code: ${status}`);
   }
 }
 
-export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any>;
+export type AnyEndpoint = Endpoint<any, any, any, any, any, any>;
 
 async function parse_as_json(response: Response): Promise<Json.Value | null> {
   const text = await response.text();
@@ -462,13 +454,8 @@ function as_serializer<serializer extends Serializer.Any>(
   return { ...serializer, serialize: serializer.serialize ?? default_serialize };
 }
 
-function as_parser<parser extends Parser.Any>(
-  parser: any,
-  default_parse?: parser["parse"] & string,
-): parser | null {
+function as_parser<parser extends Parser.Any>(parser: any): parser | null {
   if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
-  if (default_parse === undefined) return parser;
-
-  return { ...parser, parse: parser.parse ?? default_parse };
+  return parser;
 }

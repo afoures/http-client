@@ -5,27 +5,29 @@
 ## Zod
 
 ```typescript
-import { z } from 'zod'
+import { z } from "zod";
 
 const endpoint = new Endpoint({
-  method: 'POST',
-  pathname: '/users',
+  method: "POST",
+  pathname: "/users",
   body: {
     schema: z.object({
       name: z.string().min(1),
       email: z.string().email(),
     }),
-    serialize: 'json',
+    serialize: "json",
   },
-  data: {
-    schema: z.object({
-      id: z.string(),
-      name: z.string(),
-      createdAt: z.string().datetime(),
-    }),
-    parse: 'json',
+  responses: {
+    200: {
+      schema: z.object({
+        id: z.string(),
+        name: z.string(),
+        createdAt: z.string().datetime(),
+      }),
+      parse: "json",
+    },
   },
-})
+});
 ```
 
 ### Transforms
@@ -34,20 +36,22 @@ Zod transforms work for both input and output:
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users',
+  method: "GET",
+  pathname: "/users",
   query: {
     schema: z.object({
       page: z.number().transform(String), // number input, string output
     }),
   },
-  data: {
-    schema: z.object({
-      createdAt: z.string().transform(s => new Date(s)), // parse ISO to Date
-    }),
-    parse: 'json',
+  responses: {
+    200: {
+      schema: z.object({
+        createdAt: z.string().transform((s) => new Date(s)), // parse ISO to Date
+      }),
+      parse: "json",
+    },
   },
-})
+});
 
 // Input: { page: 1 }
 // Query string: ?page=1
@@ -58,89 +62,100 @@ const endpoint = new Endpoint({
 ## ArkType
 
 ```typescript
-import { type } from 'arktype'
+import { type } from "arktype";
 
 const endpoint = new Endpoint({
-  method: 'POST',
-  pathname: '/users',
+  method: "POST",
+  pathname: "/users",
   body: {
     schema: type({
-      name: 'string>0',
-      email: 'string',
-      age: 'number?',
+      name: "string>0",
+      email: "string",
+      age: "number?",
     }),
-    serialize: 'json',
+    serialize: "json",
   },
-  data: {
-    schema: type({
-      id: 'string',
-      name: 'string',
-      'email?': 'string',
-    }),
-    parse: 'json',
+  responses: {
+    200: {
+      schema: type({
+        id: "string",
+        name: "string",
+        "email?": "string",
+      }),
+      parse: "json",
+    },
   },
-})
+});
 ```
 
 ### Transforms
 
 ```typescript
-import { type } from 'arktype'
+import { type } from "arktype";
 
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users',
-  data: {
-    schema: type({
-      id: 'string',
-      'createdAt': 'string.parse(v => new Date(v))',
-    }),
-    parse: 'json',
+  method: "GET",
+  pathname: "/users",
+  responses: {
+    200: {
+      schema: type({
+        id: "string",
+        createdAt: "string.parse(v => new Date(v))",
+      }),
+      parse: "json",
+    },
   },
-})
+});
 ```
 
 ## Valibot
 
 ```typescript
-import * as v from 'valibot'
+import * as v from "valibot";
 
 const endpoint = new Endpoint({
-  method: 'POST',
-  pathname: '/users',
+  method: "POST",
+  pathname: "/users",
   body: {
     schema: v.object({
       name: v.pipe(v.string(), v.minLength(1)),
       email: v.pipe(v.string(), v.email()),
     }),
-    serialize: 'json',
+    serialize: "json",
   },
-  data: {
-    schema: v.object({
-      id: v.string(),
-      name: v.string(),
-    }),
-    parse: 'json',
+  responses: {
+    200: {
+      schema: v.object({
+        id: v.string(),
+        name: v.string(),
+      }),
+      parse: "json",
+    },
   },
-})
+});
 ```
 
 ### Transforms
 
 ```typescript
-import * as v from 'valibot'
+import * as v from "valibot";
 
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users',
-  data: {
-    schema: v.object({
-      id: v.string(),
-      createdAt: v.pipe(v.string(), v.transform(s => new Date(s))),
-    }),
-    parse: 'json',
+  method: "GET",
+  pathname: "/users",
+  responses: {
+    200: {
+      schema: v.object({
+        id: v.string(),
+        createdAt: v.pipe(
+          v.string(),
+          v.transform((s) => new Date(s)),
+        ),
+      }),
+      parse: "json",
+    },
   },
-})
+});
 ```
 
 ## Input vs Output Types
@@ -152,21 +167,21 @@ Schemas define both input validation and output parsing:
 
 ```typescript
 const schema = z.object({
-  id: z.string().transform(s => parseInt(s)),
-})
+  id: z.string().transform((s) => parseInt(s)),
+});
 
 // Input: string
 // Output: number
 
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/items',
+  method: "GET",
+  pathname: "/items",
   query: {
     schema: z.object({
       id: z.string().transform(parseInt),
     }),
   },
-})
+});
 
 // You pass: { query: { id: '123' } }  (string)
 // URL becomes: /items?id=123
@@ -178,39 +193,39 @@ const endpoint = new Endpoint({
 Share schemas across endpoints:
 
 ```typescript
-import { z } from 'zod'
+import { z } from "zod";
 
 const UserSchema = z.object({
   id: z.string(),
   name: z.string(),
   email: z.string().email(),
-})
+});
 
-const CreateUserSchema = UserSchema.omit({ id: true })
+const CreateUserSchema = UserSchema.omit({ id: true });
 
 const api = http_client({
-  base_url: 'https://api.example.com',
+  base_url: "https://api.example.com",
   endpoints: {
     users: {
       list: new Endpoint({
-        method: 'GET',
-        pathname: '/users',
-        data: { schema: z.array(UserSchema), parse: 'json' },
+        method: "GET",
+        pathname: "/users",
+        responses: { 200: { schema: z.array(UserSchema), parse: "json" } },
       }),
       get: new Endpoint({
-        method: 'GET',
-        pathname: '/users/(:id)',
-        data: { schema: UserSchema, parse: 'json' },
+        method: "GET",
+        pathname: "/users/:id",
+        responses: { 200: { schema: UserSchema, parse: "json" } },
       }),
       create: new Endpoint({
-        method: 'POST',
-        pathname: '/users',
-        body: { schema: CreateUserSchema, serialize: 'json' },
-        data: { schema: UserSchema, parse: 'json' },
+        method: "POST",
+        pathname: "/users",
+        body: { schema: CreateUserSchema, serialize: "json" },
+        responses: { 201: { schema: UserSchema, parse: "json" } },
       }),
     },
   },
-})
+});
 ```
 
 ## Custom Schema Libraries
@@ -219,11 +234,11 @@ Any library implementing the Standard Schema spec works:
 
 ```typescript
 interface StandardSchemaV1<Input = unknown, Output = Input> {
-  readonly '~standard': {
-    readonly version: 1
-    readonly vendor: string
-    readonly validate: (value: Input) => StandardResult<Output>
-  }
+  readonly "~standard": {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly validate: (value: Input) => StandardResult<Output>;
+  };
 }
 ```
 

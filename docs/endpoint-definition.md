@@ -6,10 +6,10 @@ The `Endpoint` class defines an HTTP endpoint with its method, path, serializers
 
 ```typescript
 const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users/(:id)',
+  method: "GET",
+  pathname: "/users/:id",
   // ...options
-})
+});
 ```
 
 ## Options
@@ -19,7 +19,7 @@ const endpoint = new Endpoint({
 HTTP method for the endpoint:
 
 ```typescript
-type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+type HTTPMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 ```
 
 - `GET` - Cannot have a body schema
@@ -30,10 +30,10 @@ type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 URL path with optional dynamic segments:
 
 ```typescript
-pathname: '/users'           // Static path
-pathname: '/users/:id'       // Required param
-pathname: '/users/(:id)'     // Optional param
-pathname: '/posts/:id/comments/:commentId'  // Multiple params
+pathname: "/users"; // Static path
+pathname: "/users/:id"; // Required param
+pathname: "/users/(:id)"; // Optional param
+pathname: "/posts/:id/comments/:commentId"; // Multiple params
 ```
 
 ### `params`
@@ -48,37 +48,47 @@ Serializer for query string parameters. See [Serialization](./serialization.md#q
 
 Serializer for request body. See [Serialization](./serialization.md#body).
 
-### `data`
+### `responses`
 
-Parser for successful response body. See [Response Parsing](./response-parsing.md#data).
+A map of response parsers keyed by status code. Keys can be a specific status
+(`200`, `201`, `404`, `500`, …) or a class wildcard (`"2xx"`, `"4xx"`, `"5xx"`),
+and each value is a `{ schema, parse }` parser. A specific status takes
+precedence over its wildcard. See [Response Parsing](./response-parsing.md).
 
-### `error`
-
-Parser for error response body. See [Response Parsing](./response-parsing.md#error).
+```typescript
+responses: {
+  200: { schema: z.object({ id: z.string() }), parse: "json" },
+  "4xx": { schema: z.object({ message: z.string() }), parse: "json" },
+}
+```
 
 ## Constructor
 
 The `Endpoint` constructor takes a definition and optional default options:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: 'GET',
-  pathname: '/users',
-  // Definition: method, pathname, params, query, body, data, error
-}, {
-  headers: {
-    'X-API-Version': '2',
+const endpoint = new Endpoint(
+  {
+    method: "GET",
+    pathname: "/users",
+    // Definition: method, pathname, params, query, body, responses
   },
-  timeout: 5000,
-  retry: {
-    attempts: 3,
-    delay: 1000,
-    when: ({ response }) => response?.status === 503,
+  {
+    headers: {
+      "X-API-Version": "2",
+    },
+    timeout: 5000,
+    retry: {
+      attempts: 3,
+      delay: 1000,
+      when: ({ response }) => response?.status === 503,
+    },
   },
-})
+);
 ```
 
 The second argument accepts:
+
 - `headers`: Default headers for all requests
 - `timeout`: Request timeout in milliseconds
 - `retry`: Default retry policy
@@ -97,10 +107,10 @@ Generates a full URL with params and query serialized:
 
 ```typescript
 const url = await endpoint.generate_url({
-  base_url: 'https://api.example.com',
-  params: { id: '123' },
-  query: { include: 'posts' },
-})
+  base_url: "https://api.example.com",
+  params: { id: "123" },
+  query: { include: "posts" },
+});
 ```
 
 Returns `URL` on success or `SerializationError` on validation failure.
@@ -111,8 +121,8 @@ Serializes the request body:
 
 ```typescript
 const { body, content_type } = await endpoint.serialize_body({
-  body: { name: 'John' },
-})
+  body: { name: "John" },
+});
 ```
 
 Returns `{ body, content_type }` on success or `SerializationError` on validation failure.
@@ -122,7 +132,7 @@ Returns `{ body, content_type }` on success or `SerializationError` on validatio
 Parses an HTTP response:
 
 ```typescript
-const result = await endpoint.parse_response(response)
+const result = await endpoint.parse_response(response);
 ```
 
 Returns typed result based on status code. See [Response Parsing](./response-parsing.md).

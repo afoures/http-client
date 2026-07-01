@@ -34,9 +34,11 @@ describe("fetch_endpoint_factory", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users/(:id)",
-      data: {
-        schema: z.object({ id: z.string(), name: z.string() }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({ id: z.string(), name: z.string() }),
+          parse: "json",
+        },
       },
     });
 
@@ -266,9 +268,11 @@ describe("fetch_endpoint_factory", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/posts/:id",
-      data: {
-        schema: z.object({ id: z.number(), title: z.string() }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({ id: z.number(), title: z.string() }),
+          parse: "json",
+        },
       },
     });
 
@@ -490,9 +494,11 @@ describe("fetch_endpoint_factory", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      data: {
-        schema: z.object({ id: z.number() }),
-        parse: "json",
+      responses: {
+        200: {
+          schema: z.object({ id: z.number() }),
+          parse: "json",
+        },
       },
     });
 
@@ -837,9 +843,11 @@ describe("fetch_endpoint_factory", () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/users",
-      error: {
-        schema: z.object({ message: z.string() }),
-        parse: "json",
+      responses: {
+        404: {
+          schema: z.object({ message: z.string() }),
+          parse: "json",
+        },
       },
     });
 
@@ -938,10 +946,7 @@ describe("fetch_endpoint_factory", () => {
       }),
     );
 
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/slow" },
-      { timeout: 10 },
-    );
+    const endpoint = new Endpoint({ method: "GET", pathname: "/slow" }, { timeout: 10 });
 
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
@@ -961,9 +966,7 @@ describe("fetch_endpoint_factory", () => {
     const controller = new AbortController();
     controller.abort();
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})));
 
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
