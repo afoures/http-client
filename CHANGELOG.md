@@ -2,6 +2,40 @@
 
 This is the changelog for `http-client`.
 
+## 0.5.0
+
+### Features
+
+- Replace the separate `data` and `error` parser definitions with a single `responses` map keyed by HTTP status code.
+  
+  Each key is a status code (or a `2xx`/`4xx`/`5xx` wildcard) and each value is a `{ schema, parse }` parser. Parsed bodies are typed per status — landing on `data` for `2xx` responses and `error` for `4xx`/`5xx` responses — so `parse_response` returns a discriminated union you narrow on `ok` and `status`.
+  
+  ```typescript
+  const endpoint = new Endpoint({
+    method: "GET",
+    pathname: "/users/(:id)",
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string() }), parse: "json" },
+      "5xx": { schema: z.object({ message: z.string() }), parse: "json" },
+    },
+  });
+  ```
+  
+  Per-status parser resolution falls back from an exact status to its class wildcard (`200` → `2xx`, `404` → `4xx`, `503` → `5xx`). Statuses with no matching parser default to raw text so the body is never lost; `204` always yields `null` data regardless of any parser.
+
+- Expand the `$infer` namespace.
+  
+  - All `$infer.*` helpers now accept either an `Endpoint` instance or a bound fetch function.
+  - `$infer.Data` and `$infer.Error` take an optional second `status` type parameter to extract the body for a specific status or status class, e.g. `$infer.Data<typeof endpoint, 200>`.
+  - Add `$infer.Input` (the full request argument), `$infer.Result` (everything `fetch` can return, including transport errors), and `$infer.Response` (the HTTP response union only, narrowable on `ok`/`status`).
+
+### Bug Fixes
+
+- Fix inline endpoints losing their inferred types in `http_client`.
+  
+  `endpoints` was constrained with `EndpointMap` directly, which contextually widened inline `new Endpoint({...})` generics — collapsing every schema to `Schema.Any` and forcing a spurious `params: any`. The tree is now validated with a homomorphic mapped type, so inline endpoints keep their own inferred `pathname`, schema, and `responses` types.
+
 ## 0.4.0
 
 ### Features
