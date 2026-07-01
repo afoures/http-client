@@ -137,13 +137,7 @@ export namespace HTTPFetch {
     raw_response: Response;
   };
 
-  export type ClientErrorResponse<Error> = SharedResponseContent & {
-    ok: false;
-    status: HTTPStatus.ClientErrorResponse;
-    error: Error;
-  };
-
-  export type ClientErrorResponse_<
+  export type ClientErrorResponse<
     errors extends Partial<Record<HTTPStatus.ClientErrorResponse, any>>,
     fallback,
   > = SharedResponseContent & {
@@ -153,16 +147,12 @@ export namespace HTTPFetch {
           status: Exclude<HTTPStatus.ClientErrorResponse, keyof errors>;
           error: fallback;
         }
-      | { [status in keyof errors]: { status: status; error: errors[status] } }[keyof errors]
+      | {
+          [status in keyof errors & number]: { status: status; error: errors[status] };
+        }[keyof errors & number]
     );
 
-  export type ServerErrorResponse<Error> = SharedResponseContent & {
-    ok: false;
-    status: HTTPStatus.ServerErrorResponse;
-    error: Error;
-  };
-
-  export type ServerErrorResponse_<
+  export type ServerErrorResponse<
     errors extends Partial<Record<HTTPStatus.ServerErrorResponse, any>>,
     fallback,
   > = SharedResponseContent & {
@@ -172,23 +162,12 @@ export namespace HTTPFetch {
           status: Exclude<HTTPStatus.ServerErrorResponse, keyof errors>;
           error: fallback;
         }
-      | { [status in keyof errors]: { status: status; error: errors[status] } }[keyof errors]
+      | {
+          [status in keyof errors & number]: { status: status; error: errors[status] };
+        }[keyof errors & number]
     );
 
-  export type SuccessfulResponse<Data> = SharedResponseContent & {
-    ok: true;
-  } & (
-      | {
-          status: Exclude<HTTPStatus.SuccessfulResponse, 204>;
-          data: Data;
-        }
-      | {
-          status: 204;
-          data: null;
-        }
-    );
-
-  export type SuccessfulResponse_<
+  export type SuccessfulResponse<
     data extends Partial<Record<Exclude<HTTPStatus.SuccessfulResponse, 204>, any>>,
     fallback,
   > = SharedResponseContent & {
@@ -198,7 +177,8 @@ export namespace HTTPFetch {
           status: Exclude<HTTPStatus.SuccessfulResponse, keyof data>;
           data: fallback;
         }
-      | { [status in keyof data]: { status: status; data: data[status] } }[keyof data]
+      | { [status in keyof data & number]: { status: status; data: data[status] } }[keyof data &
+          number]
       | {
           status: 204;
           data: null;
@@ -228,30 +208,30 @@ export namespace HTTPFetch {
     default_type,
   > = key extends keyof map ? map[key] : default_type;
 
-  export type Response_<map extends Partial<Record<Parser.AllowedStatus, any>>> = [
+  export type AnyResponse<map extends Partial<Record<Parser.AllowedStatus, any>>> = [
     keyof map,
   ] extends [never]
     ?
-        | SuccessfulResponse_<{}, void>
-        | ClientErrorResponse_<{}, string>
-        | ServerErrorResponse_<{}, string>
+        | SuccessfulResponse<{}, void>
+        | ClientErrorResponse<{}, string>
+        | ServerErrorResponse<{}, string>
         | RedirectMessage
     : string extends keyof map
       ?
-          | SuccessfulResponse_<{}, unknown>
-          | ClientErrorResponse_<{}, unknown>
-          | ServerErrorResponse_<{}, unknown>
+          | SuccessfulResponse<{}, unknown>
+          | ClientErrorResponse<{}, unknown>
+          | ServerErrorResponse<{}, unknown>
           | RedirectMessage
       :
-          | SuccessfulResponse_<
+          | SuccessfulResponse<
               extract_applicable_status<map, Exclude<HTTPStatus.SuccessfulResponse, 204>>,
               extract_default<map, "2xx", void>
             >
-          | ClientErrorResponse_<
+          | ClientErrorResponse<
               extract_applicable_status<map, HTTPStatus.ClientErrorResponse>,
               extract_default<map, "4xx", string>
             >
-          | ServerErrorResponse_<
+          | ServerErrorResponse<
               extract_applicable_status<map, HTTPStatus.ServerErrorResponse>,
               extract_default<map, "5xx", string>
             >

@@ -18,8 +18,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     data: any,
     raw_response: Response,
-  ): HTTPFetch.SuccessfulResponse<any> {
-    const response: HTTPFetch.SuccessfulResponse<any> = {
+  ): HTTPFetch.SuccessfulResponse<any, any> {
+    const response: HTTPFetch.SuccessfulResponse<any, any> = {
       ok: true,
       method,
       url: raw_response.url,
@@ -57,8 +57,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     error: any,
     raw_response: Response,
-  ): HTTPFetch.ClientErrorResponse<any> {
-    const response: HTTPFetch.ClientErrorResponse<any> = {
+  ): HTTPFetch.ClientErrorResponse<any, any> {
+    const response: HTTPFetch.ClientErrorResponse<any, any> = {
       ok: false,
       method,
       url: raw_response.url,
@@ -78,8 +78,8 @@ const RESPONSE = {
     method: HTTPMethod.Any,
     error: any,
     raw_response: Response,
-  ): HTTPFetch.ServerErrorResponse<any> {
-    const response: HTTPFetch.ServerErrorResponse<any> = {
+  ): HTTPFetch.ServerErrorResponse<any, any> {
+    const response: HTTPFetch.ServerErrorResponse<any, any> = {
       ok: false,
       method,
       url: raw_response.url,
@@ -333,13 +333,13 @@ export class Endpoint<
 
   async parse_response(
     raw_response: Response,
-  ): Promise<HTTPFetch.Response_<extract_outputs<response_schemas>> | ParseError> {
+  ): Promise<HTTPFetch.AnyResponse<extract_outputs<response_schemas>> | ParseError> {
     const response = raw_response.clone();
     const status = raw_response.status;
 
     // Handle redirects (30x) - never schema'd.
     if (status >= 300 && status < 400) {
-      return RESPONSE.redirect(this.#method, raw_response) as HTTPFetch.Response_<
+      return RESPONSE.redirect(this.#method, raw_response) as HTTPFetch.AnyResponse<
         extract_outputs<response_schemas>
       >;
     }
@@ -400,14 +400,14 @@ export class Endpoint<
         status < 500
           ? RESPONSE.client_error(this.#method, error, raw_response)
           : RESPONSE.server_error(this.#method, error, raw_response)
-      ) as HTTPFetch.Response_<extract_outputs<response_schemas>>;
+      ) as HTTPFetch.AnyResponse<extract_outputs<response_schemas>>;
     }
 
     // Handle successful response_schemas (20x)
     if (status >= 200 && status < 300) {
       // 204 No Content always has a null body, regardless of any parser.
       if (status === 204) {
-        return RESPONSE.success(this.#method, null, raw_response) as HTTPFetch.Response_<
+        return RESPONSE.success(this.#method, null, raw_response) as HTTPFetch.AnyResponse<
           extract_outputs<response_schemas>
         >;
       }
@@ -419,7 +419,7 @@ export class Endpoint<
         data = parsed;
       }
 
-      return RESPONSE.success(this.#method, data, raw_response) as HTTPFetch.Response_<
+      return RESPONSE.success(this.#method, data, raw_response) as HTTPFetch.AnyResponse<
         extract_outputs<response_schemas>
       >;
     }

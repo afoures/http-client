@@ -31,7 +31,7 @@ bench("http_client - single endpoint", () => {
     },
   });
   return {} as typeof client;
-}).types([10050, "instantiations"]);
+}).types([10069, "instantiations"]);
 
 bench("http_client - two endpoints", () => {
   const client = http_client({
@@ -42,7 +42,7 @@ bench("http_client - two endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([10144, "instantiations"]);
+}).types([10163, "instantiations"]);
 
 bench("http_client - three endpoints", () => {
   const client = http_client({
@@ -54,7 +54,7 @@ bench("http_client - three endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([10238, "instantiations"]);
+}).types([10257, "instantiations"]);
 
 bench("http_client - five endpoints", () => {
   const client = http_client({
@@ -68,7 +68,7 @@ bench("http_client - five endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([10426, "instantiations"]);
+}).types([10445, "instantiations"]);
 
 bench("http_client - ten endpoints", () => {
   const client = http_client({
@@ -87,7 +87,7 @@ bench("http_client - ten endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([10896, "instantiations"]);
+}).types([10915, "instantiations"]);
 
 bench("http_client - nested structure (2 levels)", () => {
   const client = http_client({
@@ -102,7 +102,7 @@ bench("http_client - nested structure (2 levels)", () => {
     },
   });
   return {} as typeof client;
-}).types([10321, "instantiations"]);
+}).types([10340, "instantiations"]);
 
 bench("http_client - nested structure (3 levels)", () => {
   const client = http_client({
@@ -119,7 +119,7 @@ bench("http_client - nested structure (3 levels)", () => {
     },
   });
   return {} as typeof client;
-}).types([10414, "instantiations"]);
+}).types([10433, "instantiations"]);
 
 bench("http_client - with options callback", () => {
   const client = http_client({
@@ -132,7 +132,7 @@ bench("http_client - with options callback", () => {
     }),
   });
   return {} as typeof client;
-}).types([10112, "instantiations"]);
+}).types([10131, "instantiations"]);
 
 bench("http_client - with complex endpoints", () => {
   const client = http_client({
@@ -156,7 +156,7 @@ bench("http_client - with complex endpoints", () => {
     },
   });
   return {} as typeof client;
-}).types([11730, "instantiations"]);
+}).types([11773, "instantiations"]);
 
 bench("http_client - mixed nesting levels", () => {
   const client = http_client({
@@ -174,4 +174,4 @@ bench("http_client - mixed nesting levels", () => {
     },
   });
   return {} as typeof client;
-}).types([10605, "instantiations"]);
+}).types([10624, "instantiations"]);
