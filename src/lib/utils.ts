@@ -1,4 +1,4 @@
-import type { HeadersInitWithReducer, HTTPFetch, Pathname, Pretty, Schema } from "./types";
+import type { HeadersInitWithReducer, HTTPFetch, Pathname, Schema } from "./types";
 
 function get_entries(source: HeadersInitWithReducer) {
   if (source instanceof Headers) {
@@ -42,13 +42,11 @@ export function extract_args<
   query_schema extends Schema._,
   body_schema extends Schema._,
 >(
-  input: Pretty<
-    HTTPFetch.TypedParamsInit<pathname, params_schema> &
-      HTTPFetch.TypedQueryInit<query_schema> &
-      HTTPFetch.TypedBodyInit<body_schema> &
-      HTTPFetch.OptionalRequestInit &
-      HTTPFetch.DefaultRequestInit
-  >,
+  input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
+    HTTPFetch.TypedQueryInit<query_schema> &
+    HTTPFetch.TypedBodyInit<body_schema> &
+    HTTPFetch.OptionalRequestInit &
+    HTTPFetch.DefaultRequestInit,
 ) {
   const { params, query, body, ...rest } = input as any;
   return {

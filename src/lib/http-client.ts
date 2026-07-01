@@ -92,13 +92,11 @@ export function fetch_endpoint_factory<
   hooks?: Hooks;
 }) {
   async function fetch_endpoint(
-    input: Pretty<
-      HTTPFetch.TypedParamsInit<pathname, params_schema> &
-        HTTPFetch.TypedQueryInit<query_schema> &
-        HTTPFetch.TypedBodyInit<body_schema> &
-        HTTPFetch.OptionalRequestInit &
-        HTTPFetch.DefaultRequestInit
-    >,
+    input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
+      HTTPFetch.TypedQueryInit<query_schema> &
+      HTTPFetch.TypedBodyInit<body_schema> &
+      HTTPFetch.OptionalRequestInit &
+      HTTPFetch.DefaultRequestInit,
   ) {
     let start_time = Date.now();
 
