@@ -38,13 +38,11 @@ describe("dynamic (context-driven) schemas", () => {
       http.get(`${API_BASE_URL}/user`, () => HttpResponse.json({ id: "1", name: "John" })),
     );
 
-    // Context matches the returned body -> validates.
     const ok = await api.get({ context: { expected_name: "John" } });
     assert.ok(!(ok instanceof Error));
     assert.equal(ok.ok, true);
     assert.deepEqual(ok.data, { id: "1", name: "John" });
 
-    // Context that disagrees with the body -> the built schema rejects it.
     const bad = await api.get({ context: { expected_name: "Jane" } });
     assert.ok(bad instanceof ParseError);
   });
@@ -58,7 +56,6 @@ describe("dynamic (context-driven) schemas", () => {
           context: define_context<{ key: string }>(),
           body: {
             schema: () => z.object({ value: z.string() }),
-            // "encrypt": stamp the out-of-band key into the payload
             serialize: (value, ctx) => ({
               body: JSON.stringify({ value: value.value, key: ctx.key }),
               content_type: "application/json",
@@ -67,7 +64,6 @@ describe("dynamic (context-driven) schemas", () => {
           responses: {
             200: {
               schema: () => z.object({ value: z.string() }),
-              // "decrypt": drop anything not matching the key
               parse: async (body, ctx) => {
                 const text = await new Response(body).text();
                 const parsed = JSON.parse(text) as { value: string; key: string };
@@ -84,7 +80,6 @@ describe("dynamic (context-driven) schemas", () => {
     server.use(
       http.put(`${API_BASE_URL}/blob`, async ({ request }) => {
         const sent = (await request.json()) as { value: string; key: string };
-        // the out-of-band key traveled via serialize, not via the typed body arg
         assert.equal(sent.key, "s3cr3t");
         return HttpResponse.json(sent);
       }),
@@ -144,18 +139,15 @@ describe("dynamic (context-driven) schemas", () => {
 
     server.use(
       http.get(`${API_BASE_URL}/echo`, ({ request }) => {
-        // context never travels in the request; echo a fixed body the schema checks
         return HttpResponse.json({
           tenant: new URL(request.url).searchParams.get("t") ?? "client",
         });
       }),
     );
 
-    // client default "client" is used when nothing overrides
     const fromClient = await make();
     assert.ok(!(fromClient instanceof Error) && fromClient.ok);
 
-    // per-call override changes the literal the schema expects -> mismatch with the "client" body
     const fromCall = await make({ tenant: "other" });
     assert.ok(fromCall instanceof ParseError);
   });

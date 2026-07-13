@@ -34,8 +34,6 @@ describe("Endpoint.generate_url", () => {
     assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/users");
-    // Array schema with tuples should serialize to query string
-    // Format depends on implementation, but should include the values
     assert.ok(url.search.length > 0, "Query string should not be empty");
   });
 
@@ -92,7 +90,6 @@ describe("Endpoint.generate_url", () => {
     });
     assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
-    // Schema should transform the param value
     assert.equal(url.pathname, "/users/ABC");
     assert.equal(url.search, "");
   });
@@ -127,7 +124,6 @@ describe("Endpoint.generate_url", () => {
           id: z.number(),
         }),
         serialize: (data) => {
-          // Custom serialize: pad number with zeros to 6 digits
           return { id: String(data.id).padStart(6, "0") };
         },
       },
@@ -151,7 +147,6 @@ describe("Endpoint.generate_url", () => {
           id: z.string().transform((s) => s.toUpperCase()),
         }),
         serialize: (data) => {
-          // Custom serialize: add prefix
           return { id: `user-${data.id}` };
         },
       },
@@ -162,7 +157,6 @@ describe("Endpoint.generate_url", () => {
     });
     assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
-    // Schema transforms "abc" to "ABC", then custom serialize adds prefix
     assert.equal(url.pathname, "/users/user-ABC");
     assert.equal(url.search, "");
   });
@@ -177,7 +171,6 @@ describe("Endpoint.generate_url", () => {
           limit: z.number(),
         }),
         serialize: (data) => {
-          // Custom serialize: serialize array as comma-separated values
           const params = new URLSearchParams();
           params.set("tags", data.tags.join(","));
           params.set("limit", String(data.limit));
@@ -206,7 +199,6 @@ describe("Endpoint.generate_url", () => {
           page: z.number().transform((n) => n * 10),
         }),
         serialize: (data) => {
-          // Custom serialize: encode query with special format
           const params = new URLSearchParams();
           params.set("query", encodeURIComponent(data.q));
           params.set("offset", String(data.page));
@@ -221,8 +213,6 @@ describe("Endpoint.generate_url", () => {
     assert.ok(url instanceof URL);
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/search");
-    // Schema transforms: "  Hello World  " -> "hello world", page 2 -> 20
-    // Custom serialize: maps q -> query, page -> offset
     assert.equal(url.searchParams.get("query"), "hello%20world");
     assert.equal(url.searchParams.get("offset"), "20");
   });
@@ -234,7 +224,6 @@ describe("Endpoint.generate_url", () => {
       query: {
         schema: z.array(z.tuple([z.string(), z.string()])),
         serialize: (data) => {
-          // Custom serialize: serialize tuples as key=value pairs
           const params = new URLSearchParams();
           data.forEach(([key, value]) => {
             params.append(key, value);
@@ -279,7 +268,6 @@ describe("Endpoint.serialize_body", () => {
       method: "GET",
       pathname: "/users",
     });
-    // For GET requests, content should be never/undefined
     const result = await endpoint.serialize_body({
       body: undefined as never,
     });
@@ -289,7 +277,6 @@ describe("Endpoint.serialize_body", () => {
   });
 
   test("POST request without body schema returns null", async () => {
-    // TypeScript requires body for POST, but we test runtime behavior
     const endpoint = new Endpoint({
       method: "POST",
       pathname: "/users",
@@ -350,7 +337,6 @@ describe("Endpoint.serialize_body", () => {
     const result = await endpoint.serialize_body({
       body: { name: "john", age: 25 },
     });
-    // Schema should transform: name -> "JOHN", age -> 50
     assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, JSON.stringify({ name: "JOHN", age: 50 }));
     assert.equal(result.content_type, "application/json");
@@ -520,7 +506,6 @@ describe("Endpoint.serialize_body", () => {
           count: z.number().transform((n) => n * 2),
         }),
         serialize: (data) => {
-          // Custom serialize receives transformed data
           return {
             body: `${data.value}:${data.count}`,
             content_type: "text/plain",
@@ -531,8 +516,6 @@ describe("Endpoint.serialize_body", () => {
     const result = await endpoint.serialize_body({
       body: { value: "hello", count: 5 },
     });
-    // Schema transforms: "hello" -> "HELLO", 5 -> 10
-    // Custom serialize formats as "HELLO:10"
     assert.ok(!(result instanceof SerializationError));
     assert.equal(result.body, "HELLO:10");
     assert.equal(result.content_type, "text/plain");
@@ -599,7 +582,6 @@ describe("Endpoint.serialize_body", () => {
 });
 
 describe("Endpoint.parse_response", () => {
-  // Helper function to read response body stream
   async function readStream(stream: ReadableStream | null): Promise<string> {
     if (!stream) return "";
     const reader = stream.getReader();
@@ -615,8 +597,6 @@ describe("Endpoint.parse_response", () => {
     );
     return new TextDecoder().decode(allBytes);
   }
-
-  // 1. Successful Responses (20x)
 
   test("200 OK with JSON body and data schema", async () => {
     const endpoint = new Endpoint({
@@ -778,8 +758,6 @@ describe("Endpoint.parse_response", () => {
     assert.deepEqual(result.data, { name: "JOHN", age: 50 });
   });
 
-  // 2. Redirect Responses (30x)
-
   test("301 Moved Permanently", async () => {
     const endpoint = new Endpoint({
       method: "GET",
@@ -827,8 +805,6 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.status, 308);
     assert.equal(result.redirect_to, "https://example.com/permanent");
   });
-
-  // 3. Client Error Responses (40x)
 
   test("400 Bad Request with error schema", async () => {
     const endpoint = new Endpoint({
@@ -945,8 +921,6 @@ describe("Endpoint.parse_response", () => {
     assert.deepEqual(result.error, { code: "UNAUTHORIZED" });
   });
 
-  // 4. Server Error Responses (50x)
-
   test("500 Internal Server Error with error schema", async () => {
     const endpoint = new Endpoint({
       method: "GET",
@@ -1024,8 +998,6 @@ describe("Endpoint.parse_response", () => {
     assert.deepEqual(result.error, { upstream: "gateway-error" });
   });
 
-  // 5. No Body Scenarios
-
   test("200 OK with empty body", async () => {
     const endpoint = new Endpoint({
       method: "GET",
@@ -1067,8 +1039,6 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.status, 400);
     assert.equal(result.error, "");
   });
-
-  // 6. Validation Errors
 
   test("200 OK with invalid JSON (doesn't match schema)", async () => {
     const endpoint = new Endpoint({
@@ -1114,8 +1084,6 @@ describe("Endpoint.parse_response", () => {
     assert.ok(result instanceof ParseError);
     assert.equal(result.context.operation, "parse_response");
   });
-
-  // 7. Response Metadata
 
   test("headers preserved", async () => {
     const endpoint = new Endpoint({
@@ -1180,8 +1148,6 @@ describe("Endpoint.parse_response", () => {
     assert.ok(url instanceof URL, "expected URL, got SerializationError");
     assert.equal(url.searchParams.get("x"), "1");
   });
-
-  // 8. Keyed responses (status map)
 
   test("distinct schemas per status code", async () => {
     const endpoint = new Endpoint({

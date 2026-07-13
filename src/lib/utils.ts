@@ -36,7 +36,6 @@ export function merge_headers(...sources: Array<HeadersInitWithReducer | undefin
   return headers;
 }
 
-/** Value type of an optional/conditional key on a `Typed*Init`, or `undefined` when absent. */
 type arg_value<init, key extends PropertyKey> = key extends keyof init ? init[key] : undefined;
 
 export function extract_args<
@@ -52,9 +51,6 @@ export function extract_args<
     HTTPFetch.OptionalRequestInit &
     HTTPFetch.DefaultRequestInit & { context?: context_type },
 ) {
-  // `context` is out-of-band per-call data — peel it off with the schema args so it never leaks
-  // into `rest` (which becomes the fetch `RequestInit`). The cast gives every key a concrete type
-  // and makes the conditionally-absent `Typed*Init` keys destructurable.
   const { params, query, body, context, ...rest } = input as {
     params?: arg_value<HTTPFetch.TypedParamsInit<pathname, params_schema>, "params">;
     query?: arg_value<HTTPFetch.TypedQueryInit<query_schema>, "query">;
@@ -69,10 +65,6 @@ export function extract_args<
   };
 }
 
-/**
- * Shallow-merge context layers (client -> endpoint -> per-call, later wins). `undefined`
- * values are skipped so a per-call `context` that omits a key never clobbers a default.
- */
 export function merge_context(
   ...sources: Array<Record<string, unknown> | undefined | null>
 ): Record<string, unknown> {

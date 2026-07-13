@@ -874,10 +874,6 @@ describe("fetch_endpoint_factory", () => {
     assert.equal(attemptCount, 1);
   });
 
-  // Pins bug: fetch_endpoint reads `retry`/`signal`/`timeout` from per-call
-  // options instead of from merge_options(...), so client- and endpoint-level
-  // defaults are silently dropped.
-
   test("retry from endpoint defaults applies when no per-call retry", async () => {
     let attemptCount = 0;
     server.use(
@@ -987,9 +983,6 @@ describe("fetch_endpoint_factory", () => {
     );
   });
 
-  // Pins bug: `response` is not reset between retry iterations, so a retry
-  // attempt that throws a network error inherits the previous attempt's
-  // Response in the retry-policy context.
   test("retry context does not carry stale response after a network error", async () => {
     let attemptCount = 0;
     server.use(
@@ -1020,10 +1013,6 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    // After attempt 1 (503): hasResponse=true, hasError=false.
-    // After attempt 2 (network error): a fresh response was never assigned,
-    // so the retry-policy context must report hasResponse=false. Today it
-    // reports true because `response` is never reset between iterations.
     assert.ok(contexts.length >= 2, `expected >= 2 retry checks, got ${contexts.length}`);
     assert.deepEqual(
       contexts[1],

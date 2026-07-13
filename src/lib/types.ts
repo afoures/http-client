@@ -114,17 +114,8 @@ export namespace RetryPolicy {
       }) => MaybePromise<number>);
 
   export type Configuration = {
-    /**
-     * the number of attempts to make before giving up
-     */
     attempts?: Attempts;
-    /**
-     * the delay before retrying
-     */
     delay?: Delay;
-    /**
-     * function to determine if a retry attempt should be made
-     */
     when?: Condition;
   };
 }
@@ -272,12 +263,6 @@ export namespace HTTPFetch {
     }
   >;
 
-  /**
-   * The call-site `context` field for an endpoint. `defaulted_keys` are the context keys
-   * supplied by a client-level or endpoint-level default: those become optional, the rest
-   * stay required. If every key is defaulted the whole `context` field is optional, and if
-   * the endpoint declares no context (`never`) there is no `context` field at all.
-   */
   export type TypedContextInit<context_type, defaulted_keys extends PropertyKey> = [
     context_type,
   ] extends [never]
@@ -295,13 +280,7 @@ export namespace HTTPFetch {
   } & Omit<RequestInit, "body" | "method" | "headers">;
 
   export type OptionalRequestInit = {
-    /**
-     * timeout in milliseconds
-     */
     timeout?: number;
-    /**
-     * retry policy
-     */
     retry?: RetryPolicy.Configuration;
   };
 }
@@ -333,32 +312,12 @@ export namespace Schema {
 type SchemaOrFactory<schema, context_type> = schema | ((context: NoInfer<context_type>) => schema);
 
 export namespace Json {
-  /**
-  Matches a JSON object.
-
-  @category JSON
-  */
   export type Object = { [Key in string]: Json.Value };
 
-  /**
-  Matches a JSON array.
-
-  @category JSON
-  */
   export type Array = Json.Value[] | readonly Json.Value[];
 
-  /**
-  Matches any valid JSON primitive value.
-
-  @category JSON
-  */
   export type Primitive = string | number | boolean | null;
 
-  /**
-  Matches any valid JSON value.
-
-  @category JSON
-  */
   export type Value = Json.Primitive | Json.Object | Json.Array;
 }
 

@@ -97,51 +97,14 @@ const RESPONSE = {
   },
 };
 
-/**
- * Phantom-typed marker that declares an endpoint's out-of-band `context` type and its
- * endpoint-level defaults. Created via `define_context`. The `context_type` is carried
- * only at the type level (the `__context_type__` field never exists at runtime); `defaults`
- * is the sole runtime payload.
- */
 export interface ContextMarker<context_type = unknown, defaults = {}> {
-  /**
-   * Phantom carrier for the full context type; never present at runtime (constructed via a
-   * cast in `define_context`). A required, contravariant function position so `context_type`
-   * is inferred strongly and early from the marker — the single source of truth — before any
-   * factory/serialize/parse parameter is contextually typed against it.
-   */
   readonly __context_type__: (context: context_type) => void;
   readonly defaults: defaults;
-  /**
-   * Refine the marker with endpoint-level default context values. Any key given a default
-   * becomes optional at the call site. This is a separate call (rather than an argument to
-   * `define_context`) so the default keys infer precisely: passing the context type argument
-   * explicitly would otherwise disable inference of the defaults (partial type-argument inference).
-   */
   with_defaults<const next_defaults extends Partial<context_type>>(
     defaults: next_defaults,
   ): ContextMarker<context_type, next_defaults>;
 }
 
-/**
- * Declare an endpoint's out-of-band `context` type.
- *
- * The `context` is data a caller passes per call that is **not** serialized into the
- * request; it is threaded into a slot's schema factory (`(context) => schema`) and into
- * custom `serialize`/`parse` functions. The type parameter is declared once here and is
- * the single source of truth for every factory and for the call-site `context` field.
- *
- * Chain `.with_defaults({...})` to provide endpoint-level defaults; any defaulted key (here,
- * or via the client-level `context` on `http_client`) becomes optional at the call site.
- *
- * @example
- * new Endpoint({
- *   method: "GET",
- *   pathname: "/users/:id",
- *   context: define_context<{ tz: string; locale: string }>().with_defaults({ tz: "UTC" }),
- *   responses: { 200: { schema: (ctx) => schemaFor(ctx.tz), parse: "json" } },
- * });
- */
 export function define_context<context_type = unknown>(): ContextMarker<context_type, {}> {
   function make<defaults>(defaults: defaults): ContextMarker<context_type, defaults> {
     return {
@@ -249,7 +212,6 @@ export class Endpoint<
     return this.#options;
   }
 
-  /** Endpoint-level default context, merged under any client-level and per-call context. */
   get context_default(): context_defaults {
     return this.#context_default;
   }
@@ -265,7 +227,6 @@ export class Endpoint<
 
     if ("params" in init && init.params !== undefined) {
       if (this.#serializers.params) {
-        // Resolve the schema (a factory receives the per-call context) then validate/transform.
         let schema: Schema.Any;
         try {
           schema = resolve_schema(this.#serializers.params.schema, context);
@@ -286,7 +247,6 @@ export class Endpoint<
           });
         }
 
-        // Use transformed params
         const transformed_params = result.value;
 
         if (this.#serializers.params.serialize) {
@@ -303,13 +263,11 @@ export class Endpoint<
             });
           }
         } else {
-          // Convert to string values for RoutePattern
           pathname_params = Object.fromEntries(
             Object.entries(transformed_params as any).map(([key, value]) => [key, String(value)]),
           );
         }
       } else {
-        // No schema, use params directly
         pathname_params = Object.fromEntries(
           Object.entries(init.params as Record<string, unknown>).map(([key, value]) => [
             key,
@@ -319,13 +277,11 @@ export class Endpoint<
       }
     }
 
-    // Generate pathname using RoutePattern.href()
     const pathname = this.#pattern.href(pathname_params);
 
     let search_params = new URLSearchParams();
 
     if ("query" in init && init.query !== undefined && this.#serializers.query) {
-      // Resolve the schema (a factory receives the per-call context) then validate/transform.
       let schema: Schema.Any;
       try {
         schema = resolve_schema(this.#serializers.query.schema, context);
@@ -346,7 +302,6 @@ export class Endpoint<
         });
       }
 
-      // Use transformed query
       const transformed_query = result.value;
 
       if (typeof this.#serializers.query.serialize === "function") {
@@ -364,21 +319,16 @@ export class Endpoint<
         }
       } else if (this.#serializers.query.serialize === "urlencoded") {
         if (Array.isArray(transformed_query)) {
-          // Array schema (tuples) - serialize tuples as key-value pairs
-          // For tuples like [["ok", "test"]], serialize each tuple element
           transformed_query.forEach((tuple, index) => {
             if (Array.isArray(tuple)) {
-              // Tuple: serialize each element
               tuple.forEach((value, tupleIndex) => {
                 search_params.append(`${index}[${tupleIndex}]`, String(value));
               });
             } else {
-              // Non-tuple array element
               search_params.append(String(index), String(tuple));
             }
           });
         } else if (transformed_query !== null && typeof transformed_query === "object") {
-          // Object schema - serialize as key-value pairs
           for (const [key, value] of Object.entries(transformed_query)) {
             if (value !== undefined && value !== null) {
               search_params.set(key, String(value));
@@ -388,11 +338,8 @@ export class Endpoint<
       }
     }
 
-    // remove leading slash from pathname if it exists to allow relative pathname resolving
-    // https://developer.mozilla.org/en-US/docs/Web/API/URL_API/Resolving_relative_references
     const url = new URL(pathname.startsWith("/") ? pathname.slice(1) : pathname, init.base_url);
 
-    // Append query string
     const query_string = search_params.toString();
     if (query_string) {
       url.search = query_string;
@@ -411,7 +358,6 @@ export class Endpoint<
       }
     | SerializationError
   > {
-    // If no body serializer, return null
     if (!this.#serializers.body) {
       return { body: null, content_type: undefined };
     }
@@ -420,7 +366,6 @@ export class Endpoint<
       return { body: null, content_type: undefined };
     }
 
-    // Resolve the schema (a factory receives the per-call context) then validate/transform.
     let schema: Schema.Any;
     try {
       schema = resolve_schema(this.#serializers.body.schema, context);
@@ -434,7 +379,6 @@ export class Endpoint<
     const result = await schema["~standard"].validate(init.body);
 
     if (result.issues !== undefined) {
-      // Validation failed
       return new SerializationError("Body serialization failed", {
         operation: "serialize_body",
         cause: result.issues,
@@ -442,7 +386,6 @@ export class Endpoint<
       });
     }
 
-    // Use transformed content
     const transformed_content = result.value;
 
     if (typeof this.#serializers.body.serialize === "function") {
@@ -473,7 +416,6 @@ export class Endpoint<
     const response = raw_response.clone();
     const status = raw_response.status;
 
-    // Handle redirects (30x) - never schema'd.
     if (status >= 300 && status < 400) {
       return RESPONSE.redirect(this.#method, raw_response) as HTTPFetch.AnyResponse<
         extract_outputs<response_schemas>
@@ -482,7 +424,6 @@ export class Endpoint<
 
     const parser = this.#get_parser_for(status);
 
-    // Parse + validate the body with a resolved parser, or ParseError on failure.
     const parse_response = async (parser: Required<Parser.Any>): Promise<unknown | ParseError> => {
       if (parser.parse == null) {
         return new ParseError("Response parsing failed", {
@@ -494,7 +435,6 @@ export class Endpoint<
           },
         });
       }
-      // Resolve the schema (a factory receives the per-call context).
       let schema: Schema.Any;
       try {
         schema = resolve_schema(parser.schema, context);
@@ -546,7 +486,6 @@ export class Endpoint<
       return result.value;
     };
 
-    // Handle client and server errors (40x and 50x)
     if (status >= 400 && status < 600) {
       let error: any;
       if (parser) {
@@ -554,7 +493,6 @@ export class Endpoint<
         if (parsed instanceof ParseError) return parsed;
         error = parsed;
       } else {
-        // No parser - default to raw text so the body is never lost.
         error = await response.text();
       }
 
@@ -565,9 +503,7 @@ export class Endpoint<
       ) as HTTPFetch.AnyResponse<extract_outputs<response_schemas>>;
     }
 
-    // Handle successful response_schemas (20x)
     if (status >= 200 && status < 300) {
-      // 204 No Content always has a null body, regardless of any parser.
       if (status === 204) {
         return RESPONSE.success(this.#method, null, raw_response) as HTTPFetch.AnyResponse<
           extract_outputs<response_schemas>
@@ -586,14 +522,12 @@ export class Endpoint<
       >;
     }
 
-    // Fallback for other status codes (shouldn't happen in practice)
     throw new Error(`Unhandled status code: ${status}`);
   }
 }
 
 export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any, any>;
 
-/** Resolve a slot's `schema`: call it with the per-call context when it is a factory. */
 function resolve_schema(
   schema: Schema.Any | ((context: any) => Schema.Any),
   context: unknown,

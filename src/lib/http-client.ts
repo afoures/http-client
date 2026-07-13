@@ -22,20 +22,6 @@ export interface EndpointMap {
   [name: string]: AnyEndpoint | EndpointMap;
 }
 
-/**
- * Structural validator for the endpoints tree, used as the type of the
- * `endpoints` option instead of constraining the type parameter with
- * {@link EndpointMap} directly.
- *
- * It is a *homomorphic* mapped type over `endpoints` (`[name in keyof endpoints]`),
- * which makes it transparent when used as a contextual type: an inline
- * `new Endpoint({...})` keeps its own inferred generics (`pathname`, the schema
- * type params, the `responses` map) instead of being widened to a constraint's
- * value type. Constraining the type parameter with `EndpointMap` instead would
- * contextually widen those generics — collapsing every schema to `Schema.Any`
- * and forcing a spurious `params: any` on inline endpoints. Each leaf must be an
- * `Endpoint`; nested objects recurse.
- */
 type ValidateEndpointMap<endpoints> = {
   [name in keyof endpoints]: endpoints[name] extends AnyEndpoint
     ? endpoints[name]
@@ -80,8 +66,6 @@ type map_to_fetch_endpoint_functions<endpoints, client_context = {}> = Pretty<{
       : never;
 }>;
 
-/** Union of every endpoint's declared context type in the tree (endpoints without a context —
- * i.e. `unknown` — contribute nothing). */
 type ContextUnion<endpoints> = {
   [name in keyof endpoints]: endpoints[name] extends Endpoint<
     any,
@@ -101,18 +85,8 @@ type ContextUnion<endpoints> = {
       : never;
 }[keyof endpoints];
 
-/** All keys across a union of context objects (distributive `keyof`). */
 type ContextKeys<union> = union extends unknown ? keyof union : never;
 
-/**
- * The shape of the client-level `context` option: an all-optional merge of every endpoint's
- * declared context. Written as a plain mapped type — deliberately NOT via `UnionToIntersection`
- * or a top-level `extends [never] ? …` conditional — because those are deferred types the editor
- * won't evaluate for completions. As a plain mapped type it resolves eagerly, so when it is used
- * as the `client_context` constraint the editor proposes its keys (and rejects unknown/mistyped
- * ones), while the concrete value is still inferred for call-site relaxation. When no endpoint
- * declares a context, `ContextKeys` is `never` and this is `{}`.
- */
 type ClientContextShape<endpoints> = {
   [key in ContextKeys<ContextUnion<endpoints>>]?: ContextUnion<endpoints> extends infer member
     ? member extends unknown
@@ -288,14 +262,14 @@ export function fetch_endpoint_factory<
           },
           timing: { startTime: start_time, attempt: 1 },
         });
-        break; // no retry
+        break;
       }
 
       try {
         attempt++;
         hooks.on_request?.(request);
         response = await custom_fetch(request);
-        error = undefined; // clear any previous error on success
+        error = undefined;
       } catch (local_error) {
         const duration = Date.now() - start_time;
         if (local_error instanceof Error && local_error.name === "TimeoutError") {
@@ -384,7 +358,7 @@ export function fetch_endpoint_factory<
               typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
           },
         });
-        break; // no retry
+        break;
       }
       // oxlint-disable-next-line no-constant-condition
     } while (true);
@@ -457,12 +431,6 @@ export type HttpClientConfig<client_context = {}> = {
   options?:
     | (HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit)
     | (() => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>);
-  /**
-   * Client-level default context, merged under every endpoint's context. Keys it provides
-   * (that exist in a given endpoint's context type) become optional at that call site.
-   * Constrained to the merged shape of every endpoint's declared context, so unknown/mistyped
-   * keys are rejected.
-   */
   context?: client_context;
   fetch?: CustomFetch;
 };
@@ -504,21 +472,11 @@ type AnyFactoryFn = ReturnType<
   typeof fetch_endpoint_factory<any, any, any, any, any, any, any, any, any>
 >;
 
-/**
- * Structural supertype of every bound fetch function — used to tell a bound endpoint function
- * apart from an `Endpoint` instance in {@link $infer.as_fetch_endpoint}. Derived from the
- * factory return, but with `context` forced to a **required** `any`: an endpoint that declares a
- * required context produces an input whose `context` is required, and a required property is not
- * assignable to the *optional* `context` of the factory-`any` input (contravariant parameter
- * check). Forcing a present `context: any` makes every concrete input assignable while still
- * excluding non-callable `Endpoint` instances, so routing stays correct.
- */
 type AnyFetchEndpointFunction = AnyFactoryFn extends (input: infer input) => infer result
   ? (input: input & { context: any }) => result
   : never;
 
 export namespace $infer {
-  /** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
   type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
     ? endpoint
     : endpoint extends Endpoint<
@@ -549,7 +507,6 @@ export namespace $infer {
   type fetch_input<endpoint> = Parameters<as_fetch_endpoint<endpoint>>[0];
   type fetch_output<endpoint> = Awaited<ReturnType<as_fetch_endpoint<endpoint>>>;
 
-  /** Read an input key, yielding `never` only when the key genuinely does not exist. */
   type infer_init<endpoint, key extends PropertyKey> = key extends keyof fetch_input<endpoint>
     ? fetch_input<endpoint>[key]
     : never;
@@ -562,20 +519,12 @@ export namespace $infer {
 
   export type Body<endpoint extends AnyEndpointInput> = infer_init<endpoint, "body">;
 
-  /** The per-call out-of-band `context` argument (never present when the endpoint declares none). */
   export type Context<endpoint extends AnyEndpointInput> = infer_init<endpoint, "context">;
 
-  /** The full request argument (params + query + body + request init). */
   export type Input<endpoint extends AnyEndpointInput> = fetch_input<endpoint>;
 
-  /** Everything `fetch` can return: HTTP response envelopes PLUS the transport error classes. */
   export type Result<endpoint extends AnyEndpointInput> = fetch_output<endpoint>;
 
-  /**
-   * The discriminated HTTP response union only — Successful | Redirect | ClientError | ServerError.
-   * Drops the thrown transport errors (UnexpectedError/NetworkError/TimeoutError/AbortedError/ParseError);
-   * stays narrowable on `ok`/`status`.
-   */
   export type Response<endpoint extends AnyEndpointInput> = Extract<
     fetch_output<endpoint>,
     { ok: boolean }
@@ -588,9 +537,7 @@ export namespace $infer {
           status: infer member_status extends number;
           data: infer data;
         }
-        ? // a wildcard arm covers a whole class (e.g. `2xx`), so its `status` is a union;
-          // match when the requested `status` overlaps that union, not just when it equals it.
-          [Extract<member_status, status>] extends [never]
+        ? [Extract<member_status, status>] extends [never]
           ? never
           : data
         : never
