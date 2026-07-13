@@ -24,56 +24,55 @@ const endpointWithSchema = new Endpoint({
 });
 
 bench("http_client - single endpoint", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10069, "instantiations"]);
+}).types([11753, "instantiations"]);
 
 bench("http_client - two endpoints", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10163, "instantiations"]);
+}).types([11865, "instantiations"]);
 
 bench("http_client - three endpoints", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
       comments: new Endpoint({ method: "GET", pathname: "/comments" }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10257, "instantiations"]);
+}).types([11976, "instantiations"]);
 
 bench("http_client - five endpoints", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
       comments: new Endpoint({ method: "GET", pathname: "/comments" }),
       tags: new Endpoint({ method: "GET", pathname: "/tags" }),
       categories: new Endpoint({ method: "GET", pathname: "/categories" }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10445, "instantiations"]);
+}).types([12198, "instantiations"]);
 
 bench("http_client - ten endpoints", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
       posts: new Endpoint({ method: "GET", pathname: "/posts" }),
       comments: new Endpoint({ method: "GET", pathname: "/comments" }),
@@ -85,14 +84,14 @@ bench("http_client - ten endpoints", () => {
       shares: new Endpoint({ method: "GET", pathname: "/shares" }),
       bookmarks: new Endpoint({ method: "GET", pathname: "/bookmarks" }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10915, "instantiations"]);
+}).types([12753, "instantiations"]);
 
 bench("http_client - nested structure (2 levels)", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       api: {
         v1: {
           users: basicEndpoint,
@@ -100,14 +99,14 @@ bench("http_client - nested structure (2 levels)", () => {
         },
       },
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10340, "instantiations"]);
+}).types([12093, "instantiations"]);
 
 bench("http_client - nested structure (3 levels)", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       api: {
         v1: {
           public: {
@@ -117,27 +116,29 @@ bench("http_client - nested structure (3 levels)", () => {
         },
       },
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10433, "instantiations"]);
+}).types([12209, "instantiations"]);
 
 bench("http_client - with options callback", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: basicEndpoint,
     },
-    options: () => ({
-      headers: { "X-Custom": "value" },
-    }),
-  });
+    {
+      base_url: "https://api.example.com",
+      options: () => ({
+        headers: { "X-Custom": "value" },
+      }),
+    },
+  );
   return {} as typeof client;
-}).types([10131, "instantiations"]);
+}).types([11821, "instantiations"]);
 
 bench("http_client - with complex endpoints", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       users: endpointWithSchema,
       posts: new Endpoint({
         method: "POST",
@@ -154,14 +155,14 @@ bench("http_client - with complex endpoints", () => {
         },
       }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([11773, "instantiations"]);
+}).types([13691, "instantiations"]);
 
 bench("http_client - mixed nesting levels", () => {
-  const client = http_client({
-    base_url: "https://api.example.com",
-    endpoints: {
+  const client = http_client(
+    {
       public: {
         users: basicEndpoint,
         posts: new Endpoint({ method: "GET", pathname: "/posts" }),
@@ -172,6 +173,7 @@ bench("http_client - mixed nesting levels", () => {
       },
       health: new Endpoint({ method: "GET", pathname: "/health" }),
     },
-  });
+    { base_url: "https://api.example.com" },
+  );
   return {} as typeof client;
-}).types([10624, "instantiations"]);
+}).types([12428, "instantiations"]);

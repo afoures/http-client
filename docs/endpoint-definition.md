@@ -62,6 +62,12 @@ responses: {
 }
 ```
 
+### `context`
+
+Declares an out-of-band, per-call **context** used to build schemas dynamically. Created with
+`define_context<T>()`; any slot's `schema` (and its `serialize` / `parse`) may then be a function
+of it. See [Dynamic Context](./dynamic-context.md).
+
 ## Constructor
 
 The `Endpoint` constructor takes a definition and optional default options:
@@ -101,7 +107,11 @@ See [Retry Policy](./retry-policy.md) for retry configuration.
 
 Most users should use `http_client` instead of calling these methods directly. The HTTP client handles URL generation, body serialization, and response parsing automatically.
 
-### `generate_url(init)`
+Each method takes an optional trailing `context` argument, forwarded to any schema factory and to
+custom `serialize` / `parse` functions. `http_client` supplies it automatically from the merged
+per-call context.
+
+### `generate_url(init, context?)`
 
 Generates a full URL with params and query serialized:
 
@@ -115,7 +125,7 @@ const url = await endpoint.generate_url({
 
 Returns `URL` on success or `SerializationError` on validation failure.
 
-### `serialize_body(init)`
+### `serialize_body(init, context?)`
 
 Serializes the request body:
 
@@ -127,7 +137,7 @@ const { body, content_type } = await endpoint.serialize_body({
 
 Returns `{ body, content_type }` on success or `SerializationError` on validation failure.
 
-### `parse_response(response)`
+### `parse_response(response, context?)`
 
 Parses an HTTP response:
 

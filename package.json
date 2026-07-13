@@ -47,15 +47,15 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "devDependencies": {
-    "@afoures/auto-release": "^0.5.0",
-    "@arktype/attest": "^0.56.0",
-    "@types/node": "^24.12.2",
-    "msw": "^2.13.2",
+    "@afoures/auto-release": "^0.6.0",
+    "@arktype/attest": "^0.56.3",
+    "@types/node": "^24.13.3",
+    "msw": "^2.15.0",
     "oxfmt": "^0.36.0",
-    "oxlint": "^1.59.0",
-    "tsdown": "^0.21.0",
+    "oxlint": "^1.73.0",
+    "tsdown": "^0.21.10",
     "typescript": "^5.9.3",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "packageManager": "pnpm@10.10.0"
 }

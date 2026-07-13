@@ -8,16 +8,16 @@ The `http_client` function creates a typed API client from a map of endpoints.
 import { Endpoint, http_client } from "@afoures/http-client";
 import { z } from "zod";
 
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const api = http_client(
+  {
     users: new Endpoint({
       method: "GET",
       pathname: "/users",
       responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
     }),
   },
-});
+  { base_url: "https://api.example.com" },
+);
 
 const result = await api.users({});
 ```
@@ -27,9 +27,8 @@ const result = await api.users({});
 Nest endpoints in objects for logical grouping:
 
 ```typescript
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const api = http_client(
+  {
     users: {
       list: new Endpoint({ method: "GET", pathname: "/users" }),
       get: new Endpoint({ method: "GET", pathname: "/users/:id" }),
@@ -46,7 +45,8 @@ const api = http_client({
       },
     },
   },
-});
+  { base_url: "https://api.example.com" },
+);
 
 // Fully typed paths
 await api.users.list({});
@@ -59,20 +59,18 @@ await api.posts.comments.create({ params: { post_id: "1" }, body: { text: "Nice!
 Provide sync or async default options for all requests:
 
 ```typescript
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
-    /* ... */
+const api = http_client(
+  {
+    /* ...endpoints... */
   },
-  options: async () => {
-    const token = await getAuthToken();
-    return {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    };
+  {
+    base_url: "https://api.example.com",
+    options: async () => {
+      const token = await getAuthToken();
+      return { headers: { Authorization: `Bearer ${token}` } };
+    },
   },
-});
+);
 ```
 
 Options are merged in this order (later overrides earlier):
@@ -81,23 +79,49 @@ Options are merged in this order (later overrides earlier):
 2. Endpoint default options
 3. Per-request options
 
+## Shared Context
+
+Provide a client-level default [context](./dynamic-context.md) shared by every
+endpoint. It fills matching keys for any endpoint whose context type declares them, making those
+keys optional at the call site:
+
+```typescript
+const api = http_client(
+  {
+    /* ...endpoints... */
+  },
+  { base_url: "https://api.example.com", context: { locale: "en" } },
+);
+```
+
+The `context` option is typed as the merged shape of every endpoint's declared context, so your
+editor proposes the valid keys and rejects unknown or mistyped ones.
+
+Context is merged in this order (later overrides earlier):
+
+1. `context` from `http_client`
+2. Endpoint-level defaults (`define_context<T>().with_defaults({ ... })`)
+3. Per-request `context`
+
 ## Custom Fetch
 
 Provide a custom fetch function for proxying, logging, or modifying requests:
 
 ```typescript
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
-    /* ... */
+const api = http_client(
+  {
+    /* ...endpoints... */
   },
-  fetch: async (request) => {
-    console.log("Request:", request.url);
-    const response = await fetch(request);
-    console.log("Response:", response.status);
-    return response;
+  {
+    base_url: "https://api.example.com",
+    fetch: async (request) => {
+      console.log("Request:", request.url);
+      const response = await fetch(request);
+      console.log("Response:", response.status);
+      return response;
+    },
   },
-});
+);
 ```
 
 For testing, use tools like [MSW](https://mswjs.io/) instead of custom fetch.
@@ -170,9 +194,8 @@ const get_user = new Endpoint({
   },
 });
 
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const api = http_client(
+  {
     users: {
       get: get_user,
       create: new Endpoint({
@@ -185,7 +208,8 @@ const api = http_client({
       }),
     },
   },
-});
+  { base_url: "https://api.example.com" },
+);
 
 // From a fetch function...
 type UsersGetParams = $infer.Params<typeof api.users.get>;
@@ -205,7 +229,8 @@ Available type helpers (each takes an `Endpoint` instance or a fetch function):
 - `$infer.Params` - The URL params input type
 - `$infer.Query` - The query parameter input type
 - `$infer.Body` - The request body input type
-- `$infer.Input` - The full request argument (params + query + body + request init)
+- `$infer.Context` - The per-call [context](./dynamic-context.md) argument (`never` when the endpoint declares none)
+- `$infer.Input` - The full request argument (params + query + body + context + request init)
 - `$infer.Result` - Everything `fetch` can return, including thrown transport error classes (`NetworkError`, `TimeoutError`, `ParseError`, …)
 - `$infer.Response` - The discriminated HTTP response envelope only (drops the transport errors); narrowable on `ok` / `status`
 - `$infer.Data<endpoint, status?>` - Successful response `data`, optionally narrowed to a status code (or wildcard class)

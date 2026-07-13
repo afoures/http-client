@@ -49,9 +49,8 @@ const wildcard = new Endpoint({
   },
 });
 
-const client = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const client = http_client(
+  {
     get_user,
     create_required,
     get_user_optional,
@@ -59,7 +58,8 @@ const client = http_client({
     // nested endpoint map → mapped recursively
     admin: { get_user },
   },
-});
+  { base_url: "https://api.example.com" },
+);
 
 // --- mapping: endpoints become callable fetch functions, including nested maps ---
 
@@ -159,7 +159,7 @@ type _w_5xx = Expect<
 // --- `any`-schema escape hatch: a query schema typed as `Schema.Any` widens input to `{ query: any }` ---
 
 const any_endpoint = null as unknown as Endpoint<"GET", "/any", never, Schema.Any, never, {}>;
-const any_client = http_client({ base_url: "https://x", endpoints: { any_endpoint } });
+const any_client = http_client({ any_endpoint }, { base_url: "https://x" });
 type _any_query = Expect<Equals<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>;
 
 // --- endpoints declared INLINE in the map keep their inferred generics ---
@@ -169,9 +169,8 @@ type _any_query = Expect<Equals<Parameters<typeof any_client.any_endpoint>[0]["q
 // required `params: any`. Defining endpoints by reference (above) hides this, so
 // these cases are intentionally inline.
 
-const inline_client = http_client({
-  base_url: "https://x",
-  endpoints: {
+const inline_client = http_client(
+  {
     // paramless route, optional query → callable with `{}`, query stays typed
     list: new Endpoint({
       method: "GET",
@@ -194,7 +193,8 @@ const inline_client = http_client({
       responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
     }),
   },
-});
+  { base_url: "https://x" },
+);
 
 // paramless inline endpoint does NOT require `params` (callable with `{}`)
 inline_client.list({});

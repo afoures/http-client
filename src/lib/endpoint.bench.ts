@@ -8,7 +8,7 @@ bench("Endpoint - minimal GET", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([169, "instantiations"]);
+}).types([153, "instantiations"]);
 
 bench("Endpoint - minimal POST", () => {
   const endpoint = new Endpoint({
@@ -16,7 +16,7 @@ bench("Endpoint - minimal POST", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([167, "instantiations"]);
+}).types([151, "instantiations"]);
 
 bench("Endpoint - with pathname params", () => {
   const endpoint = new Endpoint({
@@ -24,7 +24,7 @@ bench("Endpoint - with pathname params", () => {
     pathname: "/users/:id",
   });
   return {} as typeof endpoint;
-}).types([167, "instantiations"]);
+}).types([151, "instantiations"]);
 
 bench("Endpoint - with query schema", () => {
   const endpoint = new Endpoint({
@@ -38,7 +38,7 @@ bench("Endpoint - with query schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1278, "instantiations"]);
+}).types([645, "instantiations"]);
 
 bench("Endpoint - with body schema", () => {
   const endpoint = new Endpoint({
@@ -53,7 +53,7 @@ bench("Endpoint - with body schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([622, "instantiations"]);
+}).types([640, "instantiations"]);
 
 bench("Endpoint - with data schema", () => {
   const endpoint = new Endpoint({
@@ -70,7 +70,7 @@ bench("Endpoint - with data schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1245, "instantiations"]);
+}).types([738, "instantiations"]);
 
 bench("Endpoint - with error schema", () => {
   const endpoint = new Endpoint({
@@ -87,7 +87,7 @@ bench("Endpoint - with error schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1266, "instantiations"]);
+}).types([759, "instantiations"]);
 
 bench("Endpoint - full schema (all generics)", () => {
   const endpoint = new Endpoint({
@@ -115,7 +115,7 @@ bench("Endpoint - full schema (all generics)", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([3438, "instantiations"]);
+}).types([1421, "instantiations"]);
 
 bench("Endpoint - nested object schema", () => {
   const endpoint = new Endpoint({
@@ -138,7 +138,7 @@ bench("Endpoint - nested object schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([666, "instantiations"]);
+}).types([684, "instantiations"]);
 
 bench("Endpoint - array schema", () => {
   const endpoint = new Endpoint({
@@ -166,7 +166,7 @@ bench("Endpoint - array schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1330, "instantiations"]);
+}).types([1323, "instantiations"]);
 
 bench("Endpoint - multiple pathname params", () => {
   const endpoint = new Endpoint({
@@ -181,7 +181,7 @@ bench("Endpoint - multiple pathname params", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([5968, "instantiations"]);
+}).types([652, "instantiations"]);
 
 bench("Endpoint - with custom serialize", () => {
   const endpoint = new Endpoint({
@@ -204,7 +204,7 @@ bench("Endpoint - with custom serialize", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1822, "instantiations"]);
+}).types([1474, "instantiations"]);
 
 bench("Endpoint - with custom parse", () => {
   const endpoint = new Endpoint({
@@ -228,7 +228,7 @@ bench("Endpoint - with custom parse", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([2082, "instantiations"]);
+}).types([1836, "instantiations"]);
 
 bench("Endpoint - union types in schema", () => {
   const endpoint = new Endpoint({
@@ -244,4 +244,4 @@ bench("Endpoint - union types in schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1551, "instantiations"]);
+}).types([1569, "instantiations"]);

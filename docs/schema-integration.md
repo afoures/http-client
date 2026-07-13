@@ -203,9 +203,8 @@ const UserSchema = z.object({
 
 const CreateUserSchema = UserSchema.omit({ id: true });
 
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const api = http_client(
+  {
     users: {
       list: new Endpoint({
         method: "GET",
@@ -225,7 +224,8 @@ const api = http_client({
       }),
     },
   },
-});
+  { base_url: "https://api.example.com" },
+);
 ```
 
 ## Custom Schema Libraries

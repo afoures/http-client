@@ -2,6 +2,9 @@
 
 Endpoints serialize path params, query strings, and request bodies using schemas. All serialization validates input and can transform data.
 
+> A slot's `schema` may also be a `(context) => schema` factory, and each `serialize` function
+> receives the per-call context as a second argument. See [Dynamic Context](./dynamic-context.md).
+
 ## Params
 
 Path parameters are serialized from the `params` input into the URL pathname.

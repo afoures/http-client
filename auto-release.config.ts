@@ -8,7 +8,7 @@ export default define_config({
     "http-client": {
       components: [node(".")],
       changelog: "./CHANGELOG.md",
-      versioning: semver(),
+      versioning: semver({ unstable: true }),
     },
   },
   git: {

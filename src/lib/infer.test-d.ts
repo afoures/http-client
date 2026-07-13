@@ -54,10 +54,10 @@ const create_optional = new Endpoint({
   responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
 });
 
-const client = http_client({
-  base_url: "https://api.example.com",
-  endpoints: { get_user, wildcard, path_optional, search_optional, create_optional },
-});
+const client = http_client(
+  { get_user, wildcard, path_optional, search_optional, create_optional },
+  { base_url: "https://api.example.com" },
+);
 
 // --- inputs resolve to the schema input type ---
 type _params = Expect<Equals<$infer.Params<typeof client.get_user>, { id: string }>>;

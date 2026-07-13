@@ -264,6 +264,32 @@ export namespace HTTPFetch {
           ? { body?: Schema.infer_input<body_schema> }
           : { body: Schema.infer_input<body_schema> };
 
+  type split_context<context_type, defaulted_keys extends PropertyKey> = Pretty<
+    {
+      [key in keyof context_type as key extends defaulted_keys ? never : key]: context_type[key];
+    } & {
+      [key in keyof context_type as key extends defaulted_keys ? key : never]?: context_type[key];
+    }
+  >;
+
+  /**
+   * The call-site `context` field for an endpoint. `defaulted_keys` are the context keys
+   * supplied by a client-level or endpoint-level default: those become optional, the rest
+   * stay required. If every key is defaulted the whole `context` field is optional, and if
+   * the endpoint declares no context (`never`) there is no `context` field at all.
+   */
+  export type TypedContextInit<context_type, defaulted_keys extends PropertyKey> = [
+    context_type,
+  ] extends [never]
+    ? {}
+    : keyof context_type extends never
+      ? {}
+      : split_context<context_type, defaulted_keys> extends infer context
+        ? {} extends context
+          ? { context?: context }
+          : { context: context }
+        : never;
+
   export type DefaultRequestInit = {
     headers?: HeadersInitWithReducer;
   } & Omit<RequestInit, "body" | "method" | "headers">;
@@ -304,6 +330,8 @@ export namespace Schema {
       : StandardSchemaV1.InferOutput<schema>;
 }
 
+type SchemaOrFactory<schema, context_type> = schema | ((context: NoInfer<context_type>) => schema);
+
 export namespace Json {
   /**
   Matches a JSON object.
@@ -336,39 +364,36 @@ export namespace Json {
 
 export namespace Serializer {
   export type Any = {
-    schema: Schema.Any;
-    serialize?: string | ((data: any) => any);
+    schema: SchemaOrFactory<Schema.Any, any>;
+    serialize?: string | ((data: any, context: any) => any);
   };
 
-  export type Params<pathname extends Pathname.Relative, schema extends Schema._> =
-    schema extends Schema._<any, Pathname.Params<pathname>>
-      ? {
-          schema: schema;
-          serialize?: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
-        }
-      : {
-          schema: schema;
-          serialize: (data: Schema.infer_output<NoInfer<schema>>) => Pathname.Params<pathname>;
-        };
+  export type Params<pathname extends Pathname.Relative, schema, context_type = unknown> = {
+    schema: SchemaOrFactory<schema, context_type>;
+    serialize?: (
+      data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+      context: NoInfer<context_type>,
+    ) => Pathname.Params<pathname>;
+  };
 
-  export type QueryString<schema extends Schema._> =
-    schema extends Schema._<any, Array<Array<string>> | Record<string, string> | undefined>
-      ? {
-          schema: schema;
-          serialize?:
-            | "urlencoded"
-            | ((data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams);
-        }
-      : {
-          schema: schema;
-          serialize: (data: Schema.infer_output<NoInfer<schema>>) => URLSearchParams;
-        };
+  export type QueryString<schema, context_type = unknown> = {
+    schema: SchemaOrFactory<schema, context_type>;
+    serialize?:
+      | "urlencoded"
+      | ((
+          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+          context: NoInfer<context_type>,
+        ) => URLSearchParams);
+  };
 
-  export type Body<schema extends Schema._> = {
-    schema: schema;
+  export type Body<schema, context_type = unknown> = {
+    schema: SchemaOrFactory<schema, context_type>;
     serialize:
       | "json"
-      | ((data: Schema.infer_output<NoInfer<schema>, any>) => {
+      | ((
+          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+          context: NoInfer<context_type>,
+        ) => {
           body: BodyInit | null;
           content_type: string;
         });
@@ -377,24 +402,20 @@ export namespace Serializer {
 
 export namespace Parser {
   export type Any = {
-    schema: Schema.Any;
-    parse: string | ((data: any) => any);
+    schema: SchemaOrFactory<Schema.Any, any>;
+    parse: string | ((data: any, context: any) => any);
   };
 
-  export type ResponseBody<schema extends Schema._> =
-    schema extends Schema._<string, any>
-      ? {
-          schema: schema;
-          parse:
-            | "text"
-            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-        }
-      : {
-          schema: schema;
-          parse:
-            | "json"
-            | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema>>>);
-        };
+  export type ResponseBody<schema, context_type = unknown> = {
+    schema: SchemaOrFactory<schema, context_type>;
+    parse:
+      | "json"
+      | "text"
+      | ((
+          body: Response["body"],
+          context: NoInfer<context_type>,
+        ) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
+  };
 
   export type AllowedStatus =
     | HTTPStatus.AnySuccessfullResponse
@@ -404,7 +425,10 @@ export namespace Parser {
     | HTTPStatus.AnyServerErrorResponse
     | HTTPStatus.ServerErrorResponse;
 
-  export type ResponseBodyByStatus<map extends Partial<Record<Parser.AllowedStatus, Schema._>>> = {
-    [status in keyof map]: map[status] extends Schema._ ? Parser.ResponseBody<map[status]> : never;
+  export type ResponseBodyByStatus<
+    map extends Partial<Record<Parser.AllowedStatus, Schema._>>,
+    context_type = unknown,
+  > = {
+    [status in keyof map]: Parser.ResponseBody<map[status], context_type>;
   };
 }

@@ -4,6 +4,9 @@ Endpoints parse HTTP responses into typed results based on status code. The
 result is a discriminated union you narrow on `ok` and `status`; each status
 carries the body type declared for it in the endpoint's `responses` map.
 
+> A response `schema` may also be a `(context) => schema` factory, and each `parse` function
+> receives the per-call context as a second argument. See [Dynamic Context](./dynamic-context.md).
+
 ## Response Types
 
 ### Successful Response (20x)

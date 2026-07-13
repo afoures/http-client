@@ -28,9 +28,8 @@ bun add @afoures/http-client
 import { Endpoint, http_client } from "@afoures/http-client";
 import { z } from "zod";
 
-const api = http_client({
-  base_url: "https://api.example.com",
-  endpoints: {
+const api = http_client(
+  {
     users: {
       list: new Endpoint({
         method: "GET",
@@ -84,7 +83,8 @@ const api = http_client({
       }),
     },
   },
-});
+  { base_url: "https://api.example.com" },
+);
 
 // All endpoints are fully typed
 const list = await api.users.list({ query: { page: 1, limit: 10 } });
@@ -96,6 +96,7 @@ const created = await api.users.create({ body: { name: "John", email: "john@exam
 
 - [HTTP Client](./docs/http-client.md)
 - [Endpoint Definition](./docs/endpoint-definition.md)
+- [Dynamic Context](./docs/dynamic-context.md)
 - [Schema Integration](./docs/schema-integration.md)
 - [Serialization](./docs/serialization.md)
 - [Response Parsing](./docs/response-parsing.md)

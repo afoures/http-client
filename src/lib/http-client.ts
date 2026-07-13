@@ -10,7 +10,13 @@ import {
   type Schema,
 } from "./types.ts";
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
-import { extract_args, merge_options, remove_custom_options, sleep } from "./utils.ts";
+import {
+  extract_args,
+  merge_context,
+  merge_options,
+  remove_custom_options,
+  sleep,
+} from "./utils.ts";
 
 export interface EndpointMap {
   [name: string]: AnyEndpoint | EndpointMap;
@@ -45,14 +51,16 @@ type Hooks = {
   on_response?: (response: Response) => void;
 };
 
-type map_to_fetch_endpoint_functions<endpoints> = Pretty<{
+type map_to_fetch_endpoint_functions<endpoints, client_context = {}> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
     infer pathname,
     infer params_schema,
     infer query_schema,
     infer body_schema,
-    infer responses
+    infer responses,
+    infer context_type,
+    infer context_defaults
   >
     ? ReturnType<
         typeof fetch_endpoint_factory<
@@ -61,13 +69,59 @@ type map_to_fetch_endpoint_functions<endpoints> = Pretty<{
           params_schema,
           query_schema,
           body_schema,
-          responses
+          responses,
+          context_type,
+          context_defaults,
+          client_context
         >
       >
     : endpoints[name] extends EndpointMap
-      ? map_to_fetch_endpoint_functions<endpoints[name]>
+      ? map_to_fetch_endpoint_functions<endpoints[name], client_context>
       : never;
 }>;
+
+/** Union of every endpoint's declared context type in the tree (endpoints without a context —
+ * i.e. `unknown` — contribute nothing). */
+type ContextUnion<endpoints> = {
+  [name in keyof endpoints]: endpoints[name] extends Endpoint<
+    any,
+    any,
+    any,
+    any,
+    any,
+    any,
+    infer context_type,
+    any
+  >
+    ? unknown extends context_type
+      ? never
+      : context_type
+    : endpoints[name] extends EndpointMap
+      ? ContextUnion<endpoints[name]>
+      : never;
+}[keyof endpoints];
+
+/** All keys across a union of context objects (distributive `keyof`). */
+type ContextKeys<union> = union extends unknown ? keyof union : never;
+
+/**
+ * The shape of the client-level `context` option: an all-optional merge of every endpoint's
+ * declared context. Written as a plain mapped type — deliberately NOT via `UnionToIntersection`
+ * or a top-level `extends [never] ? …` conditional — because those are deferred types the editor
+ * won't evaluate for completions. As a plain mapped type it resolves eagerly, so when it is used
+ * as the `client_context` constraint the editor proposes its keys (and rejects unknown/mistyped
+ * ones), while the concrete value is still inferred for call-site relaxation. When no endpoint
+ * declares a context, `ContextKeys` is `never` and this is `{}`.
+ */
+type ClientContextShape<endpoints> = {
+  [key in ContextKeys<ContextUnion<endpoints>>]?: ContextUnion<endpoints> extends infer member
+    ? member extends unknown
+      ? key extends keyof member
+        ? member[key]
+        : never
+      : never
+    : never;
+};
 
 export function fetch_endpoint_factory<
   http_method extends HTTPMethod.Any,
@@ -76,25 +130,40 @@ export function fetch_endpoint_factory<
   query_schema extends Schema._,
   body_schema extends Schema._,
   responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
+  context_type = unknown,
+  context_defaults = {},
+  client_context = {},
 >({
   base_url,
   endpoint,
   custom_fetch,
   get_default_options = () => ({}),
+  client_context,
   hooks = {},
 }: {
   base_url: string;
-  endpoint: Endpoint<http_method, pathname, params_schema, query_schema, body_schema, responses>;
+  endpoint: Endpoint<
+    http_method,
+    pathname,
+    params_schema,
+    query_schema,
+    body_schema,
+    responses,
+    context_type,
+    context_defaults
+  >;
   custom_fetch: CustomFetch;
   get_default_options?: () => MaybePromise<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
   >;
+  client_context?: client_context;
   hooks?: Hooks;
 }) {
   async function fetch_endpoint(
     input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
       HTTPFetch.TypedQueryInit<query_schema> &
       HTTPFetch.TypedBodyInit<body_schema> &
+      HTTPFetch.TypedContextInit<context_type, keyof context_defaults | keyof client_context> &
       HTTPFetch.OptionalRequestInit &
       HTTPFetch.DefaultRequestInit,
   ) {
@@ -108,7 +177,13 @@ export function fetch_endpoint_factory<
       });
     }
 
-    const { args, options } = extract_args(input);
+    const { args, options, context: call_context } = extract_args(input);
+
+    const context = merge_context(
+      client_context as Record<string, unknown> | undefined,
+      endpoint.context_default as Record<string, unknown> | undefined,
+      call_context as Record<string, unknown> | undefined,
+    );
 
     const { headers, ...merged_options } = merge_options(
       await get_default_options(),
@@ -117,11 +192,14 @@ export function fetch_endpoint_factory<
     );
 
     const url = await endpoint
-      .generate_url({
-        base_url,
-        params: args.params,
-        query: args.query,
-      } as any)
+      .generate_url(
+        {
+          base_url,
+          params: args.params,
+          query: args.query,
+        } as any,
+        context as any,
+      )
       .catch(
         (error) =>
           new UnexpectedError("Failed to generate URL", {
@@ -143,9 +221,12 @@ export function fetch_endpoint_factory<
     if (url instanceof Error) return url;
 
     const serialized = await endpoint
-      .serialize_body({
-        body: args.body,
-      } as any)
+      .serialize_body(
+        {
+          body: args.body,
+        } as any,
+        context as any,
+      )
       .catch(
         (error) =>
           new UnexpectedError("Failed to serialize body", {
@@ -266,7 +347,11 @@ export function fetch_endpoint_factory<
       }
 
       try {
-        const should_retry = await retry_policy.when({ request, response, error });
+        const should_retry = await retry_policy.when({
+          request,
+          response,
+          error,
+        });
         if (!should_retry) break;
 
         const max_attempts =
@@ -319,7 +404,7 @@ export function fetch_endpoint_factory<
       });
     }
     hooks.on_response?.(response);
-    const result = await endpoint.parse_response(response).catch(async (error) => {
+    const result = await endpoint.parse_response(response, context as any).catch(async (error) => {
       const response_body = await response
         .clone()
         .text()
@@ -367,19 +452,28 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
-export type HttpClientOptions<endpoints> = {
+export type HttpClientConfig<client_context = {}> = {
   base_url: string;
-  endpoints: ValidateEndpointMap<endpoints>;
-  options?: () => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>;
+  options?:
+    | (HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit)
+    | (() => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>);
+  /**
+   * Client-level default context, merged under every endpoint's context. Keys it provides
+   * (that exist in a given endpoint's context type) become optional at that call site.
+   * Constrained to the merged shape of every endpoint's declared context, so unknown/mistyped
+   * keys are rejected.
+   */
+  context?: client_context;
   fetch?: CustomFetch;
 };
 
-export function http_client<const endpoints>({
-  base_url,
-  endpoints: all_endpoints,
-  options,
-  fetch: custom_fetch = fetch,
-}: HttpClientOptions<endpoints>): map_to_fetch_endpoint_functions<endpoints> {
+export function http_client<
+  const endpoints,
+  const client_context extends ClientContextShape<endpoints> = {},
+>(
+  all_endpoints: ValidateEndpointMap<endpoints>,
+  { base_url, options, context, fetch: custom_fetch = fetch }: HttpClientConfig<client_context>,
+): map_to_fetch_endpoint_functions<endpoints, client_context> {
   function map(endpoints: EndpointMap): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {
@@ -390,7 +484,8 @@ export function http_client<const endpoints>({
               endpoint: endpoint_or_object,
               base_url,
               custom_fetch,
-              get_default_options: options,
+              get_default_options: typeof options === "function" ? options : () => options ?? {},
+              client_context: context,
             }),
           ];
         }
@@ -399,12 +494,28 @@ export function http_client<const endpoints>({
     );
   }
 
-  return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<endpoints>;
+  return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<
+    endpoints,
+    client_context
+  >;
 }
 
-type AnyFetchEndpointFunction = ReturnType<
-  typeof fetch_endpoint_factory<any, any, any, any, any, any>
+type AnyFactoryFn = ReturnType<
+  typeof fetch_endpoint_factory<any, any, any, any, any, any, any, any, any>
 >;
+
+/**
+ * Structural supertype of every bound fetch function — used to tell a bound endpoint function
+ * apart from an `Endpoint` instance in {@link $infer.as_fetch_endpoint}. Derived from the
+ * factory return, but with `context` forced to a **required** `any`: an endpoint that declares a
+ * required context produces an input whose `context` is required, and a required property is not
+ * assignable to the *optional* `context` of the factory-`any` input (contravariant parameter
+ * check). Forcing a present `context: any` makes every concrete input assignable while still
+ * excluding non-callable `Endpoint` instances, so routing stays correct.
+ */
+type AnyFetchEndpointFunction = AnyFactoryFn extends (input: infer input) => infer result
+  ? (input: input & { context: any }) => result
+  : never;
 
 export namespace $infer {
   /** Normalize an `Endpoint` instance or a bound fetch function to the fetch-function type. */
@@ -416,7 +527,9 @@ export namespace $infer {
           infer params_schema,
           infer query_schema,
           infer body_schema,
-          infer responses
+          infer responses,
+          infer context_type,
+          infer context_defaults
         >
       ? ReturnType<
           typeof fetch_endpoint_factory<
@@ -425,7 +538,10 @@ export namespace $infer {
             params_schema,
             query_schema,
             body_schema,
-            responses
+            responses,
+            context_type,
+            context_defaults,
+            any
           >
         >
       : never;
@@ -446,6 +562,9 @@ export namespace $infer {
 
   export type Body<endpoint extends AnyEndpointInput> = infer_init<endpoint, "body">;
 
+  /** The per-call out-of-band `context` argument (never present when the endpoint declares none). */
+  export type Context<endpoint extends AnyEndpointInput> = infer_init<endpoint, "context">;
+
   /** The full request argument (params + query + body + request init). */
   export type Input<endpoint extends AnyEndpointInput> = fetch_input<endpoint>;
 
@@ -464,7 +583,11 @@ export namespace $infer {
 
   export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
     fetch_output<endpoint> extends infer response
-      ? response extends { ok: true; status: infer member_status extends number; data: infer data }
+      ? response extends {
+          ok: true;
+          status: infer member_status extends number;
+          data: infer data;
+        }
         ? // a wildcard arm covers a whole class (e.g. `2xx`), so its `status` is a union;
           // match when the requested `status` overlaps that union, not just when it equals it.
           [Extract<member_status, status>] extends [never]
