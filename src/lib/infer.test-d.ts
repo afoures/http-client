@@ -5,11 +5,14 @@ import { Endpoint } from "./endpoint.ts";
 import { NetworkError } from "./errors.ts";
 import z from "zod";
 
-type Equals<left, right> =
+type Equal<left, right> =
   (<value>() => value extends left ? 1 : 2) extends <value>() => value extends right ? 1 : 2
     ? true
     : false;
-type Expect<condition extends true> = condition;
+declare function assert_type<condition extends true>(): condition;
+declare function assignable<target>(value: target): void;
+
+// --- fixtures ---
 
 const get_user = new Endpoint({
   method: "GET",
@@ -60,61 +63,49 @@ const client = http_client(
 );
 
 // --- inputs resolve to the schema input type ---
-type _params = Expect<Equals<$infer.Params<typeof client.get_user>, { id: string }>>;
-type _optional_params = Expect<
-  Equals<
+assert_type<Equal<$infer.Params<typeof client.get_user>, { id: string }>>();
+assert_type<
+  Equal<
     $infer.Params<typeof client.path_optional>,
     {
       query: string | number | undefined;
     }
   >
->;
-type _query = Expect<
-  Equals<$infer.Query<typeof client.get_user>, { include: string; page: string }>
->;
+>();
+assert_type<Equal<$infer.Query<typeof client.get_user>, { include: string; page: string }>>();
 
 // --- regression guard: optional input keys resolve to `T | undefined`, NOT `never` ---
-type _optional_query = Expect<
-  Equals<$infer.Query<typeof client.search_optional>, { q: string } | undefined>
->;
-type _optional_body = Expect<
-  Equals<$infer.Body<typeof client.create_optional>, { name: string } | undefined>
->;
+assert_type<Equal<$infer.Query<typeof client.search_optional>, { q: string } | undefined>>();
+assert_type<Equal<$infer.Body<typeof client.create_optional>, { name: string } | undefined>>();
 
 // --- accepts a raw `Endpoint` instance, not just the bound fetch function ---
-type _query_from_endpoint = Expect<
-  Equals<$infer.Query<typeof get_user>, { include: string; page: string }>
->;
+assert_type<Equal<$infer.Query<typeof get_user>, { include: string; page: string }>>();
 
 // --- per-status data / error narrowing ---
-type _data_200 = Expect<
-  Equals<$infer.Data<typeof client.get_user, 200>, { id: string; name: string }>
->;
-type _data_2xx = Expect<
-  Equals<$infer.Data<typeof client.get_user>, { id: string; name: string } | null | void>
->;
-type _error_404 = Expect<
-  Equals<$infer.Error<typeof client.get_user, 404>, { message: string; code: number }>
->;
-type _error_4xx = Expect<
-  Equals<$infer.Error<typeof client.get_user>, { message: string; code: number } | string>
->;
-type _error_500 = Expect<Equals<$infer.Error<typeof client.get_user, 500>, string>>;
+assert_type<Equal<$infer.Data<typeof client.get_user, 200>, { id: string; name: string }>>();
+assert_type<
+  Equal<$infer.Data<typeof client.get_user>, { id: string; name: string } | null | void>
+>();
+assert_type<Equal<$infer.Error<typeof client.get_user, 404>, { message: string; code: number }>>();
+assert_type<
+  Equal<$infer.Error<typeof client.get_user>, { message: string; code: number } | string>
+>();
+assert_type<Equal<$infer.Error<typeof client.get_user, 500>, string>>();
 
 // --- wildcard setup ---
-type _data_w_200 = Expect<Equals<$infer.Data<typeof client.wildcard, 200>, { ok: boolean }>>;
-type _data_w_2xx = Expect<Equals<$infer.Data<typeof client.wildcard>, { ok: boolean } | null>>;
-type _error_w_404 = Expect<Equals<$infer.Error<typeof client.wildcard, 404>, { error: string }>>;
-type _error_w_4xx = Expect<Equals<$infer.Error<typeof client.wildcard, 400>, { error: string }>>;
-type _error_w_500 = Expect<Equals<$infer.Error<typeof client.wildcard, 500>, { fatal: string }>>;
-type _error_w_5xx = Expect<Equals<$infer.Error<typeof client.wildcard, 503>, { fatal: string }>>;
+assert_type<Equal<$infer.Data<typeof client.wildcard, 200>, { ok: boolean }>>();
+assert_type<Equal<$infer.Data<typeof client.wildcard>, { ok: boolean } | null>>();
+assert_type<Equal<$infer.Error<typeof client.wildcard, 404>, { error: string }>>();
+assert_type<Equal<$infer.Error<typeof client.wildcard, 400>, { error: string }>>();
+assert_type<Equal<$infer.Error<typeof client.wildcard, 500>, { fatal: string }>>();
+assert_type<Equal<$infer.Error<typeof client.wildcard, 503>, { fatal: string }>>();
 
 // --- Result includes transport errors; Response excludes them but stays narrowable ---
-const _is_result: $infer.Result<typeof client.get_user> = null as unknown as NetworkError;
+assignable<$infer.Result<typeof client.get_user>>(null as unknown as NetworkError);
 // @ts-expect-error — a transport error is not part of the `{ ok: boolean }` envelope union.
-const _not_response: $infer.Response<typeof client.get_user> = null as unknown as NetworkError;
+assignable<$infer.Response<typeof client.get_user>>(null as unknown as NetworkError);
 
 // Response keeps the envelope discriminants, so it stays narrowable.
-const _response = null as unknown as $infer.Response<typeof client.get_user>;
-const _response_ok: boolean = _response.ok;
-const _response_status: number = _response.status;
+const response = null as unknown as $infer.Response<typeof client.get_user>;
+assignable<boolean>(response.ok);
+assignable<number>(response.status);

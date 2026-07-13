@@ -6,13 +6,14 @@ import { NetworkError, ParseError, TimeoutError } from "./errors.ts";
 import type { Schema } from "./types.ts";
 import z from "zod";
 
-type Equals<left, right> =
+type Equal<left, right> =
   (<value>() => value extends left ? 1 : 2) extends <value>() => value extends right ? 1 : 2
     ? true
     : false;
-type Expect<condition extends true> = condition;
+declare function assert_type<condition extends true>(): condition;
+declare function assignable<target>(value: target): void;
 
-// --- sample endpoints ---
+// --- fixtures ---
 
 const get_user = new Endpoint({
   method: "GET",
@@ -63,29 +64,29 @@ const client = http_client(
 
 // --- mapping: endpoints become callable fetch functions, including nested maps ---
 
-type _is_fn = Expect<
-  Equals<typeof client.get_user extends (...args: never[]) => unknown ? true : false, true>
->;
-type _nested_is_fn = Expect<
-  Equals<typeof client.admin.get_user extends (...args: never[]) => unknown ? true : false, true>
->;
+assert_type<
+  Equal<typeof client.get_user extends (...args: never[]) => unknown ? true : false, true>
+>();
+assert_type<
+  Equal<typeof client.admin.get_user extends (...args: never[]) => unknown ? true : false, true>
+>();
 
 // --- fetch input shape ---
 
 type GetUserInput = Parameters<typeof client.get_user>[0];
 
-type _in_params = Expect<Equals<GetUserInput["params"], { id: string }>>;
-type _in_query = Expect<Equals<GetUserInput["query"], { include: string; page: string }>>;
+assert_type<Equal<GetUserInput["params"], { id: string }>>();
+assert_type<Equal<GetUserInput["query"], { include: string; page: string }>>();
 // request-init keys are merged in (OptionalRequestInit + DefaultRequestInit)
-type _in_timeout = Expect<Equals<GetUserInput["timeout"], number | undefined>>;
+assert_type<Equal<GetUserInput["timeout"], number | undefined>>();
 
 // optional path param flows through the mapped fetch input
-type _in_optional_param = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof client.get_user_optional>[0]["params"],
     { id: string | number | undefined }
   >
->;
+>();
 
 // positive: a fully-formed call with request-init options type-checks
 client.get_user({
@@ -121,46 +122,46 @@ client.create_required({ body: { name: 123 } });
 type GetUserResult = Awaited<ReturnType<typeof client.get_user>>;
 
 // transport error classes are part of the result union
-const _net: GetUserResult = null as unknown as NetworkError;
-const _timeout: GetUserResult = null as unknown as TimeoutError;
-const _parse: GetUserResult = null as unknown as ParseError;
+assignable<GetUserResult>(null as unknown as NetworkError);
+assignable<GetUserResult>(null as unknown as TimeoutError);
+assignable<GetUserResult>(null as unknown as ParseError);
 
 // the response envelope narrows by ok/status to the schema outputs
-type _out_data_200 = Expect<
-  Equals<Extract<GetUserResult, { ok: true; status: 200 }>["data"], { id: string; name: string }>
->;
-type _out_error_404 = Expect<
-  Equals<
+assert_type<
+  Equal<Extract<GetUserResult, { ok: true; status: 200 }>["data"], { id: string; name: string }>
+>();
+assert_type<
+  Equal<
     Extract<GetUserResult, { ok: false; status: 404 }>["error"],
     { message: string; code: number }
   >
->;
+>();
 
 // --- fetch output narrowing with `2xx` / `4xx` / `5xx` wildcard statuses ---
 
 type WildcardResult = Awaited<ReturnType<typeof client.wildcard>>;
 
-type _w_2xx = Expect<
-  Equals<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
->;
-type _w_4xx = Expect<
-  Equals<
+assert_type<
+  Equal<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
+>();
+assert_type<
+  Equal<
     Extract<WildcardResult, { ok: false; error: { error: string } }>["error"],
     { error: string }
   >
->;
-type _w_5xx = Expect<
-  Equals<
+>();
+assert_type<
+  Equal<
     Extract<WildcardResult, { ok: false; error: { fatal: string } }>["error"],
     { fatal: string }
   >
->;
+>();
 
 // --- `any`-schema escape hatch: a query schema typed as `Schema.Any` widens input to `{ query: any }` ---
 
 const any_endpoint = null as unknown as Endpoint<"GET", "/any", never, Schema.Any, never, {}>;
 const any_client = http_client({ any_endpoint }, { base_url: "https://x" });
-type _any_query = Expect<Equals<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>;
+assert_type<Equal<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>();
 
 // --- endpoints declared INLINE in the map keep their inferred generics ---
 // Regression guard: the `endpoints` option must not be constrained in a way that
@@ -198,24 +199,22 @@ const inline_client = http_client(
 
 // paramless inline endpoint does NOT require `params` (callable with `{}`)
 inline_client.list({});
-type _inline_no_params = Expect<
-  Equals<"params" extends keyof Parameters<typeof inline_client.list>[0] ? true : false, false>
->;
+assert_type<
+  Equal<"params" extends keyof Parameters<typeof inline_client.list>[0] ? true : false, false>
+>();
 // inline query keeps its schema input type
-type _inline_query = Expect<
-  Equals<Parameters<typeof inline_client.list>[0]["query"], { page: string } | undefined>
->;
+assert_type<
+  Equal<Parameters<typeof inline_client.list>[0]["query"], { page: string } | undefined>
+>();
 // inline body keeps its schema input type
-type _inline_body = Expect<
-  Equals<Parameters<typeof inline_client.create>[0]["body"], { name: string }>
->;
+assert_type<Equal<Parameters<typeof inline_client.create>[0]["body"], { name: string }>>();
 // inline response schema flows through to the narrowed output
-type _inline_data = Expect<
-  Equals<
+assert_type<
+  Equal<
     Extract<Awaited<ReturnType<typeof inline_client.get>>, { ok: true; status: 200 }>["data"],
     { id: string; name: string }
   >
->;
+>();
 
 // negative: a parameterized inline route still requires `params`
 // @ts-expect-error — `params` is required
@@ -223,27 +222,3 @@ inline_client.get({});
 // negative: wrong inline body field type is still caught (not silently `any`)
 // @ts-expect-error — `name` must be a string
 inline_client.create({ body: { name: 123 } });
-
-// reference the unused-symbol-sensitive bindings
-void _net;
-void _timeout;
-void _parse;
-
-export type {
-  _is_fn,
-  _nested_is_fn,
-  _in_params,
-  _in_query,
-  _in_timeout,
-  _in_optional_param,
-  _out_data_200,
-  _out_error_404,
-  _w_2xx,
-  _w_4xx,
-  _w_5xx,
-  _any_query,
-  _inline_no_params,
-  _inline_query,
-  _inline_body,
-  _inline_data,
-};

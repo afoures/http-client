@@ -4,13 +4,14 @@ import { Endpoint } from "./endpoint.ts";
 import { ParseError } from "./errors.ts";
 import z from "zod";
 
-type Equals<left, right> =
+type Equal<left, right> =
   (<value>() => value extends left ? 1 : 2) extends <value>() => value extends right ? 1 : 2
     ? true
     : false;
-type Expect<condition extends true> = condition;
+declare function assert_type<condition extends true>(): condition;
+declare function assignable<target>(value: target): void;
 
-// --- sample endpoints covering the public surface ---
+// --- fixtures ---
 
 const get_user = new Endpoint({
   method: "GET",
@@ -104,41 +105,41 @@ new Endpoint({
 // --- `generate_url` input ---
 
 // full input: base_url + required params (schema input) + required query
-type _gu_input = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof get_user.generate_url>[0],
     { base_url: string; params: { id: string }; query: { include: string; page: string } }
   >
->;
+>();
 
 // param route without a schema → params default to `Pathname.Params<pathname>` (string | number)
-type _gu_no_schema_params = Expect<
-  Equals<Parameters<typeof get_user_no_schema.generate_url>[0]["params"], { id: string | number }>
->;
+assert_type<
+  Equal<Parameters<typeof get_user_no_schema.generate_url>[0]["params"], { id: string | number }>
+>();
 
 // optional path param → value widens to include `undefined`, key stays present
-type _gu_optional_param = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof get_user_optional.generate_url>[0]["params"],
     { id: string | number | undefined }
   >
->;
+>();
 
 // every path param is required and string|number-typed
-type _gu_multi_params = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof get_comment.generate_url>[0]["params"],
     { postId: string | number; commentId: string | number }
   >
->;
+>();
 
 // optional query schema → `query` is an optional key
-type _gu_optional_query = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof search_optional.generate_url>[0],
     { base_url: string; query?: { q: string } | undefined }
   >
->;
+>();
 
 // negative: required params omitted
 // @ts-expect-error — `params` is required for a parameterized route
@@ -164,17 +165,17 @@ get_user_optional.generate_url({
 // --- `serialize_body` input ---
 
 // required body schema → `body` is a required key typed to the schema input
-type _sb_required = Expect<
-  Equals<Parameters<typeof create_required.serialize_body>[0], { body: { name: string } }>
->;
+assert_type<
+  Equal<Parameters<typeof create_required.serialize_body>[0], { body: { name: string } }>
+>();
 
 // optional body schema → `body` is an optional key
-type _sb_optional = Expect<
-  Equals<
+assert_type<
+  Equal<
     Parameters<typeof create_optional.serialize_body>[0],
     { body?: { name: string } | undefined }
   >
->;
+>();
 
 // negative: wrong body field type
 // @ts-expect-error — `name` must be a string
@@ -185,106 +186,75 @@ create_required.serialize_body({ body: { name: 123 } });
 type GetUserResult = Awaited<ReturnType<typeof get_user.parse_response>>;
 
 // keyed success status carries the 200 schema output as `data`
-type _data_200 = Expect<
-  Equals<Extract<GetUserResult, { ok: true; status: 200 }>["data"], { id: string; name: string }>
->;
+assert_type<
+  Equal<Extract<GetUserResult, { ok: true; status: 200 }>["data"], { id: string; name: string }>
+>();
 
 // keyed client-error status carries the 404 schema output as `error`
-type _error_404 = Expect<
-  Equals<
+assert_type<
+  Equal<
     Extract<GetUserResult, { ok: false; status: 404 }>["error"],
     { message: string; code: number }
   >
->;
+>();
 
 // unspecified 2xx falls back to the `2xx` default (`void` when none is declared)
-type _success_fallback = Expect<
-  Equals<Extract<GetUserResult, { ok: true; data: void }>["data"], void>
->;
+assert_type<Equal<Extract<GetUserResult, { ok: true; data: void }>["data"], void>>();
 
 // the redirect arm is always present and exposes `redirect_to`
-const _redirect = null as unknown as Extract<GetUserResult, { redirect_to: unknown }>;
-const _redirect_to: string | null = _redirect.redirect_to;
+assignable<string | null>(
+  (null as unknown as Extract<GetUserResult, { redirect_to: unknown }>).redirect_to,
+);
 
 // `ParseError` is part of the returned union
-const _includes_parse_error: GetUserResult = null as unknown as ParseError;
+assignable<GetUserResult>(null as unknown as ParseError);
 
 // --- `parse_response` narrowing with `2xx` / `4xx` / `5xx` wildcard statuses ---
 
 type WildcardResult = Awaited<ReturnType<typeof wildcard.parse_response>>;
 
 // `2xx` default applies as `data` to every successful (non-204) status
-type _wild_2xx = Expect<
-  Equals<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
->;
+assert_type<
+  Equal<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
+>();
 // `4xx` default applies as `error` to every client-error status
-type _wild_4xx = Expect<
-  Equals<
+assert_type<
+  Equal<
     Extract<WildcardResult, { ok: false; error: { error: string } }>["error"],
     { error: string }
   >
->;
+>();
 // `5xx` default applies as `error` to every server-error status
-type _wild_5xx = Expect<
-  Equals<
+assert_type<
+  Equal<
     Extract<WildcardResult, { ok: false; error: { fatal: string } }>["error"],
     { fatal: string }
   >
->;
+>();
 
 // --- specific status precedence over its wildcard ---
 
 type MixedResult = Awaited<ReturnType<typeof mixed.parse_response>>;
 
 // a specific status wins over its class wildcard
-type _mixed_200 = Expect<
-  Equals<Extract<MixedResult, { ok: true; status: 200 }>["data"], { id: string }>
->;
-type _mixed_404 = Expect<
-  Equals<Extract<MixedResult, { ok: false; status: 404 }>["error"], { nf: string }>
->;
+assert_type<Equal<Extract<MixedResult, { ok: true; status: 200 }>["data"], { id: string }>>();
+assert_type<Equal<Extract<MixedResult, { ok: false; status: 404 }>["error"], { nf: string }>>();
 // remaining statuses fall back to the wildcard default
-type _mixed_2xx = Expect<
-  Equals<
+assert_type<
+  Equal<
     Extract<MixedResult, { ok: true; data: { generic: boolean } }>["data"],
     { generic: boolean }
   >
->;
-type _mixed_4xx = Expect<
-  Equals<
+>();
+assert_type<
+  Equal<
     Extract<MixedResult, { ok: false; error: { generic_err: string } }>["error"],
     { generic_err: string }
   >
->;
+>();
 
 // --- getters ---
 
 // `method` carries the literal http method
-type _method = Expect<Equals<typeof get_user.method, "GET">>;
-type _method_post = Expect<Equals<typeof create_required.method, "POST">>;
-
-// reference the unused-symbol-sensitive bindings
-void _redirect_to;
-void _includes_parse_error;
-
-export type {
-  _gu_input,
-  _gu_no_schema_params,
-  _gu_optional_param,
-  _gu_multi_params,
-  _gu_optional_query,
-  _sb_required,
-  _sb_optional,
-  _data_200,
-  _error_404,
-  _success_fallback,
-  _wild_2xx,
-  _wild_4xx,
-  _wild_5xx,
-  _mixed_200,
-  _mixed_404,
-  _mixed_2xx,
-  _mixed_4xx,
-  _method,
-  _method_post,
-};
+assert_type<Equal<typeof get_user.method, "GET">>();
+assert_type<Equal<typeof create_required.method, "POST">>();
