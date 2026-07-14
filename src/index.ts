@@ -6,6 +6,7 @@ export type {
   Serializer,
   Schema,
   Pathname,
+  RetryPolicy,
 } from "./lib/types.ts";
 export {
   Endpoint,

@@ -16,7 +16,7 @@ This is the changelog for `http-client`.
 
 - Replace the separate `data` and `error` parser definitions with a single `responses` map keyed by HTTP status code.
 
-  Each key is a status code (or a `2xx`/`4xx`/`5xx` wildcard) and each value is a `{ schema, parse }` parser. Parsed bodies are typed per status — landing on `data` for `2xx` responses and `error` for `4xx`/`5xx` responses — so `parse_response` returns a discriminated union you narrow on `ok` and `status`.
+  Each key is a status code (or a `2xx`/`4xx`/`5xx` wildcard) and each value is a `{ schema, parse }` parser. Parsed bodies are typed per status (landing on `data` for `2xx` responses and `error` for `4xx`/`5xx` responses), so `parse_response` returns a discriminated union you narrow on `ok` and `status`.
 
   ```typescript
   const endpoint = new Endpoint({
@@ -41,7 +41,7 @@ This is the changelog for `http-client`.
 
 - Fix inline endpoints losing their inferred types in `http_client`.
 
-  `endpoints` was constrained with `EndpointMap` directly, which contextually widened inline `new Endpoint({...})` generics — collapsing every schema to `Schema.Any` and forcing a spurious `params: any`. The tree is now validated with a homomorphic mapped type, so inline endpoints keep their own inferred `pathname`, schema, and `responses` types.
+  `endpoints` was constrained with `EndpointMap` directly, which contextually widened inline `new Endpoint({...})` generics, collapsing every schema to `Schema.Any` and forcing a spurious `params: any`. The tree is now validated with a homomorphic mapped type, so inline endpoints keep their own inferred `pathname`, schema, and `responses` types.
 
 ## 0.4.0
 

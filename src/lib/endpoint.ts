@@ -97,14 +97,29 @@ const RESPONSE = {
   },
 };
 
+/** Type-carrying marker for an endpoint's out-of-band `context`, produced by {@link define_context}. Only `defaults` exists at runtime. */
 export interface ContextMarker<context_type = unknown, defaults = {}> {
   readonly __context_type__: (context: context_type) => void;
   readonly defaults: defaults;
+  /** Set endpoint-level default context values; defaulted keys become optional at the call site. */
   with_defaults<const next_defaults extends Partial<context_type>>(
     defaults: next_defaults,
   ): ContextMarker<context_type, next_defaults>;
 }
 
+/**
+ * Declare an endpoint's out-of-band `context` type. Context is passed per call, is never
+ * serialized into the request, and is threaded into schema factories and custom
+ * `serialize`/`parse` functions. Chain `.with_defaults(...)` for endpoint-level defaults.
+ *
+ * @example
+ * new Endpoint({
+ *   method: "GET",
+ *   pathname: "/users/:id",
+ *   context: define_context<{ tz: string }>().with_defaults({ tz: "UTC" }),
+ *   responses: { 200: { schema: (ctx) => schemaFor(ctx.tz), parse: "json" } },
+ * });
+ */
 export function define_context<context_type = unknown>(): ContextMarker<context_type, {}> {
   function make<defaults>(defaults: defaults): ContextMarker<context_type, defaults> {
     return {
@@ -117,6 +132,7 @@ export function define_context<context_type = unknown>(): ContextMarker<context_
   return make({});
 }
 
+/** The object accepted by the {@link Endpoint} constructor: HTTP method, pathname, optional context, and params/query/body serializers plus per-status response parsers. */
 export type EndpointDefinition<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
@@ -147,6 +163,18 @@ type extract_outputs<map extends Partial<Record<string | number, Schema._>>> = {
   [key in keyof map]: map[key] extends Schema._ ? Schema.infer_output<map[key]> : never;
 };
 
+/**
+ * A typed, reusable descriptor of a single HTTP endpoint: its method, pathname, and the
+ * schemas that serialize the request and parse each response. Pass a tree of `Endpoint`
+ * instances to {@link http_client} to get callable, typed fetch functions.
+ *
+ * @example
+ * const get_user = new Endpoint({
+ *   method: "GET",
+ *   pathname: "/users/:id",
+ *   responses: { 200: { schema: z.object({ id: z.string() }), parse: "json" } },
+ * });
+ */
 export class Endpoint<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
@@ -204,18 +232,22 @@ export class Endpoint<
       | undefined;
   }
 
+  /** The endpoint's HTTP method. */
   get method() {
     return this.#method;
   }
 
+  /** The default request options passed to the constructor. */
   get options(): HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit {
     return this.#options;
   }
 
+  /** Endpoint-level default context, merged under any client-level and per-call context. */
   get context_default(): context_defaults {
     return this.#context_default;
   }
 
+  /** Build the request URL from `base_url` plus typed params and query. `http_client` calls this internally; call it directly to produce a URL (e.g. for a link or prefetch) without sending a request. Returns a {@link SerializationError} as a value if validation or serialization fails. */
   async generate_url(
     init: Pretty<
       { base_url: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
@@ -348,6 +380,7 @@ export class Endpoint<
     return url;
   }
 
+  /** Validate and serialize the request body, returning the encoded body and its content type. Returns a {@link SerializationError} as a value on failure. */
   async serialize_body(
     init: Pretty<HTTPFetch.TypedBodyInit<body_schema>>,
     context?: context_type,
@@ -409,6 +442,7 @@ export class Endpoint<
     }
   }
 
+  /** Parse a raw `Response` into a typed response envelope, selecting the parser for its status (exact status, then `2xx`/`4xx`/`5xx` fallback). Returns a {@link ParseError} as a value on failure. */
   async parse_response(
     raw_response: Response,
     context?: context_type,
@@ -526,6 +560,7 @@ export class Endpoint<
   }
 }
 
+/** Any {@link Endpoint}, regardless of its type parameters. Useful for constraints and endpoint-tree types. */
 export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any, any>;
 
 function resolve_schema(

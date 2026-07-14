@@ -15,11 +15,15 @@ type ZeroWidthSpace = typeof ZeroWidthSpace;
 
 export type ErrorMessage<message extends string = string> = `error: ${message}${ZeroWidthSpace}`;
 
+/** Types describing endpoint pathnames and their dynamic params. */
 export namespace Pathname {
+  /** A relative pathname, e.g. `/users/:id`. */
   export type Relative = `/${string}`;
 
+  /** A pathname that contains at least one `:param` segment. */
   export type WithParams = `${string}:${string}`;
 
+  /** The params object inferred from a pathname's `:param` segments (accepts `string` or `number`). */
   export type Params<pathname extends Pathname.Relative> = Pretty<{
     [param in keyof RoutePatternParams<pathname>]: RoutePatternParams<pathname>[param] | number;
   }>;
@@ -28,13 +32,18 @@ export namespace Pathname {
     pathname extends Pathname.WithParams ? Schema._<Pathname.Params<pathname>> : never;
 }
 
+/** HTTP status-code literal unions grouped by response class. */
 export namespace HTTPStatus {
+  /** 1xx informational status codes. */
   export type InformationalResponse = 100 | 101 | 102 | 103;
 
+  /** 2xx success status codes. */
   export type SuccessfulResponse = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
 
+  /** 3xx redirection status codes. */
   export type RedirectMessage = 300 | 301 | 302 | 303 | 304 | 307 | 308;
 
+  /** 4xx client-error status codes. */
   export type ClientErrorResponse =
     | 400
     | 401
@@ -66,12 +75,14 @@ export namespace HTTPStatus {
     | 431
     | 451;
 
+  /** 5xx server-error status codes. */
   export type ServerErrorResponse = 500 | 501 | 502 | 503 | 504 | 505 | 506 | 507 | 508 | 510 | 511;
 
   export type AnySuccessfullResponse = "2xx";
   export type AnyClientErrorResponse = "4xx";
   export type AnyServerErrorResponse = "5xx";
 
+  /** Any known HTTP status code. */
   export type Any =
     | HTTPStatus.InformationalResponse
     | HTTPStatus.SuccessfulResponse
@@ -80,10 +91,14 @@ export namespace HTTPStatus {
     | HTTPStatus.RedirectMessage;
 }
 
+/** HTTP method literals. */
 export namespace HTTPMethod {
-  export type WithBody = "POST" | "PUT" | "PATCH" | "DELETE";
+  /** Methods that may carry a request body. */
+  export type WithBody = "POST" | "PUT" | "PATCH" | "DELETE" | "QUERY";
+  /** Methods that may not carry a request body. */
   export type WithoutBody = "GET";
 
+  /** Any supported HTTP method. */
   export type Any = HTTPMethod.WithoutBody | HTTPMethod.WithBody;
 }
 
@@ -95,15 +110,19 @@ export type HeadersInitWithReducer =
   | Record<string, HeaderValue | HeaderReducer>
   | Headers;
 
+/** Types for the per-request `retry` option. */
 export namespace RetryPolicy {
+  /** Decides whether a completed attempt should be retried; defaults to retrying on non-ok responses. */
   export type Condition = (context: {
     request: Request;
     response: Response | undefined;
     error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
   }) => MaybePromise<boolean>;
 
+  /** Maximum number of attempts, as a number or a function of the request. */
   export type Attempts = number | ((context: { request: Request }) => MaybePromise<number>);
 
+  /** Delay in milliseconds before the next attempt, as a number or a function of the attempt state (enables backoff). */
   export type Delay =
     | number
     | ((context: {
@@ -113,13 +132,18 @@ export namespace RetryPolicy {
         attempt: number;
       }) => MaybePromise<number>);
 
+  /** Retry configuration passed as the `retry` request option. */
   export type Configuration = {
+    /** Maximum number of attempts before giving up. */
     attempts?: Attempts;
+    /** Delay before retrying. */
     delay?: Delay;
+    /** Predicate deciding whether to retry an attempt. */
     when?: Condition;
   };
 }
 
+/** The typed response envelopes and request-input shapes produced by the client. */
 export namespace HTTPFetch {
   type SharedResponseContent = {
     method: HTTPMethod.Any;
@@ -128,6 +152,7 @@ export namespace HTTPFetch {
     raw_response: Response;
   };
 
+  /** A 4xx response (`ok: false`), with `error` typed per status code and a fallback for unlisted ones. */
   export type ClientErrorResponse<
     errors extends Partial<Record<HTTPStatus.ClientErrorResponse, any>>,
     fallback,
@@ -143,6 +168,7 @@ export namespace HTTPFetch {
         }[keyof errors & number]
     );
 
+  /** A 5xx response (`ok: false`), with `error` typed per status code and a fallback for unlisted ones. */
   export type ServerErrorResponse<
     errors extends Partial<Record<HTTPStatus.ServerErrorResponse, any>>,
     fallback,
@@ -158,6 +184,7 @@ export namespace HTTPFetch {
         }[keyof errors & number]
     );
 
+  /** A 2xx response (`ok: true`), with `data` typed per status code (`204` always yields `null`) and a fallback for unlisted ones. */
   export type SuccessfulResponse<
     data extends Partial<Record<Exclude<HTTPStatus.SuccessfulResponse, 204>, any>>,
     fallback,
@@ -176,6 +203,7 @@ export namespace HTTPFetch {
         }
     );
 
+  /** A 3xx response (`ok: false`), exposing the `Location` header as `redirect_to`. */
   export type RedirectMessage = SharedResponseContent & {
     ok: false;
     status: HTTPStatus.RedirectMessage;
@@ -199,6 +227,7 @@ export namespace HTTPFetch {
     default_type,
   > = key extends keyof map ? map[key] : default_type;
 
+  /** The full discriminated union of possible responses (successful | client error | server error | redirect) for a given per-status parser map. */
   export type AnyResponse<map extends Partial<Record<Parser.AllowedStatus, any>>> = [
     keyof map,
   ] extends [never]
@@ -228,6 +257,7 @@ export namespace HTTPFetch {
             >
           | RedirectMessage;
 
+  /** The `params` field of a call's input, typed from the pathname params and any params schema. */
   export type TypedParamsInit<pathname extends Pathname.Relative, params_schema extends Schema._> =
     is_any<params_schema> extends true
       ? { params: any }
@@ -237,6 +267,7 @@ export namespace HTTPFetch {
           : {}
         : { params: Schema.infer_input<params_schema> };
 
+  /** The `query` field of a call's input, typed from the query schema (optional when the schema allows `undefined`). */
   export type TypedQueryInit<query_schema extends Schema._> =
     is_any<query_schema> extends true
       ? { query: any }
@@ -246,6 +277,7 @@ export namespace HTTPFetch {
           ? { query?: Schema.infer_input<query_schema> }
           : { query: Schema.infer_input<query_schema> };
 
+  /** The `body` field of a call's input, typed from the body schema (only present for methods that allow a body). */
   export type TypedBodyInit<body_schema extends Schema._> =
     is_any<body_schema> extends true
       ? { body: any }
@@ -263,6 +295,7 @@ export namespace HTTPFetch {
     }
   >;
 
+  /** The `context` field of a call's input: `defaulted_keys` (supplied by client- or endpoint-level defaults) are optional, the rest required; absent entirely when no context is declared. */
   export type TypedContextInit<context_type, defaulted_keys extends PropertyKey> = [
     context_type,
   ] extends [never]
@@ -275,23 +308,32 @@ export namespace HTTPFetch {
           : { context: context }
         : never;
 
+  /** Standard `fetch` `RequestInit` options (minus `body`/`method`), with headers accepting reducer values. */
   export type DefaultRequestInit = {
     headers?: HeadersInitWithReducer;
   } & Omit<RequestInit, "body" | "method" | "headers">;
 
+  /** Client-specific request options layered on top of `RequestInit`. */
   export type OptionalRequestInit = {
+    /** Request timeout in milliseconds. */
     timeout?: number;
+    /** Retry policy for this request. */
     retry?: RetryPolicy.Configuration;
   };
 }
 
+/** Wrappers around the [Standard Schema](https://github.com/standard-schema/standard-schema) spec (Zod, Valibot, ArkType, …). */
 export namespace Schema {
+  /** A Standard Schema with the given input and output types. */
   export type _<input = unknown, output = input> = StandardSchemaV1<input, output>;
 
+  /** Any Standard Schema. */
   export type Any = Schema._<any, any>;
 
+  /** A Standard Schema with `unknown` input and output. */
   export type Unknown = Schema._<unknown, unknown>;
 
+  /** The input type of a schema, or `default_value` when the schema is `never`. */
   export type infer_input<schema extends Schema.Any, default_value extends unknown = never> = [
     default_value,
   ] extends [never]
@@ -300,6 +342,7 @@ export namespace Schema {
       ? default_value
       : StandardSchemaV1.InferInput<schema>;
 
+  /** The output type of a schema, or `default_value` when the schema is `never`. */
   export type infer_output<schema extends Schema.Any, default_value extends unknown = never> = [
     default_value,
   ] extends [never]
@@ -321,12 +364,20 @@ export namespace Json {
   export type Value = Json.Primitive | Json.Object | Json.Array;
 }
 
+/** Config for validating and encoding the outgoing request. Each `schema` may be a schema or a `(context) => schema` factory. */
 export namespace Serializer {
+  /** Any serializer config. */
   export type Any = {
     schema: SchemaOrFactory<Schema.Any, any>;
     serialize?: string | ((data: any, context: any) => any);
   };
 
+  /**
+   * Path-params serializer. `serialize` maps validated data to the pathname's params.
+   *
+   * @example
+   * { schema: z.object({ id: z.number() }), serialize: (data) => ({ id: String(data.id) }) }
+   */
   export type Params<pathname extends Pathname.Relative, schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
     serialize?: (
@@ -335,6 +386,12 @@ export namespace Serializer {
     ) => Pathname.Params<pathname>;
   };
 
+  /**
+   * Query-string serializer. `serialize` is `"urlencoded"` (default) or a function returning `URLSearchParams`.
+   *
+   * @example
+   * { schema: z.object({ q: z.string() }), serialize: "urlencoded" }
+   */
   export type QueryString<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
     serialize?:
@@ -345,6 +402,12 @@ export namespace Serializer {
         ) => URLSearchParams);
   };
 
+  /**
+   * Request-body serializer. `serialize` is `"json"` or a function returning the encoded body and its content type.
+   *
+   * @example
+   * { schema: z.object({ name: z.string() }), serialize: "json" }
+   */
   export type Body<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
     serialize:
@@ -359,12 +422,20 @@ export namespace Serializer {
   };
 }
 
+/** Config for parsing and validating responses. Each `schema` may be a schema or a `(context) => schema` factory. */
 export namespace Parser {
+  /** Any parser config. */
   export type Any = {
     schema: SchemaOrFactory<Schema.Any, any>;
     parse: string | ((data: any, context: any) => any);
   };
 
+  /**
+   * Response-body parser. `parse` is `"json"`, `"text"`, or a function reading the raw body stream.
+   *
+   * @example
+   * { schema: z.object({ id: z.string() }), parse: "json" }
+   */
   export type ResponseBody<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
     parse:
@@ -376,6 +447,7 @@ export namespace Parser {
         ) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
   };
 
+  /** Status keys a parser map may use: exact codes plus the `2xx`/`4xx`/`5xx` wildcards (excluding `204`). */
   export type AllowedStatus =
     | HTTPStatus.AnySuccessfullResponse
     | Exclude<HTTPStatus.SuccessfulResponse, 204>
@@ -384,6 +456,7 @@ export namespace Parser {
     | HTTPStatus.AnyServerErrorResponse
     | HTTPStatus.ServerErrorResponse;
 
+  /** A map from status (or status class) to its {@link ResponseBody} parser, as passed to `responses`. */
   export type ResponseBodyByStatus<
     map extends Partial<Record<Parser.AllowedStatus, Schema._>>,
     context_type = unknown,

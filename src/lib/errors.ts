@@ -27,6 +27,7 @@ type InputContext = {
   body?: unknown;
 };
 
+/** Structured context attached to every error: the failing operation plus optional request, response, timing and input details. */
 export type ErrorContext = {
   operation: string;
   request?: RequestContext;
@@ -35,7 +36,19 @@ export type ErrorContext = {
   input?: InputContext;
 };
 
+/**
+ * Base class for the transport-level errors the client returns (never throws) as the result of a
+ * call. Because every failure comes back as a value, check for it before using a result: a single
+ * `instanceof HttpClientError` catches timeouts, aborts, serialization, parse and network errors
+ * (but not {@link UnexpectedError}, which extends `Error` directly).
+ *
+ * @example
+ * const result = await api.users.get({ params: { id: "1" } });
+ * if (result instanceof HttpClientError) return handle(result.context);
+ * // result is now a typed response
+ */
 export class HttpClientError extends Error {
+  /** Structured details about the failure (operation, request, response, timing, input). */
   public readonly context: ErrorContext;
 
   constructor(message: string, { cause, ...options }: { cause?: unknown } & Partial<ErrorContext>) {
@@ -48,6 +61,7 @@ export class HttpClientError extends Error {
   }
 }
 
+/** The request exceeded the configured `timeout`. */
 export class TimeoutError extends HttpClientError {
   constructor(message: string, options: { cause?: unknown } & Partial<ErrorContext>) {
     super(message, options);
@@ -55,6 +69,7 @@ export class TimeoutError extends HttpClientError {
   }
 }
 
+/** The request was aborted via an `AbortSignal`. */
 export class AbortedError extends HttpClientError {
   constructor(message: string, options: { cause?: unknown } & Partial<ErrorContext>) {
     super(message, options);
@@ -62,6 +77,7 @@ export class AbortedError extends HttpClientError {
   }
 }
 
+/** Serializing or validating the request params, query or body failed. */
 export class SerializationError extends HttpClientError {
   constructor(message: string, options: { cause?: unknown } & Partial<ErrorContext>) {
     super(message, options);
@@ -69,6 +85,7 @@ export class SerializationError extends HttpClientError {
   }
 }
 
+/** Parsing or validating the response body against its schema failed. */
 export class ParseError extends HttpClientError {
   constructor(message: string, options: { cause?: unknown } & Partial<ErrorContext>) {
     super(message, options);
@@ -76,6 +93,7 @@ export class ParseError extends HttpClientError {
   }
 }
 
+/** The underlying `fetch` failed at the network level (connection refused, DNS, etc.). */
 export class NetworkError extends HttpClientError {
   constructor(message: string, options: { cause?: unknown } & Partial<ErrorContext>) {
     super(message, options);
@@ -83,7 +101,9 @@ export class NetworkError extends HttpClientError {
   }
 }
 
+/** Catch-all for unexpected failures (invalid `base_url`, request construction, retry-policy errors). Extends `Error` directly, not {@link HttpClientError}. */
 export class UnexpectedError extends Error {
+  /** Structured details about the failure (operation, request, response, timing, input). */
   public readonly context: ErrorContext;
 
   constructor(message: string, { cause, ...options }: { cause?: unknown } & Partial<ErrorContext>) {

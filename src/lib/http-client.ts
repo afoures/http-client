@@ -18,6 +18,7 @@ import {
   sleep,
 } from "./utils.ts";
 
+/** A possibly-nested tree of {@link Endpoint} instances, keyed by name, accepted by {@link http_client}. */
 export interface EndpointMap {
   [name: string]: AnyEndpoint | EndpointMap;
 }
@@ -426,15 +427,45 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
+/** Configuration for {@link http_client}. */
 export type HttpClientConfig<client_context = {}> = {
+  /**
+   * Base URL every endpoint's pathname is resolved against, following standard `URL` resolution.
+   * To keep a path prefix, the base must end with a trailing slash, otherwise its last segment is
+   * replaced by the pathname.
+   *
+   * @example
+   * // basic
+   * base_url: "https://api.example.com"        // + "/users" -> https://api.example.com/users
+   *
+   * @example
+   * // with path prefix (note the trailing slash)
+   * base_url: "https://api.example.com/v1/"    // + "/users" -> https://api.example.com/v1/users
+   * base_url: "https://api.example.com/v1"     // + "/users" -> https://api.example.com/users (prefix dropped)
+   */
   base_url: string;
+  /** Default request options applied to every call; may be a value or a (possibly async) factory. */
   options?:
     | (HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit)
     | (() => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>);
+  /** Client-level default context, merged under every endpoint's context; defaulted keys become optional at the call site. */
   context?: client_context;
+  /** Custom `fetch` implementation; defaults to the global `fetch`. */
   fetch?: CustomFetch;
 };
 
+/**
+ * Turn a (possibly nested) tree of {@link Endpoint} instances into a mirror-shaped object of
+ * typed fetch functions. Each function validates input, performs the request with retries, and
+ * returns a typed response envelope or an error instance (errors are returned, never thrown).
+ *
+ * @example
+ * const api = http_client(
+ *   { users: { get: get_user_endpoint } },
+ *   { base_url: "https://api.example.com" },
+ * );
+ * const result = await api.users.get({ params: { id: "1" } });
+ */
 export function http_client<
   const endpoints,
   const client_context extends ClientContextShape<endpoints> = {},
@@ -476,6 +507,15 @@ type AnyFetchEndpointFunction = AnyFactoryFn extends (input: infer input) => inf
   ? (input: input & { context: any }) => result
   : never;
 
+/**
+ * Type-level helpers that extract input and output types from an {@link Endpoint} instance or a
+ * bound fetch function. Use them to derive types for your own code (function signatures, variables,
+ * component props) from an endpoint definition instead of re-declaring them by hand, so the types
+ * stay in sync with the endpoint's schemas.
+ *
+ * @example
+ * function build_query(q: $infer.Query<typeof api.users.list>) { ... }
+ */
 export namespace $infer {
   type as_fetch_endpoint<endpoint> = endpoint extends AnyFetchEndpointFunction
     ? endpoint
@@ -513,23 +553,37 @@ export namespace $infer {
 
   type AnyEndpointInput = AnyFetchEndpointFunction | AnyEndpoint;
 
+  /** The endpoint's path-params argument type. Use it to type a value you pass as `params`. */
   export type Params<endpoint extends AnyEndpointInput> = infer_init<endpoint, "params">;
 
+  /** The endpoint's query argument type. Use it to type a value you pass as `query`. */
   export type Query<endpoint extends AnyEndpointInput> = infer_init<endpoint, "query">;
 
+  /** The endpoint's request-body argument type. Use it to type a value you pass as `body`. */
   export type Body<endpoint extends AnyEndpointInput> = infer_init<endpoint, "body">;
 
+  /** The endpoint's per-call `context` argument type (`never` when it declares no context). Use it to type context you pass in. */
   export type Context<endpoint extends AnyEndpointInput> = infer_init<endpoint, "context">;
 
+  /** The endpoint's full request argument (params + query + body + context + request init). Use it to accept a whole call payload in one parameter. */
   export type Input<endpoint extends AnyEndpointInput> = fetch_input<endpoint>;
 
+  /** Everything a call can resolve to: the response envelopes plus the transport error classes. Use it to type a variable holding an awaited call result before you narrow it. */
   export type Result<endpoint extends AnyEndpointInput> = fetch_output<endpoint>;
 
+  /** The HTTP response union only (successful | redirect | client error | server error), narrowable on `ok`/`status`. Use it when you have already excluded the transport errors and want just the HTTP outcomes. */
   export type Response<endpoint extends AnyEndpointInput> = Extract<
     fetch_output<endpoint>,
     { ok: boolean }
   >;
 
+  /**
+   * The success `data` type, optionally narrowed to a specific status or status class. Use it to
+   * type the payload you extract from a successful response.
+   *
+   * @example
+   * type Ok = $infer.Data<typeof api.users.get, 200>;
+   */
   export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
     fetch_output<endpoint> extends infer response
       ? response extends {
@@ -543,6 +597,13 @@ export namespace $infer {
         : never
       : never;
 
+  /**
+   * The error-response `error` type, optionally narrowed to a specific status or status class. Use
+   * it to type the payload you extract from a failed HTTP response.
+   *
+   * @example
+   * type NotFound = $infer.Error<typeof api.users.get, 404>;
+   */
   export type Error<endpoint extends AnyEndpointInput, status extends number = number> =
     fetch_output<endpoint> extends infer response
       ? response extends {
