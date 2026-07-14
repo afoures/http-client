@@ -98,23 +98,23 @@ client.get_user({
 });
 
 // negative: required `params` omitted
-// @ts-expect-error — `params` is required
+// @ts-expect-error: `params` is required
 client.get_user({ query: { include: "a", page: "1" } });
 
 // negative: required `query` omitted
-// @ts-expect-error — `query` is required
+// @ts-expect-error: `query` is required
 client.get_user({ params: { id: "1" } });
 
 // negative: GET input has no `body` key
 client.get_user({
   params: { id: "1" },
   query: { include: "a", page: "1" },
-  // @ts-expect-error — a GET endpoint's input does not accept `body`
+  // @ts-expect-error: a GET endpoint's input does not accept `body`
   body: { anything: true },
 });
 
 // negative: wrong body field type on a POST endpoint
-// @ts-expect-error — `name` must be a string
+// @ts-expect-error: `name` must be a string
 client.create_required({ body: { name: 123 } });
 
 // --- fetch output: transport errors + narrowable response envelope ---
@@ -165,7 +165,7 @@ assert_type<Equal<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>(
 
 // --- endpoints declared INLINE in the map keep their inferred generics ---
 // Regression guard: the `endpoints` option must not be constrained in a way that
-// contextually widens an inline `new Endpoint({...})` — doing so collapses every
+// contextually widens an inline `new Endpoint({...})`; doing so collapses every
 // schema to `Schema.Any` (losing `query`/`body` typing) and forces a spurious
 // required `params: any`. Defining endpoints by reference (above) hides this, so
 // these cases are intentionally inline.
@@ -217,8 +217,8 @@ assert_type<
 >();
 
 // negative: a parameterized inline route still requires `params`
-// @ts-expect-error — `params` is required
+// @ts-expect-error: `params` is required
 inline_client.get({});
 // negative: wrong inline body field type is still caught (not silently `any`)
-// @ts-expect-error — `name` must be a string
+// @ts-expect-error: `name` must be a string
 inline_client.create({ body: { name: 123 } });

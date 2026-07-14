@@ -87,9 +87,9 @@ if (result.ok && result.status === 200) {
 
 Each parser's `parse` controls how the raw body is read before validation:
 
-- `"json"` — parse the body as JSON (the default suggestion for object schemas).
-- `"text"` — read the body as text (the default suggestion for string schemas).
-- A function — custom deserialization from the raw `Response["body"]` stream.
+- `"json"`: parse the body as JSON (the default suggestion for object schemas).
+- `"text"`: read the body as text (the default suggestion for string schemas).
+- A function: custom deserialization from the raw `Response["body"]` stream.
 
 ```typescript
 const endpoint = new Endpoint({
@@ -137,10 +137,10 @@ Resolution order for an incoming status is: exact status, then the matching
 If no parser (specific or wildcard) covers a status, the body is still never
 lost:
 
-- **2xx** — `data` is `null` at runtime (typed as `void`).
-- **204 No Content** — always `data: null`, regardless of any parser.
-- **4xx / 5xx** — `error` is the raw response text (typed as `string`).
-- **3xx redirects** — never schema'd; you get `redirect_to` instead (see above).
+- **2xx**: `data` is `null` at runtime (typed as `void`).
+- **204 No Content**: always `data: null`, regardless of any parser.
+- **4xx / 5xx**: `error` is the raw response text (typed as `string`).
+- **3xx redirects**: never schema'd; you get `redirect_to` instead (see above).
 
 ```typescript
 const endpoint = new Endpoint({
@@ -153,7 +153,7 @@ if (result.ok && result.status === 204) {
   console.log(result.data); // null
 }
 if (!result.ok && result.status >= 400) {
-  console.log(typeof result.error); // "string" — raw text fallback
+  console.log(typeof result.error); // "string", raw text fallback
 }
 ```
 

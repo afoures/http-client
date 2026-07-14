@@ -93,7 +93,7 @@ http_client(
   { with_ctx, with_default, no_ctx },
   {
     base_url: "x",
-    // @ts-expect-error — `nope` is not a key of any endpoint's context
+    // @ts-expect-error: `nope` is not a key of any endpoint's context
     context: { nope: true },
   },
 );
@@ -101,7 +101,7 @@ http_client(
   { with_ctx, with_default, no_ctx },
   {
     base_url: "x",
-    // @ts-expect-error — `locale` must be a string
+    // @ts-expect-error: `locale` must be a string
     context: { locale: 123 },
   },
 );
@@ -110,9 +110,9 @@ http_client(
 
 // context required here (has a non-defaulted key `tz`)
 await api.with_ctx({ context: { tz: "UTC", locale: "en" } });
-// @ts-expect-error — `tz` is required (only `locale` is defaulted)
+// @ts-expect-error: `tz` is required (only `locale` is defaulted)
 await api.with_ctx({ context: { locale: "en" } });
-// @ts-expect-error — `context` itself is required
+// @ts-expect-error: `context` itself is required
 await api.with_ctx({});
 
 // every key defaulted => `context` is optional
@@ -121,5 +121,5 @@ await api.with_default({ context: { tz: "PST" } });
 
 // no context declared => passing one is rejected
 await api.no_ctx({});
-// @ts-expect-error — this endpoint declares no context
+// @ts-expect-error: this endpoint declares no context
 await api.no_ctx({ context: { anything: true } });

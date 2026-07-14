@@ -67,7 +67,7 @@ bench("$infer.Error", () => {
   return {} as $infer.Error<typeof client.getUser>;
 }).types([5716, "instantiations"]);
 
-// Baselines left empty intentionally — run `pnpm bench:infer` to populate them.
+// Baselines left empty intentionally; run `pnpm bench:infer` to populate them.
 bench("$infer.Input", () => {
   return {} as $infer.Input<typeof client.getUser>;
 }).types([2819, "instantiations"]);

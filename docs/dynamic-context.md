@@ -1,14 +1,14 @@
 # Dynamic Context
 
 Sometimes a schema (or a `serialize` / `parse` function) needs data that is **not** part of the
-request payload — a decryption key, the caller's timezone, a set of expected values fetched
+request payload: a decryption key, the caller's timezone, a set of expected values fetched
 elsewhere. `@afoures/http-client` lets you pass that data per call as **context**, and build schemas
 from it on the fly.
 
 Context is:
 
 - **Declared once** on the endpoint, so the type flows to every factory and to the call site.
-- **Out-of-band** — it is never serialized into the URL, query string, or body.
+- **Out-of-band**: it is never serialized into the URL, query string, or body.
 - **Optional to pass** for any key you provide a default for.
 
 ## Declaring context
@@ -34,7 +34,7 @@ const api = http_client({ report }, { base_url: "https://api.example.com" });
 const res = await api.report({ params: { id: "1" }, context: { tz: "UTC" } });
 ```
 
-Any slot can use a factory — `params`, `query`, `body`, and per-status `responses`:
+Any slot can use a factory: `params`, `query`, `body`, and per-status `responses`:
 
 ```typescript
 new Endpoint({
@@ -135,7 +135,7 @@ await api.report({ params: { id: "1" }, context: { tz: "PST" } }); // override a
 ## Errors
 
 If a factory (or a context-aware `serialize` / `parse`) throws, or the schema it builds fails
-validation, the call resolves to a returned error — never a throw:
+validation, the call resolves to a returned error, never a throw:
 
 - request side (`params` / `query` / `body`) → `SerializationError`
 - response side (`responses`) → `ParseError`

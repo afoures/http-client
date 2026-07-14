@@ -102,7 +102,7 @@ assert_type<Equal<$infer.Error<typeof client.wildcard, 503>, { fatal: string }>>
 
 // --- Result includes transport errors; Response excludes them but stays narrowable ---
 assignable<$infer.Result<typeof client.get_user>>(null as unknown as NetworkError);
-// @ts-expect-error — a transport error is not part of the `{ ok: boolean }` envelope union.
+// @ts-expect-error: a transport error is not part of the `{ ok: boolean }` envelope union.
 assignable<$infer.Response<typeof client.get_user>>(null as unknown as NetworkError);
 
 // Response keeps the envelope discriminants, so it stays narrowable.

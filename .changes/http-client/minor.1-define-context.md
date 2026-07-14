@@ -2,7 +2,7 @@
 
   Declare an endpoint's `context` type with `define_context<T>()` and pass a matching
   `context` object per call. Unlike `params`/`query`/`body`, context is never serialized into
-  the request — it is threaded into schema factories and into custom `serialize`/`parse`
+  the request; it is threaded into schema factories and into custom `serialize`/`parse`
   functions so those can adapt to per-call data (locale, timezone, feature flags, ...).
 
   ```typescript

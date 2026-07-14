@@ -91,14 +91,14 @@ const mixed = new Endpoint({
 new Endpoint({
   method: "GET",
   pathname: "/no-params",
-  // @ts-expect-error — params are not allowed on a route without dynamic segments
+  // @ts-expect-error: params are not allowed on a route without dynamic segments
   params: { schema: z.object({ id: z.string() }) },
 });
 
 new Endpoint({
   method: "GET",
   pathname: "/no-body",
-  // @ts-expect-error — a GET request cannot declare a body
+  // @ts-expect-error: a GET request cannot declare a body
   body: { schema: z.object({ name: z.string() }), serialize: "json" },
 });
 
@@ -142,13 +142,13 @@ assert_type<
 >();
 
 // negative: required params omitted
-// @ts-expect-error — `params` is required for a parameterized route
+// @ts-expect-error: `params` is required for a parameterized route
 get_user.generate_url({ base_url: "https://x", query: { include: "a", page: "1" } });
 
 // negative: wrong param key
 get_user.generate_url({
   base_url: "https://x",
-  // @ts-expect-error — `wrong` is not a declared param; `id` is missing
+  // @ts-expect-error: `wrong` is not a declared param; `id` is missing
   params: { wrong: "a" },
   query: { include: "a", page: "1" },
 });
@@ -158,7 +158,7 @@ get_user_optional.generate_url({ base_url: "https://x", params: { id: "1" } });
 get_user_optional.generate_url({ base_url: "https://x", params: { id: undefined } });
 get_user_optional.generate_url({
   base_url: "https://x",
-  // @ts-expect-error — an optional param is still string | number | undefined, not boolean
+  // @ts-expect-error: an optional param is still string | number | undefined, not boolean
   params: { id: true },
 });
 
@@ -178,7 +178,7 @@ assert_type<
 >();
 
 // negative: wrong body field type
-// @ts-expect-error — `name` must be a string
+// @ts-expect-error: `name` must be a string
 create_required.serialize_body({ body: { name: 123 } });
 
 // --- `parse_response` return narrowing ---

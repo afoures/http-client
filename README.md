@@ -4,7 +4,7 @@ A typesafe and robust HTTP client with schema validation.
 
 ## Why?
 
-**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Responses are typed _per status code_ — with `2xx`/`4xx`/`5xx` wildcard fallbacks — so a `200` body and a `404` body each carry their own type. Schema validation happens at runtime with full TypeScript inference.
+**Typesafe by design**: Path params, query strings, request bodies, and responses are all typed. Responses are typed _per status code_ (with `2xx`/`4xx`/`5xx` wildcard fallbacks), so a `200` body and a `404` body each carry their own type. Schema validation happens at runtime with full TypeScript inference.
 
 **Standard Schema compatible**: Works with Zod, ArkType, Valibot, or any schema library implementing the [Standard Schema spec](https://github.com/standard-schema/standard-schema).
 
