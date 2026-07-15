@@ -242,7 +242,7 @@ export class Endpoint<
     return this.#options;
   }
 
-  /** Endpoint-level default context, merged under any client-level and per-call context. */
+  /** Endpoint-level default context, merged over any client-level context and under any per-call context. */
   get context_default(): context_defaults {
     return this.#context_default;
   }

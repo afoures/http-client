@@ -373,34 +373,53 @@ export namespace Serializer {
   };
 
   /**
-   * Path-params serializer. `serialize` maps validated data to the pathname's params.
+   * Path-params serializer. `serialize` maps validated data to the pathname's params. It is
+   * optional when the schema output already matches those params, and required otherwise.
    *
    * @example
    * { schema: z.object({ id: z.number() }), serialize: (data) => ({ id: String(data.id) }) }
    */
   export type Params<pathname extends Pathname.Relative, schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
-    serialize?: (
-      data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-      context: NoInfer<context_type>,
-    ) => Pathname.Params<pathname>;
-  };
+  } & (schema extends Schema._<any, Pathname.Params<pathname>>
+    ? {
+        serialize?: (
+          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+          context: NoInfer<context_type>,
+        ) => Pathname.Params<pathname>;
+      }
+    : {
+        serialize: (
+          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+          context: NoInfer<context_type>,
+        ) => Pathname.Params<pathname>;
+      });
 
   /**
-   * Query-string serializer. `serialize` is `"urlencoded"` (default) or a function returning `URLSearchParams`.
+   * Query-string serializer. `serialize` is `"urlencoded"` (default) or a function returning
+   * `URLSearchParams`. A function is required when the schema output isn't urlencoded-compatible
+   * (`Record<string, string>`, `Array<[string, string]>`, or `undefined`).
    *
    * @example
    * { schema: z.object({ q: z.string() }), serialize: "urlencoded" }
    */
   export type QueryString<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
-    serialize?:
-      | "urlencoded"
-      | ((
+  } & (schema extends Schema._<any, Array<[string, string]> | Record<string, string> | undefined>
+    ? {
+        serialize?:
+          | "urlencoded"
+          | ((
+              data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
+              context: NoInfer<context_type>,
+            ) => URLSearchParams);
+      }
+    : {
+        serialize: (
           data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
           context: NoInfer<context_type>,
-        ) => URLSearchParams);
-  };
+        ) => URLSearchParams;
+      });
 
   /**
    * Request-body serializer. `serialize` is `"json"` or a function returning the encoded body and its content type.
@@ -431,7 +450,7 @@ export namespace Parser {
   };
 
   /**
-   * Response-body parser. `parse` is `"json"`, `"text"`, or a function reading the raw body stream.
+   * Response-body parser. `parse` is `"text"` for string schemas, `"json"` otherwise, or a function reading the raw body stream.
    *
    * @example
    * { schema: z.object({ id: z.string() }), parse: "json" }
@@ -439,8 +458,11 @@ export namespace Parser {
   export type ResponseBody<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
     parse:
-      | "json"
-      | "text"
+      | ([schema] extends [never]
+          ? "json" | "text"
+          : [schema] extends [Schema._<string, any>]
+            ? "text"
+            : "json")
       | ((
           body: Response["body"],
           context: NoInfer<context_type>,

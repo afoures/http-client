@@ -13,7 +13,6 @@
   }
   ```
 
-  As a consequence of supporting `(context) => schema` factories at these slots, `serialize`
-  is now always optional in the types and `parse` accepts both `"json"` and `"text"`
-  regardless of the schema's output type (the previous schema-driven narrowing that made
-  `serialize` required, or forced `"json"` vs `"text"`, is gone).
+  The schema-driven narrowing is preserved: `params`/`query` `serialize` stays required when the
+  schema output can't be encoded by the default, `body.serialize` stays required, and `parse`
+  still forces `"text"` for string schemas and `"json"` otherwise.

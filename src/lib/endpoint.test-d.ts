@@ -258,3 +258,105 @@ assert_type<
 // `method` carries the literal http method
 assert_type<Equal<typeof get_user.method, "GET">>();
 assert_type<Equal<typeof create_required.method, "POST">>();
+
+// --- schema-driven narrowing of `serialize` / `parse` (regression guards) ---
+
+// params: an output shape that matches the pathname params keeps `serialize` optional
+new Endpoint({
+  method: "GET",
+  pathname: "/users/:id",
+  params: { schema: z.object({ id: z.string() }) },
+});
+// params: an output shape that does NOT match the pathname params makes `serialize` required
+new Endpoint({
+  method: "GET",
+  pathname: "/users/:id",
+  // @ts-expect-error: output `{ userId }` can't fill `:id`, so `serialize` is required
+  params: { schema: z.object({ userId: z.number() }) },
+});
+// params: providing a `serialize` that maps to the pathname params compiles
+new Endpoint({
+  method: "GET",
+  pathname: "/users/:id",
+  params: {
+    schema: z.object({ userId: z.number() }),
+    serialize: (data) => ({ id: String(data.userId) }),
+  },
+});
+
+// query: a urlencoded-compatible output keeps `serialize` optional (defaults to "urlencoded")
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  query: { schema: z.object({ q: z.string() }) },
+});
+// query: an `Array<[string, string]>` output is also urlencoded-compatible, so `serialize` is optional
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  query: { schema: z.array(z.tuple([z.string(), z.string()])) },
+});
+// query: a loose `string[][]` output is NOT urlencoded-compatible (pairs aren't guaranteed)
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  // @ts-expect-error: `string[][]` isn't `Array<[string, string]>`, so `serialize` is required
+  query: { schema: z.array(z.array(z.string())) },
+});
+// query: a nested-object output makes `serialize` required and rejects "urlencoded"
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  // @ts-expect-error: nested output isn't urlencoded-compatible, so `serialize` is required
+  query: { schema: z.object({ filter: z.object({ min: z.number() }) }) },
+});
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  query: {
+    schema: z.object({ filter: z.object({ min: z.number() }) }),
+    // @ts-expect-error: "urlencoded" can't encode a nested object; a function is required
+    serialize: "urlencoded",
+  },
+});
+// query: a URLSearchParams-returning function compiles for a nested-object output
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  query: {
+    schema: z.object({ filter: z.object({ min: z.number() }) }),
+    serialize: (data) => new URLSearchParams({ min: String(data.filter.min) }),
+  },
+});
+
+// body: `serialize` is required
+new Endpoint({
+  method: "POST",
+  pathname: "/things",
+  // @ts-expect-error: `serialize` is required for a body
+  body: { schema: z.object({ name: z.string() }) },
+});
+
+// response: a string-input schema parses as "text", not "json"
+new Endpoint({
+  method: "GET",
+  pathname: "/text",
+  // @ts-expect-error: a string schema parses as "text", not "json"
+  responses: {
+    200: { schema: z.string(), parse: "json" },
+  },
+});
+new Endpoint({
+  method: "GET",
+  pathname: "/text",
+  responses: { 200: { schema: z.string(), parse: "text" } },
+});
+// response: an object-input schema parses as "json", not "text"
+new Endpoint({
+  method: "GET",
+  pathname: "/obj",
+  // @ts-expect-error: an object schema parses as "json", not "text"
+  responses: {
+    200: { schema: z.object({ id: z.string() }), parse: "text" },
+  },
+});

@@ -85,11 +85,12 @@ if (result.ok && result.status === 200) {
 
 ### Parse Modes
 
-Each parser's `parse` controls how the raw body is read before validation:
+Each parser's `parse` controls how the raw body is read before validation. `parse` is always
+required (there is no runtime default) and is narrowed by the schema:
 
-- `"json"`: parse the body as JSON (the default suggestion for object schemas).
-- `"text"`: read the body as text (the default suggestion for string schemas).
-- A function: custom deserialization from the raw `Response["body"]` stream.
+- `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema.
+- `"text"`: read the body as text. Required/allowed for string-input schemas; the compiler rejects `"text"` on an object schema.
+- A function: custom deserialization from the raw `Response["body"]` stream, allowed for any schema.
 
 ```typescript
 const endpoint = new Endpoint({

@@ -63,6 +63,8 @@ const url = await endpoint.generate_url({
 // https://api.example.com/users/user-123
 ```
 
+`serialize` is optional when the schema output already matches the pathname's params (the keys the route declares, with `string`/`number` values). When the output shape differs (renamed keys, non-string values), `serialize` is **required** and the compiler enforces it.
+
 ## Query
 
 Query parameters are serialized into the URL search string.
@@ -112,6 +114,8 @@ const url = await endpoint.generate_url({
 });
 // https://api.example.com/users?tags=admin,active
 ```
+
+`serialize` is optional (defaulting to `"urlencoded"`) only when the schema output is a shape `URLSearchParams` accepts: `Record<string, string>`, `Array<[string, string]>`, or `undefined`. For anything richer (nested objects, or arrays that aren't key/value pairs) `serialize` is **required** and `"urlencoded"` is no longer offered, since it would stringify nested values into `[object Object]`.
 
 ## Body
 
