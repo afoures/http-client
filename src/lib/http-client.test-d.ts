@@ -3,7 +3,7 @@
 import { http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import { NetworkError, ParseError, TimeoutError } from "./errors.ts";
-import type { Schema } from "./types.ts";
+import type { RetryPolicy, Schema } from "./types.ts";
 import z from "zod";
 
 type Equal<left, right> =
@@ -116,6 +116,47 @@ client.get_user({
 // negative: wrong body field type on a POST endpoint
 // @ts-expect-error: `name` must be a string
 client.create_required({ body: { name: 123 } });
+
+// --- retry recover ---
+
+// the recover context carries request/response/error/attempt plus a `current.headers` copy
+type RecoverContext = Parameters<RetryPolicy.Recover>[0];
+assert_type<Equal<RecoverContext["attempt"], number>>();
+assert_type<Equal<RecoverContext["current"], { headers: Headers }>>();
+
+// overrides are headers-only for now
+assert_type<Equal<keyof RetryPolicy.Overrides, "headers">>();
+
+// positive: recover may return overrides, a Promise of overrides, or nothing
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  retry: {
+    when: ({ response }) => response?.status === 401,
+    recover: async ({ current }) => ({ headers: new Headers(current.headers) }),
+  },
+});
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  retry: { recover: () => undefined },
+});
+
+// negative: recover overrides accept only `headers`
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  // @ts-expect-error: recover overrides only accept `headers`
+  retry: { recover: () => ({ body: { anything: true } }) },
+});
+
+// negative: `headers` must be a valid HeadersInit
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  // @ts-expect-error: `headers` must be a valid HeadersInit
+  retry: { recover: () => ({ headers: 123 }) },
+});
 
 // --- fetch output: transport errors + narrowable response envelope ---
 

@@ -166,6 +166,8 @@ export function fetch_endpoint_factory<
       options,
     );
 
+    let request_headers = headers;
+
     const url = await endpoint
       .generate_url(
         {
@@ -221,14 +223,15 @@ export function fetch_endpoint_factory<
       );
     if (serialized instanceof Error) return serialized;
 
-    headers.delete("Content-Type");
-    if (serialized.content_type) headers.set("Content-Type", serialized.content_type);
+    request_headers.delete("Content-Type");
+    if (serialized.content_type) request_headers.set("Content-Type", serialized.content_type);
 
-    const retry_policy: Required<RetryPolicy.Configuration> = {
+    const retry_policy = {
       when: merged_options.retry?.when ?? ((ctx) => ctx.response?.ok === false),
       attempts: merged_options.retry?.attempts ?? 0,
       delay: merged_options.retry?.delay ?? 0,
-    };
+      recover: merged_options.retry?.recover,
+    } satisfies RetryPolicy.Configuration;
 
     let attempt = 0;
     let request: Request;
@@ -247,7 +250,7 @@ export function fetch_endpoint_factory<
           ...remove_custom_options(merged_options),
           method: endpoint.method,
           body: serialized.body,
-          headers,
+          headers: request_headers,
           signal: abort_signal,
         });
       } catch (local_error) {
@@ -360,6 +363,38 @@ export function fetch_endpoint_factory<
           },
         });
         break;
+      }
+
+      if (retry_policy.recover) {
+        let overrides: RetryPolicy.Overrides | void;
+        try {
+          overrides = await retry_policy.recover({
+            request,
+            response,
+            error,
+            attempt,
+            current: { headers: new Headers(request_headers) },
+          });
+        } catch (local_error) {
+          error = new UnexpectedError("Failed to recover request", {
+            cause: local_error,
+            operation: "recover",
+            request: {
+              url: url instanceof URL ? url.toString() : base_url,
+              method: endpoint.method,
+              timeout: merged_options.timeout,
+              baseUrl: base_url,
+            },
+            timing: { startTime: start_time, attempt },
+          });
+          break;
+        }
+
+        if (overrides && "headers" in overrides) {
+          request_headers = new Headers(overrides.headers);
+          request_headers.delete("Content-Type");
+          if (serialized.content_type) request_headers.set("Content-Type", serialized.content_type);
+        }
       }
       // oxlint-disable-next-line no-constant-condition
     } while (true);

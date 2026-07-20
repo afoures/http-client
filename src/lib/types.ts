@@ -132,6 +132,28 @@ export namespace RetryPolicy {
         attempt: number;
       }) => MaybePromise<number>);
 
+  /** Request field overrides applied before the next retry attempt (returned by {@link Recover}). */
+  export type Overrides = {
+    /** Replacement headers for the next attempt (replaces the current set; omit to keep them). */
+    headers?: HeadersInit;
+  };
+
+  /**
+   * Runs once a retry has been decided (the `when` condition passed and attempts remain), after any
+   * delay and immediately before the next attempt. Returns request overrides to apply, or
+   * `undefined` / `void` to leave the request unchanged. Returned fields replace the current ones
+   * wholesale (no merge); omitted fields are kept. Use it to refresh an expired auth token or
+   * recompute a per-attempt signature header. `current.headers` is a copy of the current header set
+   * (mutating it has no effect), convenient as a starting point for a replacement.
+   */
+  export type Recover = (context: {
+    request: Request;
+    response: Response | undefined;
+    error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+    attempt: number;
+    current: { headers: Headers };
+  }) => MaybePromise<Overrides | void>;
+
   /** Retry configuration passed as the `retry` request option. */
   export type Configuration = {
     /** Maximum number of attempts before giving up. */
@@ -140,6 +162,8 @@ export namespace RetryPolicy {
     delay?: Delay;
     /** Predicate deciding whether to retry an attempt. */
     when?: Condition;
+    /** Override request headers before the next attempt (e.g. refresh an expired auth token). */
+    recover?: Recover;
   };
 }
 

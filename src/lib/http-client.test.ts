@@ -435,6 +435,371 @@ describe("fetch_endpoint_factory", () => {
     assert.deepEqual(delays, [1, 2]);
   });
 
+  test("retry recover - refreshes auth header before retry", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+
+    const seen_auth: Array<string | null> = [];
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
+        seen_auth.push(request.headers.get("authorization"));
+        if (seen_auth.length === 1) {
+          return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
+        }
+        return HttpResponse.json({ success: true });
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({
+      headers: { authorization: "Bearer stale" },
+      retry: {
+        attempts: 2,
+        delay: 0,
+        when: ({ response }) => response?.status === 401,
+        recover: async () => ({ headers: { authorization: "Bearer fresh" } }),
+      },
+    });
+
+    assert.ok(!(result instanceof Error));
+    assert.deepEqual(seen_auth, ["Bearer stale", "Bearer fresh"]);
+  });
+
+  test("retry recover - returning nothing leaves headers unchanged", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+
+    const seen_auth: Array<string | null> = [];
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
+        seen_auth.push(request.headers.get("authorization"));
+        if (seen_auth.length < 2) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({
+      headers: { authorization: "Bearer keep" },
+      retry: {
+        attempts: 2,
+        delay: 0,
+        when: (ctx) => !!ctx.error,
+        recover: () => undefined,
+      },
+    });
+
+    assert.ok(!(result instanceof Error));
+    assert.deepEqual(seen_auth, ["Bearer keep", "Bearer keep"]);
+  });
+
+  test("retry recover - not called when no retry happens", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+
+    let recover_calls = 0;
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        return HttpResponse.json({ success: true });
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        attempts: 3,
+        delay: 0,
+        when: () => false,
+        recover: () => {
+          recover_calls++;
+          return undefined;
+        },
+      },
+    });
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(recover_calls, 0);
+  });
+
+  test("retry recover - runs after the delay", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+
+    const events: string[] = [];
+    let attemptCount = 0;
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        attemptCount++;
+        if (attemptCount < 2) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      retry: {
+        attempts: 2,
+        delay: () => {
+          events.push("delay");
+          return 0;
+        },
+        when: (ctx) => !!ctx.error,
+        recover: () => {
+          events.push("recover");
+          return undefined;
+        },
+      },
+    });
+
+    assert.deepEqual(events, ["delay", "recover"]);
+  });
+
+  test("retry recover - throwing surfaces as UnexpectedError", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+    });
+
+    let attemptCount = 0;
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, () => {
+        attemptCount++;
+        return HttpResponse.error();
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        attempts: 3,
+        delay: 0,
+        when: (ctx) => !!ctx.error,
+        recover: () => {
+          throw new Error("token endpoint down");
+        },
+      },
+    });
+
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "recover");
+    assert.equal(attemptCount, 1);
+  });
+
+  test("retry recover - replace drops headers not returned", async () => {
+    const endpoint = new Endpoint(
+      {
+        method: "GET",
+        pathname: "/users",
+      },
+      {
+        headers: { "x-default": "default-value" },
+      },
+    );
+
+    const seen_default: Array<string | null> = [];
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
+        seen_default.push(request.headers.get("x-default"));
+        if (seen_default.length < 2) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      retry: {
+        attempts: 2,
+        delay: 0,
+        when: (ctx) => !!ctx.error,
+        recover: () => ({ headers: { "x-other": "value" } }),
+      },
+    });
+
+    assert.deepEqual(seen_default, ["default-value", null]);
+  });
+
+  test("retry recover - keeps other headers via current.headers copy", async () => {
+    const endpoint = new Endpoint(
+      {
+        method: "GET",
+        pathname: "/users",
+      },
+      {
+        headers: { "x-default": "default-value" },
+      },
+    );
+
+    const requests: Array<{ auth: string | null; def: string | null }> = [];
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
+        requests.push({
+          auth: request.headers.get("authorization"),
+          def: request.headers.get("x-default"),
+        });
+        if (requests.length < 2) {
+          return HttpResponse.json({}, { status: 401 });
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      retry: {
+        attempts: 2,
+        delay: 0,
+        when: ({ response }) => response?.status === 401,
+        recover: ({ current }) => {
+          const headers = new Headers(current.headers);
+          headers.set("authorization", "Bearer fresh");
+          return { headers };
+        },
+      },
+    });
+
+    assert.deepEqual(requests, [
+      { auth: null, def: "default-value" },
+      { auth: "Bearer fresh", def: "default-value" },
+    ]);
+  });
+
+  test("retry recover - preserves serializer Content-Type after replace", async () => {
+    const endpoint = new Endpoint({
+      method: "POST",
+      pathname: "/users",
+      body: { schema: z.object({ name: z.string() }), serialize: "json" },
+    });
+
+    const seen_content_type: Array<string | null> = [];
+
+    server.use(
+      http.post(`${API_BASE_URL}/users`, ({ request }) => {
+        seen_content_type.push(request.headers.get("content-type"));
+        if (seen_content_type.length < 2) {
+          return HttpResponse.json({}, { status: 401 });
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      body: { name: "Ada" },
+      retry: {
+        attempts: 2,
+        delay: 0,
+        when: ({ response }) => response?.status === 401,
+        recover: () => ({ headers: { authorization: "Bearer fresh" } }),
+      },
+    });
+
+    assert.deepEqual(seen_content_type, ["application/json", "application/json"]);
+  });
+
+  test("retry recover - per-call recover replaces endpoint-level recover", async () => {
+    const endpoint = new Endpoint(
+      {
+        method: "GET",
+        pathname: "/users",
+      },
+      {
+        retry: {
+          attempts: 2,
+          delay: 0,
+          when: ({ response }) => response?.status === 401,
+          recover: () => ({ headers: { authorization: "Bearer endpoint" } }),
+        },
+      },
+    );
+
+    const seen_auth: Array<string | null> = [];
+
+    server.use(
+      http.get(`${API_BASE_URL}/users`, ({ request }) => {
+        seen_auth.push(request.headers.get("authorization"));
+        if (seen_auth.length < 2) {
+          return HttpResponse.json({}, { status: 401 });
+        }
+        return HttpResponse.json({});
+      }),
+    );
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: fetch,
+    });
+
+    await fetch_endpoint({
+      retry: {
+        recover: () => ({ headers: { authorization: "Bearer call" } }),
+      },
+    });
+
+    assert.deepEqual(seen_auth, [null, "Bearer call"]);
+  });
+
   test("URL generation error handling", async () => {
     const endpoint = new Endpoint({
       method: "GET",

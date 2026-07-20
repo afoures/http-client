@@ -20,6 +20,13 @@ type RetryPolicy = {
     response?: Response;
     error?: Error;
   }) => boolean | Promise<boolean>;
+  recover?: (ctx: {
+    request: Request;
+    response?: Response;
+    error?: Error;
+    attempt: number;
+    current: { headers: Headers };
+  }) => { headers?: HeadersInit } | void | Promise<{ headers?: HeadersInit } | void>;
 };
 ```
 
@@ -138,6 +145,60 @@ retry: {
   },
 }
 ```
+
+## Recovery
+
+Use `recover` to rewrite the request between attempts, for example to refresh an expired auth token or recompute a per-attempt signature header. It runs once a retry has been decided (after `when` passes and while attempts remain), after any `delay`, and immediately before the next attempt:
+
+```typescript
+const result = await api.users.get({
+  params: { id: "123" },
+  headers: { authorization: "Bearer stale" },
+  retry: {
+    attempts: 2,
+    when: ({ response }) => response?.status === 401,
+    recover: async () => ({
+      headers: { authorization: `Bearer ${await refresh_token()}` },
+    }),
+  },
+});
+```
+
+### Scope and replace semantics
+
+Only `headers` can be overridden. Returned fields **replace** the current ones wholesale (there is no merge), and omitted fields are kept unchanged. Returning `undefined` (or nothing) leaves the request as-is.
+
+Because it is a replace, to keep the existing headers and change only one, start from the copy passed in as `current.headers`:
+
+```typescript
+recover: async ({ current }) => {
+  const headers = new Headers(current.headers);
+  headers.set("authorization", `Bearer ${await refresh_token()}`);
+  return { headers };
+},
+```
+
+`current.headers` is a copy, so mutating it in place has no effect; the next attempt uses only what you return.
+
+The body serializer still owns `Content-Type`: it is re-applied after your header replacement, so you cannot change it through `recover`.
+
+### Context
+
+`recover` receives the just-completed attempt's `request`, its `response`/`error`, the 1-indexed `attempt` count, and `current.headers`:
+
+```typescript
+recover: ({ response, attempt, current }) => {
+  const headers = new Headers(current.headers);
+  headers.set("x-signature", sign({ attempt, nonce: response?.headers.get("x-nonce") }));
+  return { headers };
+},
+```
+
+If `recover` throws, the request fails with an `UnexpectedError` (`context.operation === "recover"`) and no further attempt is made.
+
+### Layering
+
+Like `when`, `delay`, and `attempts`, `recover` is resolved per key across client, endpoint, and per-call options: the most specific layer that defines it wins wholesale (per-call over endpoint over client). Recover functions do not chain or compose across layers.
 
 ## Default Behavior
 
