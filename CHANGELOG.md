@@ -2,6 +2,172 @@
 
 This is the changelog for `http-client`.
 
+## 0.6.0
+
+### Breaking Changes
+
+- Restructure the `http_client` signature and rename `HttpClientOptions` to `HttpClientConfig`.
+
+  `http_client` now takes the endpoint map as its first positional argument and the client
+  configuration (`base_url`, `options`, `context`, `fetch`) as a second argument. The single
+  options object with an `endpoints` field is gone.
+
+  ```typescript
+  // Before
+  const api = http_client({
+    base_url: "https://api.example.com",
+    endpoints: { users: new Endpoint({ method: "GET", pathname: "/users" }) },
+  });
+
+  // After
+  const api = http_client(
+    { users: new Endpoint({ method: "GET", pathname: "/users" }) },
+    { base_url: "https://api.example.com" },
+  );
+  ```
+
+  The exported `HttpClientOptions` type is renamed to `HttpClientConfig`; update any imports.
+
+### Features
+
+- Add out-of-band request `context` via `define_context`.
+
+  Declare an endpoint's `context` type with `define_context<T>()` and pass a matching
+  `context` object per call. Unlike `params`/`query`/`body`, context is never serialized into
+  the request; it is threaded into schema factories and into custom `serialize`/`parse`
+  functions so those can adapt to per-call data (locale, timezone, feature flags, ...).
+
+  ```typescript
+  import { Endpoint, define_context } from "@afoures/http-client";
+
+  const get_user = new Endpoint({
+    method: "GET",
+    pathname: "/users/:id",
+    context: define_context<{ locale: string }>(),
+    responses: { 200: { schema: (ctx) => user_schema(ctx.locale), parse: "json" } },
+  });
+
+  await api.get_user({ params: { id: "1" }, context: { locale: "en" } });
+  ```
+
+  The declared type is the single source of truth: `context` is required at the call site
+  unless every key is supplied by a default, and endpoints that declare no context have no
+  `context` field at all.
+
+- Allow a slot's `schema` to be a factory of the per-call context.
+
+  `params`, `query`, `body`, and each `responses` entry now accept either a schema or a
+  `(context) => schema` function, so the schema used to validate a request or response can
+  depend on the per-call context.
+
+  ```typescript
+  new Endpoint({
+    method: "POST",
+    pathname: "/items",
+    context: define_context<{ max_len: number }>(),
+    body: {
+      schema: (ctx) => z.object({ name: z.string().max(ctx.max_len) }),
+      serialize: "json",
+    },
+  });
+  ```
+
+- Pass the per-call context to custom `serialize` and `parse` functions.
+
+  Custom `serialize` (params/query/body) and `parse` (responses) functions now receive the
+  resolved context as a second argument, alongside the validated data/body.
+
+  ```typescript
+  body: {
+    schema: my_schema,
+    serialize: (data, ctx) => ({
+      body: encode(data, ctx.key),
+      content_type: "application/octet-stream",
+    }),
+  }
+  ```
+
+  The schema-driven narrowing is preserved: `params`/`query` `serialize` stays required when the
+  schema output can't be encoded by the default, `body.serialize` stays required, and `parse`
+  still forces `"text"` for string schemas and `"json"` otherwise.
+
+- Add endpoint-level context defaults via `.with_defaults(...)`.
+
+  Chain `.with_defaults({ ... })` on `define_context` to supply default values for some
+  context keys. Any defaulted key becomes optional at the call site; if every key has a
+  default, the `context` argument itself becomes optional.
+
+  ```typescript
+  context: (define_context<{ tz: string; locale: string }>().with_defaults({ tz: "UTC" }),
+    // caller may now omit `tz`
+    await api.get_user({ params: { id: "1" }, context: { locale: "en" } }));
+  ```
+
+  Context layers merge in order (later wins): client-level → endpoint defaults → per-call.
+  `undefined` values are skipped, so a partial per-call context never clobbers a default.
+
+- Add a client-level default `context` on `http_client`.
+
+  The client config accepts a `context` object shared by every endpoint. It fills matching
+  keys for any endpoint whose context type declares them, making those keys optional at the
+  call site.
+
+  ```typescript
+  const api = http_client(endpoints, {
+    base_url: "https://api.example.com",
+    context: { locale: "en" },
+  });
+  ```
+
+  The `context` option is typed as the merged shape of every endpoint's declared context, so
+  the editor proposes valid keys and rejects unknown or mistyped ones.
+
+- Add `$infer.Context` to extract an endpoint's per-call context type.
+
+  Like the other `$infer.*` helpers it accepts either an `Endpoint` instance or a bound fetch
+  function, and resolves to the `context` argument type (never present when the endpoint
+  declares no context).
+
+  ```typescript
+  type Ctx = $infer.Context<typeof api.get_user>;
+  ```
+
+- Allow `options` in the client config to be a static object.
+
+  The `options` client config field previously required a (sync or async) factory function.
+  It now also accepts a plain object for the common case of fixed default request options.
+
+  ```typescript
+  http_client(endpoints, {
+    base_url: "https://api.example.com",
+    options: { headers: { "x-app": "web" } },
+  });
+  ```
+
+- Add a `recover` step to the retry policy for rewriting requests between attempts.
+
+  The retry policy now accepts a `recover` callback that overrides request headers before the
+  next attempt, for example to refresh an expired auth token or recompute a per-attempt
+  signature. It runs once a retry has been decided (after `when` passes and while attempts
+  remain), after any `delay`, and immediately before the next attempt. Returned headers replace
+  the current set (no merge); `current.headers` is passed as a copy to start from. Available at
+  the client, endpoint, and per-call layers with the same last-wins resolution as the other
+  retry keys.
+
+  ```typescript
+  const result = await api.users.get({
+    params: { id: "123" },
+    headers: { authorization: "Bearer stale" },
+    retry: {
+      attempts: 2,
+      when: ({ response }) => response?.status === 401,
+      recover: async () => ({
+        headers: { authorization: `Bearer ${await refresh_token()}` },
+      }),
+    },
+  });
+  ```
+
 ## 0.5.1
 
 ### Bug Fixes
