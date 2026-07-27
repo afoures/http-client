@@ -17,7 +17,7 @@ export {
 export {
   http_client,
   type HttpClientConfig,
-  type EndpointMap,
+  type ClientContext,
   type $infer,
 } from "./lib/http-client.ts";
 export {

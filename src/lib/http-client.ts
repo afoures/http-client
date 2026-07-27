@@ -19,7 +19,7 @@ import {
 } from "./utils.ts";
 
 /** A possibly-nested tree of {@link Endpoint} instances, keyed by name, accepted by {@link http_client}. */
-export interface EndpointMap {
+interface EndpointMap {
   [name: string]: AnyEndpoint | EndpointMap;
 }
 
@@ -38,7 +38,7 @@ type Hooks = {
   on_response?: (response: Response) => void;
 };
 
-type map_to_fetch_endpoint_functions<endpoints, client_context = {}> = Pretty<{
+type map_to_fetch_endpoint_functions<endpoints, default_context = {}> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
     infer pathname,
@@ -59,11 +59,11 @@ type map_to_fetch_endpoint_functions<endpoints, client_context = {}> = Pretty<{
           responses,
           context_type,
           context_defaults,
-          client_context
+          default_context
         >
       >
     : endpoints[name] extends EndpointMap
-      ? map_to_fetch_endpoint_functions<endpoints[name], client_context>
+      ? map_to_fetch_endpoint_functions<endpoints[name], default_context>
       : never;
 }>;
 
@@ -88,7 +88,20 @@ type ContextUnion<endpoints> = {
 
 type ContextKeys<union> = union extends unknown ? keyof union : never;
 
-type ClientContextShape<endpoints> = {
+/**
+ * The shape accepted by the client-level `context` of {@link HttpClientConfig}: the merged context
+ * of every endpoint in the tree, with all keys optional. Use it to constrain a wrapper's own
+ * context type parameter.
+ *
+ * @example
+ * const endpoints = { users: { get: get_user_endpoint } };
+ * function create_client<const default_context extends ClientContext<typeof endpoints>>(
+ *   config: HttpClientConfig<typeof endpoints, default_context>,
+ * ) {
+ *   return http_client(endpoints, config);
+ * }
+ */
+export type ClientContext<endpoints> = {
   [key in ContextKeys<ContextUnion<endpoints>>]?: ContextUnion<endpoints> extends infer member
     ? member extends unknown
       ? key extends keyof member
@@ -107,7 +120,7 @@ export function fetch_endpoint_factory<
   responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
   context_type = unknown,
   context_defaults = {},
-  client_context = {},
+  default_context = {},
 >({
   base_url,
   endpoint,
@@ -131,14 +144,14 @@ export function fetch_endpoint_factory<
   get_default_options?: () => MaybePromise<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
   >;
-  client_context?: client_context;
+  client_context?: default_context;
   hooks?: Hooks;
 }) {
   async function fetch_endpoint(
     input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
       HTTPFetch.TypedQueryInit<query_schema> &
       HTTPFetch.TypedBodyInit<body_schema> &
-      HTTPFetch.TypedContextInit<context_type, keyof context_defaults | keyof client_context> &
+      HTTPFetch.TypedContextInit<context_type, keyof context_defaults | keyof default_context> &
       HTTPFetch.OptionalRequestInit &
       HTTPFetch.DefaultRequestInit,
   ) {
@@ -462,8 +475,27 @@ export function fetch_endpoint_factory<
   return fetch_endpoint;
 }
 
-/** Configuration for {@link http_client}. */
-export type HttpClientConfig<client_context = {}> = {
+/**
+ * Configuration for {@link http_client}, parameterized by the endpoint tree it is used with so the
+ * client-level `context` is derived from the endpoints instead of being spelled out by hand.
+ *
+ * @example
+ * // annotate a wrapper's config (every context key stays optional at the call site)
+ * const endpoints = { users: { get: get_user_endpoint } };
+ * export type MyClientConfig = HttpClientConfig<typeof endpoints>;
+ *
+ * @example
+ * // keep track of which defaults were actually provided by threading `default_context`
+ * function create_client<const default_context extends ClientContext<typeof endpoints>>(
+ *   config: HttpClientConfig<typeof endpoints, default_context>,
+ * ) {
+ *   return http_client(endpoints, config);
+ * }
+ */
+export type HttpClientConfig<
+  endpoints = {},
+  default_context extends ClientContext<endpoints> = ClientContext<endpoints>,
+> = {
   /**
    * Base URL every endpoint's pathname is resolved against, following standard `URL` resolution.
    * To keep a path prefix, the base must end with a trailing slash, otherwise its last segment is
@@ -484,7 +516,7 @@ export type HttpClientConfig<client_context = {}> = {
     | (HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit)
     | (() => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>);
   /** Client-level default context, merged under every endpoint's context; defaulted keys become optional at the call site. */
-  context?: client_context;
+  context?: default_context;
   /** Custom `fetch` implementation; defaults to the global `fetch`. */
   fetch?: CustomFetch;
 };
@@ -503,11 +535,16 @@ export type HttpClientConfig<client_context = {}> = {
  */
 export function http_client<
   const endpoints,
-  const client_context extends ClientContextShape<endpoints> = {},
+  const default_context extends ClientContext<endpoints> = {},
 >(
   all_endpoints: ValidateEndpointMap<endpoints>,
-  { base_url, options, context, fetch: custom_fetch = fetch }: HttpClientConfig<client_context>,
-): map_to_fetch_endpoint_functions<endpoints, client_context> {
+  {
+    base_url,
+    options,
+    context,
+    fetch: custom_fetch = fetch,
+  }: HttpClientConfig<endpoints, default_context>,
+): map_to_fetch_endpoint_functions<endpoints, default_context> {
   function map(endpoints: EndpointMap): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {
@@ -530,7 +567,7 @@ export function http_client<
 
   return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<
     endpoints,
-    client_context
+    default_context
   >;
 }
 

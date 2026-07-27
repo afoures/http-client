@@ -1,6 +1,11 @@
 // Compile-time type tests for context-driven (dynamic) schemas.
 // Not executed at runtime (does not match the `*.test.ts` glob); validated by `pnpm typecheck`.
-import { http_client, type $infer } from "./http-client.ts";
+import {
+  http_client,
+  type $infer,
+  type ClientContext,
+  type HttpClientConfig,
+} from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import { define_context } from "./endpoint.ts";
 import z from "zod";
@@ -123,3 +128,43 @@ await api.with_default({ context: { tz: "PST" } });
 await api.no_ctx({});
 // @ts-expect-error: this endpoint declares no context
 await api.no_ctx({ context: { anything: true } });
+
+// --- `HttpClientConfig` derives its `context` from the endpoint tree ---
+
+const endpoints = { nested: { with_ctx, with_default, no_ctx } };
+
+assert_type<Equal<ClientContext<typeof endpoints>, { tz?: string; locale?: string }>>();
+assert_type<
+  Equal<HttpClientConfig<typeof endpoints>["context"], { tz?: string; locale?: string } | undefined>
+>();
+
+// a wrapper can annotate its config without restating the context shape
+type WrapperConfig = HttpClientConfig<typeof endpoints>;
+
+function create_client(config: WrapperConfig) {
+  return http_client(endpoints, config);
+}
+
+create_client({ base_url: "x", context: { tz: "UTC" } });
+// @ts-expect-error: `nope` is not a key of any endpoint's context
+create_client({ base_url: "x", context: { nope: true } });
+
+// the config type alone cannot tell which defaults were passed, so every context key is optional
+const loose = create_client({ base_url: "x" });
+await loose.nested.with_ctx({});
+
+// threading `default_context` through keeps track of the defaults actually provided
+function create_precise_client<const default_context extends ClientContext<typeof endpoints> = {}>(
+  config: HttpClientConfig<typeof endpoints, default_context>,
+) {
+  return http_client(endpoints, config);
+}
+
+const precise = create_precise_client({ base_url: "x", context: { locale: "en" } });
+await precise.nested.with_ctx({ context: { tz: "UTC" } });
+// @ts-expect-error: only `locale` is defaulted, `tz` is still required
+await precise.nested.with_ctx({});
+
+const without_defaults = create_precise_client({ base_url: "x" });
+// @ts-expect-error: no client-level default, so the whole declared context is required
+await without_defaults.nested.with_default({});

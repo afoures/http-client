@@ -103,6 +103,36 @@ Context is merged in this order (later overrides earlier):
 2. Endpoint-level defaults (`define_context<T>().with_defaults({ ... })`)
 3. Per-request `context`
 
+## Wrapping the Client
+
+To expose your own factory, annotate its config with `HttpClientConfig<typeof endpoints>`: the
+`context` shape is derived from the endpoint tree, so there is nothing to restate by hand.
+
+```typescript
+const endpoints = { rooms };
+
+export type MyClientConfig = HttpClientConfig<typeof endpoints>;
+
+export function create_my_client(config: MyClientConfig) {
+  return http_client(endpoints, config);
+}
+```
+
+A plain annotation cannot tell which client-level defaults a caller actually passed, so every
+context key is treated as defaulted (optional at the call site). To keep that precision, thread the
+context through a second type parameter, constrained with `ClientContext`:
+
+```typescript
+export function create_my_client<
+  const default_context extends ClientContext<typeof endpoints> = {},
+>(config: HttpClientConfig<typeof endpoints, default_context>) {
+  return http_client(endpoints, config);
+}
+
+const api = create_my_client({ base_url: "https://api.example.com", context: { locale: "en" } });
+// `locale` is optional at the call site, keys the caller did not default stay required
+```
+
 ## Custom Fetch
 
 Provide a custom fetch function for proxying, logging, or modifying requests:
