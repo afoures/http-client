@@ -21,7 +21,7 @@ Base class for all HTTP client errors:
 
 ```typescript
 if (error instanceof HttpClientError) {
-  console.log(error.name); // "HttpClientError"
+  console.log(error.kind); // "HttpClientError"
   console.log(error.message); // Error message
   console.log(error.context); // { operation: string }
 }
@@ -106,14 +106,72 @@ Unexpected failure during request:
 const result = await api.users.get({ params: { id: "123" } });
 
 if (result instanceof UnexpectedError) {
-  console.log(result.name); // "UnexpectedError"
+  console.log(result.kind); // "UnexpectedError"
   console.log(result.context.operation); // "create_request" | "parse_response" | etc.
 }
 ```
 
 ## Checking Results
 
+A call resolves to one of four response envelopes or one of seven error instances. There are two
+ways to tell them apart.
+
+### Kind Check
+
+Every arm, response and error alike, carries a `kind` literal, so the whole union narrows in one flat
+`switch` with no `instanceof` and no value import:
+
+```typescript
+const result = await api.users.get({ params: { id: "123" } });
+
+switch (result.kind) {
+  case "SuccessfulResponse":
+    console.log(result.data);
+    break;
+  case "RedirectMessage":
+    // rare under the default `redirect: "follow"`, see Response Parsing
+    console.warn("unexpected redirect to", result.redirect_to);
+    break;
+  case "ClientErrorResponse":
+  case "ServerErrorResponse":
+    show(result.error);
+    break;
+  case "TimeoutError":
+  case "NetworkError":
+    retry();
+    break;
+  case "AbortedError":
+    break;
+  case "SerializationError":
+  case "ParseError":
+  case "UnexpectedError":
+    report(result.context);
+    break;
+}
+```
+
+Add a `default` branch calling a `(value: never) => never` helper and the compiler will tell you when
+an arm is unhandled.
+
+Prefer `kind` when the value may have been spread, cloned or serialized, or when two copies of this
+package could end up installed. All of those break `instanceof` and leave `kind` intact.
+
+Each `kind` is the name of the type or class it identifies, so the value tells you exactly what to
+look up:
+
+- Responses, exported as `HTTPFetch.ResponseKind`: `"SuccessfulResponse"`, `"RedirectMessage"`,
+  `"ClientErrorResponse"`, `"ServerErrorResponse"`.
+- Errors, exported as `ErrorKind`: `"HttpClientError"`, `"TimeoutError"`, `"AbortedError"`,
+  `"SerializationError"`, `"ParseError"`, `"NetworkError"`, `"UnexpectedError"`.
+
+For the error classes this matches `name`, which carries the same string. The difference is that
+`name` is typed as `string` by `Error` and so cannot discriminate a union, whereas `kind` is a literal
+type on each class.
+
 ### Instance Check
+
+`instanceof Error` is the single check that covers every failure. Note that `UnexpectedError` extends
+`Error` directly rather than `HttpClientError`, so it must be handled on its own:
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
@@ -133,6 +191,22 @@ if (result.ok) {
   console.log(result.data);
 }
 ```
+
+Peeling the errors off first is also what makes `status` directly narrowable, since only the response
+envelopes carry it:
+
+```typescript
+if (result instanceof Error) return;
+
+if (result.status === 200) {
+  result.data; // typed from the 200 schema
+} else if (result.status === 404) {
+  result.error; // typed from the 404 schema
+}
+```
+
+Ranges do not narrow: `result.status >= 400` leaves the redirect arm in the union, so `result.error`
+stays inaccessible. Compare exact statuses, or switch on `kind`.
 
 ## Error Context
 

@@ -176,11 +176,33 @@ export namespace HTTPFetch {
     raw_response: Response;
   };
 
+  /**
+   * Discriminant carried by every response envelope, named after the type it identifies. Together
+   * with the error classes' own `kind`, it makes a call result narrowable by a single flat `switch`
+   * with no `instanceof` and no value import, and it survives a spread or a serialization round-trip
+   * where a prototype would not.
+   *
+   * @example
+   * switch (result.kind) {
+   *   case "SuccessfulResponse": return result.data;
+   *   case "RedirectMessage": return log(result.redirect_to);
+   *   case "ClientErrorResponse":
+   *   case "ServerErrorResponse": return handle(result.error);
+   *   default: return report(result.context);
+   * }
+   */
+  export type ResponseKind =
+    | "SuccessfulResponse"
+    | "RedirectMessage"
+    | "ClientErrorResponse"
+    | "ServerErrorResponse";
+
   /** A 4xx response (`ok: false`), with `error` typed per status code and a fallback for unlisted ones. */
   export type ClientErrorResponse<
     errors extends Partial<Record<HTTPStatus.ClientErrorResponse, any>>,
     fallback,
   > = SharedResponseContent & {
+    kind: "ClientErrorResponse";
     ok: false;
   } & (
       | {
@@ -197,6 +219,7 @@ export namespace HTTPFetch {
     errors extends Partial<Record<HTTPStatus.ServerErrorResponse, any>>,
     fallback,
   > = SharedResponseContent & {
+    kind: "ServerErrorResponse";
     ok: false;
   } & (
       | {
@@ -213,6 +236,7 @@ export namespace HTTPFetch {
     data extends Partial<Record<Exclude<HTTPStatus.SuccessfulResponse, 204>, any>>,
     fallback,
   > = SharedResponseContent & {
+    kind: "SuccessfulResponse";
     ok: true;
   } & (
       | {
@@ -229,6 +253,7 @@ export namespace HTTPFetch {
 
   /** A 3xx response (`ok: false`), exposing the `Location` header as `redirect_to`. */
   export type RedirectMessage = SharedResponseContent & {
+    kind: "RedirectMessage";
     ok: false;
     status: HTTPStatus.RedirectMessage;
     redirect_to: string | null;

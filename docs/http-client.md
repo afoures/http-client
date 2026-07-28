@@ -191,24 +191,46 @@ const endpoint = new Endpoint({
 
 ## Response Handling
 
-All endpoint functions return a union type:
+All endpoint functions return a union of four response envelopes and the error instances. Every arm
+carries a `kind` literal, so the whole union narrows in one `switch`:
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
 
-// Can be an error
-if (result instanceof Error) {
-  // TimeoutError, NetworkError, SerializationError, etc.
-  return;
+switch (result.kind) {
+  case "SuccessfulResponse":
+    console.log(result.data);
+    break;
+  case "RedirectMessage":
+    console.warn("unexpected redirect to", result.redirect_to);
+    break;
+  case "ClientErrorResponse":
+  case "ServerErrorResponse":
+    console.log(result.error);
+    break;
+  default:
+    // TimeoutError, NetworkError, SerializationError, etc.
+    console.log(result.message);
 }
+```
 
-// Or a response
+Or peel the errors off with `instanceof Error` first, then narrow on `ok` and `status`. Note that
+`ok: false` covers redirects as well as errors, so the `else` of an `ok` check has no `error` field
+until you separate the redirect arm:
+
+```typescript
+if (result instanceof Error) return;
+
 if (result.ok) {
   console.log(result.data);
+} else if (result.kind === "RedirectMessage") {
+  console.warn(result.redirect_to);
 } else {
   console.log(result.error);
 }
 ```
+
+See [Error Handling](./error-handling.md) for the full list of kinds.
 
 ## Type Inference
 

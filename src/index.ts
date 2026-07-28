@@ -28,4 +28,5 @@ export {
   ParseError,
   NetworkError,
   UnexpectedError,
+  type ErrorKind,
 } from "./lib/errors.ts";

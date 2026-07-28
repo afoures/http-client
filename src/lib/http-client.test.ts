@@ -4,7 +4,9 @@ import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import {
   AbortedError,
+  HttpClientError,
   NetworkError,
+  ParseError,
   SerializationError,
   TimeoutError,
   UnexpectedError,
@@ -1418,6 +1420,39 @@ describe("fetch_endpoint_factory", () => {
 
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
+  });
+});
+
+describe("error kind discriminant", () => {
+  const context = { operation: "fetch" };
+
+  const cases = [
+    { error: new HttpClientError("x", context), kind: "HttpClientError" },
+    { error: new TimeoutError("x", context), kind: "TimeoutError" },
+    { error: new AbortedError("x", context), kind: "AbortedError" },
+    { error: new SerializationError("x", context), kind: "SerializationError" },
+    { error: new ParseError("x", context), kind: "ParseError" },
+    { error: new NetworkError("x", context), kind: "NetworkError" },
+    { error: new UnexpectedError("x", context), kind: "UnexpectedError" },
+  ] as const;
+
+  for (const { error, kind } of cases) {
+    test(`${error.name} carries kind "${kind}"`, () => {
+      // a subclass field initializer must win over the base class default
+      assert.equal(error.kind, kind);
+    });
+  }
+
+  test("kinds are unique across the error classes", () => {
+    const kinds = cases.map(({ kind }) => kind);
+    assert.equal(new Set(kinds).size, kinds.length);
+  });
+
+  test("kind survives a spread, unlike a prototype check", () => {
+    const error = new TimeoutError("x", context);
+    const copy = { ...error };
+    assert.equal(copy.kind, "TimeoutError");
+    assert.equal(copy instanceof TimeoutError, false);
   });
 });
 

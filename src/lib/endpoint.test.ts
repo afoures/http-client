@@ -1327,3 +1327,44 @@ describe("Endpoint.parse_response", () => {
     assert.equal(b.data, null);
   });
 });
+
+describe("response kind discriminant", () => {
+  const endpoint = new Endpoint({
+    method: "GET",
+    pathname: "/thing",
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: "json" },
+    },
+  });
+
+  const cases = [
+    { status: 200, body: JSON.stringify({ id: "1" }), kind: "SuccessfulResponse" },
+    { status: 204, body: null, kind: "SuccessfulResponse" },
+    { status: 301, body: null, kind: "RedirectMessage" },
+    { status: 304, body: null, kind: "RedirectMessage" },
+    { status: 404, body: "missing", kind: "ClientErrorResponse" },
+    { status: 503, body: "down", kind: "ServerErrorResponse" },
+  ] as const;
+
+  for (const { status, body, kind } of cases) {
+    test(`${status} carries kind "${kind}"`, async () => {
+      const result = await endpoint.parse_response(
+        new Response(body, { status, headers: { "Content-Type": "application/json" } }),
+      );
+      assert.ok(!(result instanceof ParseError));
+      assert.equal(result.kind, kind);
+    });
+  }
+
+  test("kind survives a spread, unlike a prototype check", async () => {
+    const result = await endpoint.parse_response(
+      new Response(JSON.stringify({ id: "1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    assert.ok(!(result instanceof ParseError));
+    const { kind, ok, status } = { ...result };
+    assert.deepEqual({ kind, ok, status }, { kind: "SuccessfulResponse", ok: true, status: 200 });
+  });
+});

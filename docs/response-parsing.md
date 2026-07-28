@@ -1,8 +1,8 @@
 # Response Parsing
 
 Endpoints parse HTTP responses into typed results based on status code. The
-result is a discriminated union you narrow on `ok` and `status`; each status
-carries the body type declared for it in the endpoint's `responses` map.
+result is a discriminated union you narrow on `kind`, `ok` or `status`; each
+status carries the body type declared for it in the endpoint's `responses` map.
 
 > A response `schema` may also be a `(context) => schema` factory, and each `parse` function
 > receives the per-call context as a second argument. See [Dynamic Context](./dynamic-context.md).
@@ -13,6 +13,7 @@ carries the body type declared for it in the endpoint's `responses` map.
 
 ```typescript
 type SuccessfulResponse<Data> = {
+  kind: "SuccessfulResponse";
   ok: true;
   status: 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
   data: Data;
@@ -25,6 +26,7 @@ type SuccessfulResponse<Data> = {
 
 ```typescript
 type RedirectMessage = {
+  kind: "RedirectMessage";
   ok: false;
   status: 300 | 301 | 302 | 303 | 304 | 307 | 308;
   redirect_to: string | null;
@@ -37,6 +39,7 @@ type RedirectMessage = {
 
 ```typescript
 type ClientErrorResponse<Error> = {
+  kind: "ClientErrorResponse"
   ok: false
   status: 400 | 401 | 402 | 403 | 404 | /* ... */
   error: Error
@@ -49,6 +52,7 @@ type ClientErrorResponse<Error> = {
 
 ```typescript
 type ServerErrorResponse<Error> = {
+  kind: "ServerErrorResponse"
   ok: false
   status: 500 | 501 | 502 | 503 | 504 | /* ... */
   error: Error
@@ -199,26 +203,41 @@ if (result instanceof ParseError) {
 
 ## Handling All Cases
 
+Switch on `kind` to cover the response arms and the errors in one pass:
+
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
 
-if (result instanceof Error) {
-  // UnexpectedError, NetworkError, TimeoutError, etc.
-  console.log(result.message);
-  return;
+switch (result.kind) {
+  case "SuccessfulResponse":
+    console.log(result.data);
+    break;
+  case "RedirectMessage":
+    console.log(result.redirect_to);
+    break;
+  case "ClientErrorResponse":
+  case "ServerErrorResponse":
+    console.log(result.error);
+    break;
+  default:
+    // UnexpectedError, NetworkError, TimeoutError, etc.
+    console.log(result.message);
 }
+```
 
-if (result.ok) {
-  // 20x success
+To narrow on `status` instead, peel the errors off first, because only the response envelopes carry
+a `status`:
+
+```typescript
+if (result instanceof Error) return;
+
+if (result.status === 200) {
   console.log(result.data);
-} else if (result.status >= 300 && result.status < 400) {
-  // Redirect
-  console.log(result.redirect_to);
-} else if (result.status >= 400 && result.status < 500) {
-  // Client error
-  console.log(result.error);
-} else {
-  // Server error
+} else if (result.status === 404) {
   console.log(result.error);
 }
 ```
+
+Compare exact statuses. Relational comparisons such as `result.status >= 400` do not narrow a union
+of numeric literals in TypeScript, so the redirect arm stays in the type and `result.error` remains
+inaccessible.

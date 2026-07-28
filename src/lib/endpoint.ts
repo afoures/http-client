@@ -20,6 +20,7 @@ const RESPONSE = {
     raw_response: Response,
   ): HTTPFetch.SuccessfulResponse<any, any> {
     const response: HTTPFetch.SuccessfulResponse<any, any> = {
+      kind: "SuccessfulResponse",
       ok: true,
       method,
       url: raw_response.url,
@@ -38,6 +39,7 @@ const RESPONSE = {
   redirect(method: HTTPMethod.Any, raw_response: Response): HTTPFetch.RedirectMessage {
     const redirect_to = raw_response.headers.get("Location") || null;
     const response: HTTPFetch.RedirectMessage = {
+      kind: "RedirectMessage",
       ok: false,
       method,
       url: raw_response.url,
@@ -59,6 +61,7 @@ const RESPONSE = {
     raw_response: Response,
   ): HTTPFetch.ClientErrorResponse<any, any> {
     const response: HTTPFetch.ClientErrorResponse<any, any> = {
+      kind: "ClientErrorResponse",
       ok: false,
       method,
       url: raw_response.url,
@@ -80,6 +83,7 @@ const RESPONSE = {
     raw_response: Response,
   ): HTTPFetch.ServerErrorResponse<any, any> {
     const response: HTTPFetch.ServerErrorResponse<any, any> = {
+      kind: "ServerErrorResponse",
       ok: false,
       method,
       url: raw_response.url,

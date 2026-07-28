@@ -1,9 +1,9 @@
 // Compile-time type tests for the `http_client` factory.
 // Not executed at runtime (does not match the `*.test.ts` glob); validated by `pnpm typecheck`.
-import { http_client } from "./http-client.ts";
+import { http_client, type $infer } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import { NetworkError, ParseError, TimeoutError } from "./errors.ts";
-import type { RetryPolicy, Schema } from "./types.ts";
+import type { HTTPFetch, RetryPolicy, Schema } from "./types.ts";
 import z from "zod";
 
 type Equal<left, right> =
@@ -263,3 +263,84 @@ inline_client.get({});
 // negative: wrong inline body field type is still caught (not silently `any`)
 // @ts-expect-error: `name` must be a string
 inline_client.create({ body: { name: 123 } });
+
+// --- `kind` discriminant: one flat switch over the whole result union ---
+
+declare function assert_never(value: never): never;
+declare function use(value: unknown): void;
+
+// every arm is reachable from `kind` alone, with no `instanceof` and no value import
+async function exhaustive_switch() {
+  const result = await client.get_user({ params: { id: "1" }, query: { include: "a", page: "1" } });
+
+  switch (result.kind) {
+    case "SuccessfulResponse":
+      assert_type<Equal<typeof result.ok, true>>();
+      use(result.data);
+      return;
+    case "RedirectMessage":
+      assert_type<Equal<typeof result.redirect_to, string | null>>();
+      return;
+    case "ClientErrorResponse":
+    case "ServerErrorResponse":
+      use(result.error);
+      return;
+    case "TimeoutError":
+    case "AbortedError":
+    case "NetworkError":
+    case "ParseError":
+    case "SerializationError":
+    case "UnexpectedError":
+      use(result.context);
+      return;
+    default:
+      // the union is fully covered: nothing reaches here
+      assert_never(result);
+  }
+}
+
+// negative: dropping an arm is a compile error rather than a silent fallthrough
+async function non_exhaustive_switch() {
+  const result = await client.get_user({ params: { id: "1" }, query: { include: "a", page: "1" } });
+
+  switch (result.kind) {
+    case "SuccessfulResponse":
+      return;
+    case "RedirectMessage":
+      return;
+    case "ClientErrorResponse":
+    case "ServerErrorResponse":
+      return;
+    case "TimeoutError":
+    case "AbortedError":
+    case "NetworkError":
+    case "ParseError":
+    case "SerializationError":
+      return;
+    default:
+      // `unexpected` is unhandled, so `result` is not `never` here
+      // @ts-expect-error: UnexpectedError is not assignable to never
+      assert_never(result);
+  }
+}
+
+// `kind` discriminates without excluding the error classes first, unlike `ok` and `status`
+async function kind_needs_no_peel() {
+  const result = await client.get_user({ params: { id: "1" }, query: { include: "a", page: "1" } });
+  if (result.kind === "SuccessfulResponse") use(result.data);
+
+  // @ts-expect-error: `ok` still requires peeling the error classes off first
+  use(result.ok);
+  // @ts-expect-error: `status` still requires peeling the error classes off first
+  use(result.status);
+}
+
+// the response-side kinds are exactly the four envelopes
+assert_type<
+  Equal<
+    Extract<$infer.Result<typeof client.get_user>, { ok: boolean }>["kind"],
+    HTTPFetch.ResponseKind
+  >
+>();
+
+use([exhaustive_switch, non_exhaustive_switch, kind_needs_no_peel]);
