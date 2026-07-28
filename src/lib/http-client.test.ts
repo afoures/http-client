@@ -1,6 +1,6 @@
 import { describe, test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { fetch_endpoint_factory } from "./http-client.ts";
+import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import {
   AbortedError,
@@ -1418,5 +1418,34 @@ describe("fetch_endpoint_factory", () => {
 
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
+  });
+});
+
+describe("http_client base_url validation", () => {
+  const endpoints = { users: { list: new Endpoint({ method: "GET", pathname: "/users" }) } };
+
+  test("throws a TypeError at construction when base_url is not absolute", () => {
+    assert.throws(() => http_client(endpoints, { base_url: "/api" }), {
+      name: "TypeError",
+      message: /Invalid base_url: \/api/,
+    });
+  });
+
+  test("throws before any endpoint function is built", () => {
+    let built = 0;
+    const counting_endpoints = {
+      get counted() {
+        built++;
+        return new Endpoint({ method: "GET", pathname: "/users" });
+      },
+    };
+
+    assert.throws(() => http_client(counting_endpoints, { base_url: "not a url" }), TypeError);
+    assert.equal(built, 0);
+  });
+
+  test("accepts a valid base_url", () => {
+    const api = http_client(endpoints, { base_url: API_BASE_URL });
+    assert.equal(typeof api.users.list, "function");
   });
 });

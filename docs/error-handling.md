@@ -1,6 +1,17 @@
 # Error Handling
 
-The HTTP client provides typed errors for different failure scenarios.
+The HTTP client provides typed errors for different failure scenarios. Every request failure is
+**returned** as a value, never thrown, so a call result is either a response envelope or an error
+instance.
+
+The single exception is client construction: `http_client` throws a `TypeError` when `base_url` is
+not a parsable absolute URL. That is a static misconfiguration rather than a request outcome, so it
+surfaces once at startup instead of from every call.
+
+```typescript
+http_client(endpoints, { base_url: "/api" });
+// TypeError: Invalid base_url: /api. Expected an absolute URL parsable by `new URL()`.
+```
 
 ## Error Types
 

@@ -170,14 +170,6 @@ export function fetch_endpoint_factory<
   ) {
     let start_time = Date.now();
 
-    if (!URL.canParse(base_url)) {
-      return new UnexpectedError(`Invalid base_url: ${base_url}`, {
-        operation: "base_url_validation",
-        request: { url: base_url, method: endpoint.method, baseUrl: base_url },
-        timing: { startTime: start_time },
-      });
-    }
-
     const { args, options, context: call_context } = extract_args(input);
 
     const context = merge_context(
@@ -530,6 +522,8 @@ export type HttpClientConfig<
    * // with path prefix (note the trailing slash)
    * base_url: "https://api.example.com/v1/"    // + "/users" -> https://api.example.com/v1/users
    * base_url: "https://api.example.com/v1"     // + "/users" -> https://api.example.com/users (prefix dropped)
+   *
+   * Must be absolute: {@link http_client} throws a `TypeError` at construction if it is not parsable.
    */
   base_url: string;
   /** Default request options applied to every call; may be a value or a (possibly async) factory. */
@@ -553,6 +547,10 @@ export type HttpClientConfig<
  *   { base_url: "https://api.example.com" },
  * );
  * const result = await api.users.get({ params: { id: "1" } });
+ *
+ * @throws {TypeError} When `base_url` is not an absolute, parsable URL. This is the one failure the
+ * client throws instead of returning: it is a static misconfiguration, so it cannot depend on call
+ * input and is worth surfacing once at startup rather than from every call.
  */
 export function http_client<
   const endpoints,
@@ -566,6 +564,12 @@ export function http_client<
     fetch: custom_fetch = fetch,
   }: HttpClientConfig<endpoints, default_context>,
 ): map_to_fetch_endpoint_functions<endpoints, default_context> {
+  if (!URL.canParse(base_url)) {
+    throw new TypeError(
+      `Invalid base_url: ${base_url}. Expected an absolute URL parsable by \`new URL()\`.`,
+    );
+  }
+
   function map(endpoints: EndpointMap): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {

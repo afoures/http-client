@@ -101,7 +101,7 @@ export class NetworkError extends HttpClientError {
   }
 }
 
-/** Catch-all for unexpected failures (invalid `base_url`, request construction, retry-policy errors). Extends `Error` directly, not {@link HttpClientError}. */
+/** Catch-all for the cases where something threw where a value was expected (a schema, serializer, parser or retry callback crashing) or a client invariant broke. Extends `Error` directly, not {@link HttpClientError}, so it cannot be swallowed by a single `instanceof HttpClientError` check. */
 export class UnexpectedError extends Error {
   /** Structured details about the failure (operation, request, response, timing, input). */
   public readonly context: ErrorContext;
