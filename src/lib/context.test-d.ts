@@ -134,29 +134,49 @@ await api.no_ctx({ context: { anything: true } });
 const endpoints = { nested: { with_ctx, with_default, no_ctx } };
 
 assert_type<Equal<ClientContext<typeof endpoints>, { tz?: string; locale?: string }>>();
+
+// without a `default_context`, the config declares no client-level defaults, so it accepts none
+assert_type<Equal<HttpClientConfig<typeof endpoints>["context"], undefined>>();
+// the parameterized form carries exactly the defaults it was given
 assert_type<
-  Equal<HttpClientConfig<typeof endpoints>["context"], { tz?: string; locale?: string } | undefined>
+  Equal<
+    HttpClientConfig<typeof endpoints, { locale: "en" }>["context"],
+    { locale: "en" } | undefined
+  >
 >();
 
-// a wrapper can annotate its config without restating the context shape
+// a wrapper that takes no client-level defaults
 type WrapperConfig = HttpClientConfig<typeof endpoints>;
 
 function create_client(config: WrapperConfig) {
   return http_client(endpoints, config);
 }
 
+create_client({ base_url: "x" });
+// @ts-expect-error: this config declares no client-level defaults, so `context` is rejected
 create_client({ base_url: "x", context: { tz: "UTC" } });
-// @ts-expect-error: `nope` is not a key of any endpoint's context
+// @ts-expect-error: rejected for the same reason, not because `nope` is an unknown key
 create_client({ base_url: "x", context: { nope: true } });
 
-// the config type alone cannot tell which defaults were passed, so every context key is optional
+// no client-level defaults => every declared context key stays required at the call site
 const loose = create_client({ base_url: "x" });
+await loose.nested.with_ctx({ context: { tz: "UTC", locale: "en" } });
+// @ts-expect-error: nothing is defaulted, so `context` is required in full
 await loose.nested.with_ctx({});
 
+// spelling the sentinel out explicitly behaves the same
+function create_explicit_client(config: HttpClientConfig<typeof endpoints, never>) {
+  return http_client(endpoints, config);
+}
+
+const explicit = create_explicit_client({ base_url: "x" });
+// @ts-expect-error: still nothing defaulted
+await explicit.nested.with_ctx({});
+
 // threading `default_context` through keeps track of the defaults actually provided
-function create_precise_client<const default_context extends ClientContext<typeof endpoints> = {}>(
-  config: HttpClientConfig<typeof endpoints, default_context>,
-) {
+function create_precise_client<
+  const default_context extends ClientContext<typeof endpoints> = never,
+>(config: HttpClientConfig<typeof endpoints, default_context>) {
   return http_client(endpoints, config);
 }
 
@@ -164,7 +184,40 @@ const precise = create_precise_client({ base_url: "x", context: { locale: "en" }
 await precise.nested.with_ctx({ context: { tz: "UTC" } });
 // @ts-expect-error: only `locale` is defaulted, `tz` is still required
 await precise.nested.with_ctx({});
+// @ts-expect-error: `nope` is not a key of any endpoint's context
+create_precise_client({ base_url: "x", context: { nope: true } });
 
 const without_defaults = create_precise_client({ base_url: "x" });
 // @ts-expect-error: no client-level default, so the whole declared context is required
 await without_defaults.nested.with_default({});
+
+// `= {}` behaves like `= never` for a wrapper's own default, thanks to the `keyof never` guard
+function create_empty_default_client<
+  const default_context extends ClientContext<typeof endpoints> = {},
+>(config: HttpClientConfig<typeof endpoints, default_context>) {
+  return http_client(endpoints, config);
+}
+
+const empty_default = create_empty_default_client({ base_url: "x" });
+// @ts-expect-error: no client-level default, so the whole declared context is required
+await empty_default.nested.with_default({});
+
+// a wrapper adding its own config fields keeps the same precision
+function create_wrapped_client<
+  const default_context extends ClientContext<typeof endpoints> = never,
+>(config: HttpClientConfig<typeof endpoints, default_context> & { api_key: string }) {
+  const { api_key: _api_key, ...client_config } = config;
+  return http_client(endpoints, client_config);
+}
+
+const wrapped = create_wrapped_client({ base_url: "x", api_key: "k", context: { locale: "en" } });
+await wrapped.nested.with_ctx({ context: { tz: "UTC" } });
+// @ts-expect-error: only `locale` is defaulted, `tz` is still required
+await wrapped.nested.with_ctx({});
+
+// a key defaulted at both the endpoint and the client level stays optional
+const both = create_precise_client({
+  base_url: "x",
+  context: { tz: "Europe/Paris", locale: "en" },
+});
+await both.nested.with_default({});

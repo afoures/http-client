@@ -95,7 +95,7 @@ type ContextKeys<union> = union extends unknown ? keyof union : never;
  *
  * @example
  * const endpoints = { users: { get: get_user_endpoint } };
- * function create_client<const default_context extends ClientContext<typeof endpoints>>(
+ * function create_client<const default_context extends ClientContext<typeof endpoints> = never>(
  *   config: HttpClientConfig<typeof endpoints, default_context>,
  * ) {
  *   return http_client(endpoints, config);
@@ -111,6 +111,16 @@ export type ClientContext<endpoints> = {
     : never;
 };
 
+/**
+ * Keys covered by client-level defaults. `never` marks a config that declares no defaults, and must
+ * short-circuit: `keyof never` is `string | number | symbol`, which would make every context key
+ * optional at the call site instead of none. A wrapper forwards the marker as `undefined` (a
+ * `context?: never` field read back), which needs no arm of its own: `keyof undefined` is `never`.
+ */
+type client_default_keys<default_context> = [default_context] extends [never]
+  ? never
+  : keyof default_context;
+
 export function fetch_endpoint_factory<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
@@ -120,7 +130,7 @@ export function fetch_endpoint_factory<
   responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
   context_type = unknown,
   context_defaults = {},
-  default_context = {},
+  default_context = never,
 >({
   base_url,
   endpoint,
@@ -151,7 +161,10 @@ export function fetch_endpoint_factory<
     input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
       HTTPFetch.TypedQueryInit<query_schema> &
       HTTPFetch.TypedBodyInit<body_schema> &
-      HTTPFetch.TypedContextInit<context_type, keyof context_defaults | keyof default_context> &
+      HTTPFetch.TypedContextInit<
+        context_type,
+        keyof context_defaults | client_default_keys<default_context>
+      > &
       HTTPFetch.OptionalRequestInit &
       HTTPFetch.DefaultRequestInit,
   ) {
@@ -480,21 +493,29 @@ export function fetch_endpoint_factory<
  * client-level `context` is derived from the endpoints instead of being spelled out by hand.
  *
  * @example
- * // annotate a wrapper's config (every context key stays optional at the call site)
+ * // accept client-level defaults by threading `default_context`: the keys the caller actually
+ * // passes become optional at the call site, the rest stay required
  * const endpoints = { users: { get: get_user_endpoint } };
- * export type MyClientConfig = HttpClientConfig<typeof endpoints>;
- *
- * @example
- * // keep track of which defaults were actually provided by threading `default_context`
- * function create_client<const default_context extends ClientContext<typeof endpoints>>(
+ * function create_client<const default_context extends ClientContext<typeof endpoints> = never>(
  *   config: HttpClientConfig<typeof endpoints, default_context>,
  * ) {
  *   return http_client(endpoints, config);
  * }
+ *
+ * @example
+ * // without `default_context`, the config declares no client-level defaults: `context` is rejected
+ * // and every declared context key stays required at the call site
+ * export type MyClientConfig = HttpClientConfig<typeof endpoints>;
  */
 export type HttpClientConfig<
   endpoints = {},
-  default_context extends ClientContext<endpoints> = ClientContext<endpoints>,
+  /**
+   * The client-level defaults this config carries. Defaults to `never`: no defaults, so `context`
+   * is rejected and every declared context key stays required at the call site. `undefined` is part
+   * of the constraint so a forwarded `context?: never` stays a valid inference candidate instead of
+   * falling back to the whole {@link ClientContext} shape.
+   */
+  default_context extends ClientContext<endpoints> | undefined = never,
 > = {
   /**
    * Base URL every endpoint's pathname is resolved against, following standard `URL` resolution.
@@ -515,7 +536,7 @@ export type HttpClientConfig<
   options?:
     | (HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit)
     | (() => MaybePromise<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>);
-  /** Client-level default context, merged under every endpoint's context; defaulted keys become optional at the call site. */
+  /** Client-level default context, merged under every endpoint's context; defaulted keys become optional at the call site. Absent unless `default_context` is threaded through. */
   context?: default_context;
   /** Custom `fetch` implementation; defaults to the global `fetch`. */
   fetch?: CustomFetch;
@@ -535,7 +556,7 @@ export type HttpClientConfig<
  */
 export function http_client<
   const endpoints,
-  const default_context extends ClientContext<endpoints> = {},
+  const default_context extends ClientContext<endpoints> | undefined = never,
 >(
   all_endpoints: ValidateEndpointMap<endpoints>,
   {

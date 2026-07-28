@@ -105,32 +105,37 @@ Context is merged in this order (later overrides earlier):
 
 ## Wrapping the Client
 
-To expose your own factory, annotate its config with `HttpClientConfig<typeof endpoints>`: the
-`context` shape is derived from the endpoint tree, so there is nothing to restate by hand.
+To expose your own factory that accepts client-level defaults, annotate its config with
+`HttpClientConfig<typeof endpoints, default_context>` and thread `default_context` through a type
+parameter constrained with `ClientContext`. The `context` shape is derived from the endpoint tree,
+so there is nothing to restate by hand.
 
 ```typescript
 const endpoints = { rooms };
 
-export type MyClientConfig = HttpClientConfig<typeof endpoints>;
-
-export function create_my_client(config: MyClientConfig) {
-  return http_client(endpoints, config);
-}
-```
-
-A plain annotation cannot tell which client-level defaults a caller actually passed, so every
-context key is treated as defaulted (optional at the call site). To keep that precision, thread the
-context through a second type parameter, constrained with `ClientContext`:
-
-```typescript
 export function create_my_client<
-  const default_context extends ClientContext<typeof endpoints> = {},
+  const default_context extends ClientContext<typeof endpoints> = never,
 >(config: HttpClientConfig<typeof endpoints, default_context>) {
   return http_client(endpoints, config);
 }
 
 const api = create_my_client({ base_url: "https://api.example.com", context: { locale: "en" } });
 // `locale` is optional at the call site, keys the caller did not default stay required
+```
+
+The type parameter is what records which defaults the caller actually passed. Without it, the
+config declares no client-level defaults at all: its `context` is rejected, and every declared
+context key stays required at the call site.
+
+```typescript
+export type MyClientConfig = HttpClientConfig<typeof endpoints>;
+
+export function create_my_client(config: MyClientConfig) {
+  return http_client(endpoints, config);
+}
+
+const api = create_my_client({ base_url: "https://api.example.com" });
+// every declared context key must be passed per call
 ```
 
 ## Custom Fetch
