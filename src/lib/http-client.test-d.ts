@@ -33,7 +33,7 @@ const create_required = new Endpoint({
   responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
 });
 
-// optional path param via route-pattern's `(/:id)` syntax (no schema)
+// optional path param via the `(/:id)` group syntax (no schema)
 const get_user_optional = new Endpoint({
   method: "GET",
   pathname: "/users(/:id)",

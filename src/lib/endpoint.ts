@@ -11,7 +11,7 @@ import {
   type Schema,
   type Serializer,
 } from "./types.ts";
-import { RoutePattern } from "@remix-run/route-pattern";
+import { type CompiledPathname, compile_pathname, generate_pathname } from "./pathname.ts";
 
 const RESPONSE = {
   success(
@@ -148,7 +148,7 @@ export type EndpointDefinition<
   context_defaults = {},
 > = {
   method: http_method;
-  pathname: pathname;
+  pathname: Pathname.Validate<pathname>;
   context?: ContextMarker<context_type, context_defaults>;
   query?: Serializer.QueryString<query_schema, context_type>;
   responses?: Parser.ResponseBodyByStatus<response_schemas, context_type>;
@@ -190,7 +190,7 @@ export class Endpoint<
   context_defaults = {},
 > {
   #method: http_method;
-  #pattern: RoutePattern<pathname>;
+  #pattern: CompiledPathname;
   #serializers: {
     params: Required<Serializer.Params<any, params_schema, context_type>> | null;
     query: Required<Serializer.QueryString<query_schema, context_type>> | null;
@@ -214,9 +214,9 @@ export class Endpoint<
     options?: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
   ) {
     this.#method = definition.method;
-    this.#pattern = new RoutePattern(definition.pathname, {
-      ignoreCase: false,
-    });
+    // `Pathname.Validate` is a deferred conditional while `pathname` is generic, so it is not yet
+    // known to be a string here even though every branch is one.
+    this.#pattern = compile_pathname(definition.pathname as string);
     this.#serializers = {
       params: as_serializer(definition.params),
       query: as_serializer(definition.query, "urlencoded"),
@@ -259,7 +259,9 @@ export class Endpoint<
     >,
     context?: context_type,
   ): Promise<URL | SerializationError> {
-    let pathname_params: Record<string, string> = {};
+    // Values are left unstringified: `generate_pathname` stringifies them itself, and needs to see
+    // `null`/`undefined` to drop an optional segment rather than emit `"null"`/`"undefined"`.
+    let pathname_params: Record<string, string | number | null | undefined> = {};
 
     if ("params" in init && init.params !== undefined) {
       if (this.#serializers.params) {
@@ -299,21 +301,14 @@ export class Endpoint<
             });
           }
         } else {
-          pathname_params = Object.fromEntries(
-            Object.entries(transformed_params as any).map(([key, value]) => [key, String(value)]),
-          );
+          pathname_params = transformed_params as typeof pathname_params;
         }
       } else {
-        pathname_params = Object.fromEntries(
-          Object.entries(init.params as Record<string, unknown>).map(([key, value]) => [
-            key,
-            String(value),
-          ]),
-        );
+        pathname_params = init.params as typeof pathname_params;
       }
     }
 
-    const pathname = this.#pattern.href(pathname_params);
+    const pathname = generate_pathname(this.#pattern, pathname_params);
 
     let search_params = new URLSearchParams();
 

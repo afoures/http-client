@@ -1,5 +1,5 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
-import { type Params as RoutePatternParams } from "@remix-run/route-pattern";
+import { type PathnameParams } from "./pathname.ts";
 import type { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors";
 
 export type Pretty<T> = { [K in keyof T]: T[K] } & {};
@@ -23,10 +23,31 @@ export namespace Pathname {
   /** A pathname that contains at least one `:param` segment. */
   export type WithParams = `${string}:${string}`;
 
+  type SearchOrFragmentError =
+    ErrorMessage<"pathname cannot contain `?` or `#`; declare search params with `query`">;
+
+  /**
+   * The pathname itself when it is a valid pattern, or an {@link ErrorMessage} when it carries a
+   * search string or fragment. Search params are declared with an endpoint's `query` serializer,
+   * and `new URL()` would reinterpret everything after a `?` or `#` as the search string or
+   * fragment, so either character in a pattern is always a mistake.
+   *
+   * Used in the property position so the error surfaces on `pathname` at the definition site while
+   * the literal is still inferred. Inferring through a conditional costs a little more than a bare
+   * property would; the two checks are written nested rather than against a union of templates
+   * because that measures marginally cheaper.
+   */
+  export type Validate<pathname extends Pathname.Relative> = pathname extends `${string}?${string}`
+    ? SearchOrFragmentError
+    : pathname extends `${string}#${string}`
+      ? SearchOrFragmentError
+      : pathname;
+
   /** The params object inferred from a pathname's `:param` segments (accepts `string` or `number`). */
-  export type Params<pathname extends Pathname.Relative> = Pretty<{
-    [param in keyof RoutePatternParams<pathname>]: RoutePatternParams<pathname>[param] | number;
-  }>;
+  export type Params<pathname extends Pathname.Relative> =
+    PathnameParams<pathname> extends infer params
+      ? Pretty<{ [param in keyof params]: params[param] | number }>
+      : never;
 
   export type DefaultParamsObjectSchema<pathname extends Pathname.Relative> =
     pathname extends Pathname.WithParams ? Schema._<Pathname.Params<pathname>> : never;

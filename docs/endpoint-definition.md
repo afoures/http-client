@@ -33,8 +33,20 @@ URL path with optional dynamic segments:
 pathname: "/users"; // Static path
 pathname: "/users/:id"; // Required param
 pathname: "/users/(:id)"; // Optional param
+pathname: "/users(/:id)"; // Optional param, dropping the separator with it
 pathname: "/posts/:id/comments/:commentId"; // Multiple params
+pathname: "/v:major.:minor/users"; // Multiple params in one segment
+pathname: "/blog/:year-:month-:day/:slug"; // Params separated by any non-identifier character
 ```
+
+A param name starts with a letter, `_` or `$`, and continues with those plus digits. The name ends
+at the first character outside that set, which is what lets several params share a segment.
+
+Param values are percent-encoded, so a value can never add a path segment or start a query string.
+A param inside an optional group may be `undefined` or `null`, which drops the whole group.
+
+The pattern describes a pathname only. A `?` or `#` is rejected, both when the endpoint is defined
+and when the pattern is compiled - declare search params with [`query`](#query) instead.
 
 ### `params`
 

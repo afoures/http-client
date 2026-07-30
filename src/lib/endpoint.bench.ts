@@ -8,7 +8,7 @@ bench("Endpoint - minimal GET", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([153, "instantiations"]);
+}).types([216, "instantiations"]);
 
 bench("Endpoint - minimal POST", () => {
   const endpoint = new Endpoint({
@@ -16,7 +16,7 @@ bench("Endpoint - minimal POST", () => {
     pathname: "/users",
   });
   return {} as typeof endpoint;
-}).types([151, "instantiations"]);
+}).types([214, "instantiations"]);
 
 bench("Endpoint - with pathname params", () => {
   const endpoint = new Endpoint({
@@ -24,7 +24,7 @@ bench("Endpoint - with pathname params", () => {
     pathname: "/users/:id",
   });
   return {} as typeof endpoint;
-}).types([151, "instantiations"]);
+}).types([214, "instantiations"]);
 
 bench("Endpoint - with query schema", () => {
   const endpoint = new Endpoint({
@@ -38,7 +38,7 @@ bench("Endpoint - with query schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([645, "instantiations"]);
+}).types([940, "instantiations"]);
 
 bench("Endpoint - with body schema", () => {
   const endpoint = new Endpoint({
@@ -53,7 +53,7 @@ bench("Endpoint - with body schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([640, "instantiations"]);
+}).types([703, "instantiations"]);
 
 bench("Endpoint - with data schema", () => {
   const endpoint = new Endpoint({
@@ -70,7 +70,7 @@ bench("Endpoint - with data schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([738, "instantiations"]);
+}).types([860, "instantiations"]);
 
 bench("Endpoint - with error schema", () => {
   const endpoint = new Endpoint({
@@ -87,7 +87,7 @@ bench("Endpoint - with error schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([759, "instantiations"]);
+}).types([881, "instantiations"]);
 
 bench("Endpoint - full schema (all generics)", () => {
   const endpoint = new Endpoint({
@@ -115,7 +115,7 @@ bench("Endpoint - full schema (all generics)", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1421, "instantiations"]);
+}).types([2342, "instantiations"]);
 
 bench("Endpoint - nested object schema", () => {
   const endpoint = new Endpoint({
@@ -138,7 +138,7 @@ bench("Endpoint - nested object schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([684, "instantiations"]);
+}).types([747, "instantiations"]);
 
 bench("Endpoint - array schema", () => {
   const endpoint = new Endpoint({
@@ -166,7 +166,7 @@ bench("Endpoint - array schema", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1323, "instantiations"]);
+}).types([1443, "instantiations"]);
 
 bench("Endpoint - multiple pathname params", () => {
   const endpoint = new Endpoint({
@@ -181,7 +181,7 @@ bench("Endpoint - multiple pathname params", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([652, "instantiations"]);
+}).types([1987, "instantiations"]);
 
 bench("Endpoint - with custom serialize", () => {
   const endpoint = new Endpoint({
@@ -204,7 +204,7 @@ bench("Endpoint - with custom serialize", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1474, "instantiations"]);
+}).types([1740, "instantiations"]);
 
 bench("Endpoint - with custom parse", () => {
   const endpoint = new Endpoint({
@@ -228,7 +228,7 @@ bench("Endpoint - with custom parse", () => {
     },
   });
   return {} as typeof endpoint;
-}).types([1836, "instantiations"]);
+}).types([1986, "instantiations"]);
 
 bench("Endpoint - union types in schema", () => {
   const endpoint = new Endpoint({
@@ -236,12 +236,19 @@ bench("Endpoint - union types in schema", () => {
     pathname: "/users",
     body: {
       schema: z.object({
-        role: z.union([z.literal("admin"), z.literal("user"), z.literal("guest")]),
+        role: z.union([
+          z.literal("admin"),
+          z.literal("user"),
+          z.literal("guest"),
+        ]),
         status: z.enum(["active", "inactive", "pending"]),
-        metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+        metadata: z.record(
+          z.string(),
+          z.union([z.string(), z.number(), z.boolean()]),
+        ),
       }),
       serialize: "json",
     },
   });
   return {} as typeof endpoint;
-}).types([1569, "instantiations"]);
+}).types([1632, "instantiations"]);

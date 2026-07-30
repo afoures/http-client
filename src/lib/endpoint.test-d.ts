@@ -30,7 +30,7 @@ const get_user_no_schema = new Endpoint({
   pathname: "/users/:id",
 });
 
-// optional path param via route-pattern's `(/:id)` syntax (no schema)
+// optional path param via the `(/:id)` group syntax (no schema)
 const get_user_optional = new Endpoint({
   method: "GET",
   pathname: "/users(/:id)",
