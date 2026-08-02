@@ -25,4 +25,4 @@
 
   For the error classes the value matches `name`, which already held the same string at runtime. The difference is that `Error` types `name` as `string`, so only `kind` can discriminate a union.
 
-  This is breaking for code that builds response envelopes by hand, such as test fixtures and mocks, which must now include `kind`.
+  Reading a result is unaffected, since `kind` is an added field. Code that builds an envelope by hand, such as a test fixture or a mock, has to add the matching `kind` for it to satisfy the type.

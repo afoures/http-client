@@ -1,6 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { merge_options, merge_headers, sleep } from "./utils.ts";
+import { default_retry_condition, merge_options, merge_headers, sleep } from "./utils.ts";
+import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 
 describe("merge_headers", () => {
   test("basic header merging from plain object", () => {
@@ -278,6 +279,65 @@ describe("sleep", () => {
     await assert.rejects(
       () => sleep(500, controller.signal),
       (err: unknown) => err === "mid-sleep",
+    );
+  });
+});
+
+describe("default_retry_condition", () => {
+  const request = new Request("https://api.example.com/users");
+  const context = { operation: "fetch" } as const;
+
+  const error_cases = [
+    { error: new NetworkError("x", context), retried: true },
+    { error: new TimeoutError("x", context), retried: true },
+    { error: new AbortedError("x", context), retried: false },
+    { error: new UnexpectedError("x", context), retried: false },
+  ] as const;
+
+  for (const { error, retried } of error_cases) {
+    test(`${error.kind} is ${retried ? "" : "not "}retried`, () => {
+      assert.equal(default_retry_condition({ request, response: undefined, error }), retried);
+    });
+  }
+
+  test("an error wins over a response left from an earlier attempt", () => {
+    assert.equal(
+      default_retry_condition({
+        request,
+        response: new Response(null, { status: 200 }),
+        error: new NetworkError("x", context),
+      }),
+      true,
+    );
+  });
+
+  const status_cases = [
+    { status: 200, retried: false },
+    { status: 204, retried: false },
+    { status: 302, retried: false },
+    { status: 304, retried: false },
+    { status: 400, retried: false },
+    { status: 401, retried: false },
+    { status: 404, retried: false },
+    { status: 409, retried: false },
+    { status: 408, retried: true },
+    { status: 429, retried: true },
+    { status: 500, retried: true },
+    { status: 503, retried: true },
+    { status: 599, retried: true },
+  ] as const;
+
+  for (const { status, retried } of status_cases) {
+    test(`${status} is ${retried ? "" : "not "}retried`, () => {
+      const response = new Response(null, { status });
+      assert.equal(default_retry_condition({ request, response, error: undefined }), retried);
+    });
+  }
+
+  test("no response and no error is not retried", () => {
+    assert.equal(
+      default_retry_condition({ request, response: undefined, error: undefined }),
+      false,
     );
   });
 });

@@ -20,6 +20,7 @@ export {
   type ClientContext,
   type $infer,
 } from "./lib/http-client.ts";
+export { default_retry_condition } from "./lib/utils.ts";
 export {
   HttpClientError,
   TimeoutError,

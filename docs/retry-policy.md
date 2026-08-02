@@ -46,7 +46,7 @@ const result = await api.users.get({
 
 ### Conditional Retry
 
-By default, retries on non-OK responses. Customize with `when`:
+By default, retries transient failures only (see [Default Behavior](#default-behavior)). Customize with `when`:
 
 ```typescript
 const result = await api.users.get({
@@ -202,13 +202,43 @@ Like `when`, `delay`, and `attempts`, `recover` is resolved per key across clien
 
 ## Default Behavior
 
-Without a `when` condition, retries on non-OK responses:
+Without a `when` condition, retries the failures a retry can plausibly fix: transient transport errors, and the status codes that ask you to come back later.
+
+```typescript
+const default_retry_condition: RetryPolicy.Condition = ({ response, error }) => {
+  if (error) return error.kind === "NetworkError" || error.kind === "TimeoutError";
+  if (!response) return false;
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+};
+```
+
+So `408`, `429` and every `5xx` are retried, as are `NetworkError` and `TimeoutError`. Nothing else is: a `4xx` other than those two is a permanent client error, a `3xx` read under `redirect: "manual"` is a normal outcome, an `AbortedError` means the caller asked to stop, and an `UnexpectedError` comes from your own callback throwing (retrying just re-throws).
+
+`attempts` defaults to `0`, so none of this happens until you ask for a retry.
+
+The condition is exported from the package entry point, so you can compose with it instead of reimplementing it:
+
+```typescript
+import { default_retry_condition } from "@afoures/http-client";
+
+const result = await api.users.get({
+  params: { id: "123" },
+  retry: {
+    attempts: 3,
+    // the default, plus one status this API uses for backpressure
+    when: (ctx) => ctx.response?.status === 420 || default_retry_condition(ctx),
+  },
+});
+```
+
+### Idempotency is your call
+
+The default is **not** method-aware: an explicit `retry: { attempts: 3 }` on a `POST` is honored, because silently ignoring what you asked for is more surprising than obeying it. A retried non-idempotent request can create the resource twice, so on a `POST` either send an idempotency key or opt out:
 
 ```typescript
 retry: {
   attempts: 3,
-  delay: 0,
-  // when: defaults to ({ response }) => response?.ok === false
+  when: (ctx) => ctx.request.method !== "POST" && default_retry_condition(ctx),
 }
 ```
 

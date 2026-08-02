@@ -12,6 +12,7 @@ import {
 } from "./types.ts";
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 import {
+  default_retry_condition,
   extract_args,
   merge_context,
   merge_options,
@@ -283,7 +284,7 @@ export function fetch_endpoint_factory<
     if (serialized.content_type) request_headers.set("Content-Type", serialized.content_type);
 
     const retry_policy = {
-      when: merged_options.retry?.when ?? ((ctx) => ctx.response?.ok === false),
+      when: merged_options.retry?.when ?? default_retry_condition,
       attempts: merged_options.retry?.attempts ?? 0,
       delay: merged_options.retry?.delay ?? 0,
       recover: merged_options.retry?.recover,

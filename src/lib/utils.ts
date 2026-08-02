@@ -1,4 +1,4 @@
-import type { HeadersInitWithReducer, HTTPFetch, Pathname, Schema } from "./types";
+import type { HeadersInitWithReducer, HTTPFetch, Pathname, RetryPolicy, Schema } from "./types";
 
 function get_entries(source: HeadersInitWithReducer) {
   if (source instanceof Headers) {
@@ -121,3 +121,14 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }
   });
 }
+
+/**
+ * Default {@link RetryPolicy.Condition}: retry transient transport failures and the status codes
+ * that indicate a retry may succeed. Aborts are never retried (the caller asked to stop), and
+ * neither is `UnexpectedError` (user code threw, so retrying re-throws).
+ */
+export const default_retry_condition: RetryPolicy.Condition = ({ response, error }) => {
+  if (error) return error.kind === "NetworkError" || error.kind === "TimeoutError";
+  if (!response) return false;
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+};

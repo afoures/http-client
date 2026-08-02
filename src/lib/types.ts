@@ -133,7 +133,7 @@ export type HeadersInitWithReducer =
 
 /** Types for the per-request `retry` option. */
 export namespace RetryPolicy {
-  /** Decides whether a completed attempt should be retried; defaults to retrying on non-ok responses. */
+  /** Decides whether a completed attempt should be retried; defaults to `default_retry_condition`. */
   export type Condition = (context: {
     request: Request;
     response: Response | undefined;

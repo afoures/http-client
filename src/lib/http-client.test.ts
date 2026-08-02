@@ -2,6 +2,8 @@ import { describe, test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
+import { default_retry_condition } from "./utils.ts";
+import { default_retry_condition as entry_point_retry_condition } from "../index.ts";
 import {
   AbortedError,
   HttpClientError,
@@ -1420,6 +1422,163 @@ describe("fetch_endpoint_factory", () => {
 
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
+  });
+
+  describe("default retry condition", () => {
+    function setup(respond: () => Response | Promise<Response>) {
+      let attempts = 0;
+
+      server.use(
+        http.get(`${API_BASE_URL}/users`, () => {
+          attempts++;
+          return respond();
+        }),
+      );
+
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: new Endpoint({ method: "GET", pathname: "/users" }),
+        custom_fetch: fetch,
+      });
+
+      return { fetch_endpoint, attempts: () => attempts };
+    }
+
+    test("a network error is retried", async () => {
+      const { fetch_endpoint, attempts } = setup(() => HttpResponse.error());
+
+      const result = await fetch_endpoint({ retry: { attempts: 3 } });
+
+      assert.ok(
+        result instanceof NetworkError,
+        `expected NetworkError, got ${result instanceof Error ? result.name : "success"}`,
+      );
+      assert.equal(attempts(), 3);
+    });
+
+    test("a timeout is retried", async () => {
+      const { fetch_endpoint, attempts } = setup(async () => {
+        await delay(200);
+        return HttpResponse.json({});
+      });
+
+      const result = await fetch_endpoint({ timeout: 20, retry: { attempts: 3 } });
+
+      assert.ok(
+        result instanceof TimeoutError,
+        `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+      );
+      assert.equal(attempts(), 3);
+    });
+
+    test("an aborted request is not retried", async () => {
+      const controller = new AbortController();
+      const { fetch_endpoint, attempts } = setup(async () => {
+        controller.abort();
+        await delay(200);
+        return HttpResponse.json({});
+      });
+
+      const result = await fetch_endpoint({
+        signal: controller.signal,
+        retry: { attempts: 3 },
+      });
+
+      assert.ok(
+        result instanceof AbortedError,
+        `expected AbortedError, got ${result instanceof Error ? result.name : "success"}`,
+      );
+      assert.equal(attempts(), 1);
+    });
+
+    for (const status of [408, 429, 500, 503]) {
+      test(`${status} is retried`, async () => {
+        const { fetch_endpoint, attempts } = setup(() =>
+          HttpResponse.json({ error: "nope" }, { status }),
+        );
+
+        const result = await fetch_endpoint({ retry: { attempts: 3 } });
+
+        assert.ok(!(result instanceof Error));
+        assert.equal(result.status, status);
+        assert.equal(attempts(), 3);
+      });
+    }
+
+    test("400 is not retried", async () => {
+      const { fetch_endpoint, attempts } = setup(() =>
+        HttpResponse.json({ error: "bad request" }, { status: 400 }),
+      );
+
+      const result = await fetch_endpoint({ retry: { attempts: 3 } });
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(result.status, 400);
+      assert.equal(attempts(), 1);
+    });
+
+    test("a 302 read with redirect: manual is not retried", async () => {
+      const { fetch_endpoint, attempts } = setup(
+        () =>
+          new Response(null, {
+            status: 302,
+            headers: { Location: `${API_BASE_URL}/elsewhere` },
+          }),
+      );
+
+      const result = await fetch_endpoint({ redirect: "manual", retry: { attempts: 3 } });
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(result.status, 302);
+      assert.equal(attempts(), 1);
+    });
+
+    test("an explicit when overrides the default", async () => {
+      const { fetch_endpoint, attempts } = setup(() =>
+        HttpResponse.json({ error: "bad request" }, { status: 400 }),
+      );
+
+      const result = await fetch_endpoint({
+        retry: { attempts: 3, when: ({ response }) => response?.status === 400 },
+      });
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(attempts(), 3);
+    });
+
+    test("a success is not retried", async () => {
+      const { fetch_endpoint, attempts } = setup(() => HttpResponse.json({ ok: true }));
+
+      const result = await fetch_endpoint({ retry: { attempts: 3 } });
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(attempts(), 1);
+    });
+
+    test("attempts defaults to 0, so nothing is retried without an explicit policy", async () => {
+      const { fetch_endpoint, attempts } = setup(() =>
+        HttpResponse.json({ error: "nope" }, { status: 503 }),
+      );
+
+      const result = await fetch_endpoint({});
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(result.status, 503);
+      assert.equal(attempts(), 1);
+    });
+
+    test("is exported from the package entry point", () => {
+      assert.equal(typeof entry_point_retry_condition, "function");
+      assert.equal(entry_point_retry_condition, default_retry_condition);
+      assert.equal(
+        entry_point_retry_condition({
+          request: new Request(`${API_BASE_URL}/users`),
+          response: new Response(null, { status: 503 }),
+          error: undefined,
+        }),
+        true,
+      );
+    });
   });
 });
 
