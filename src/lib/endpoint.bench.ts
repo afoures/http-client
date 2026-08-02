@@ -236,16 +236,9 @@ bench("Endpoint - union types in schema", () => {
     pathname: "/users",
     body: {
       schema: z.object({
-        role: z.union([
-          z.literal("admin"),
-          z.literal("user"),
-          z.literal("guest"),
-        ]),
+        role: z.union([z.literal("admin"), z.literal("user"), z.literal("guest")]),
         status: z.enum(["active", "inactive", "pending"]),
-        metadata: z.record(
-          z.string(),
-          z.union([z.string(), z.number(), z.boolean()]),
-        ),
+        metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
       }),
       serialize: "json",
     },

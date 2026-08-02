@@ -1,5 +1,6 @@
 import { Endpoint, type AnyEndpoint } from "./endpoint.ts";
 import {
+  type ErrorMessage,
   type HTTPFetch,
   type HTTPMethod,
   type MaybePromise,
@@ -88,10 +89,47 @@ type ContextUnion<endpoints> = {
 
 type ContextKeys<union> = union extends unknown ? keyof union : never;
 
+/** The union of every declared type for `key` across the endpoint tree's contexts. */
+type context_value<union, key extends PropertyKey> = union extends unknown
+  ? key extends keyof union
+    ? union[key]
+    : never
+  : never;
+
+/**
+ * `false` for any member whose type for `key` is not mutually assignable with the union of every
+ * member's type for `key`. Distributes, so the result is `true | false` when any member disagrees.
+ * Members that do not declare `key` at all yield `true`: an endpoint that ignores a key cannot
+ * conflict over it.
+ */
+type member_matches<union, key extends PropertyKey, all> = union extends unknown
+  ? key extends keyof union
+    ? [union[key]] extends [all]
+      ? [all] extends [union[key]]
+        ? true
+        : false
+      : false
+    : true
+  : never;
+
+/**
+ * Whether every endpoint declaring `key` declares it with the same type. Mutual assignability
+ * rather than union cardinality, so `boolean` (which is `true | false`) and a single endpoint's
+ * `string | number` are both consistent.
+ */
+type is_consistent<union, key extends PropertyKey> =
+  false extends member_matches<union, key, context_value<union, key>> ? false : true;
+
 /**
  * The shape accepted by the client-level `context` of {@link HttpClientConfig}: the merged context
  * of every endpoint in the tree, with all keys optional. Use it to constrain a wrapper's own
  * context type parameter.
+ *
+ * A key that several endpoints declare with conflicting types resolves to an {@link ErrorMessage}
+ * rather than a usable type: the key stays optional, so a tree containing such a key is fine as
+ * long as no client-level default is set for it, and setting one is a compile error. Without the
+ * check, the default would be accepted and would then make the key *optional* at a call site whose
+ * endpoint cannot accept its type.
  *
  * @example
  * const endpoints = { users: { get: get_user_endpoint } };
@@ -101,15 +139,15 @@ type ContextKeys<union> = union extends unknown ? keyof union : never;
  *   return http_client(endpoints, config);
  * }
  */
-export type ClientContext<endpoints> = {
-  [key in ContextKeys<ContextUnion<endpoints>>]?: ContextUnion<endpoints> extends infer member
-    ? member extends unknown
-      ? key extends keyof member
-        ? member[key]
-        : never
-      : never
-    : never;
-};
+export type ClientContext<endpoints> = [ContextUnion<endpoints>] extends [infer union]
+  ? {
+      [key in ContextKeys<union>]?: is_consistent<union, key> extends true
+        ? context_value<union, key>
+        : ErrorMessage<`context key '${key extends string
+            ? key
+            : "<symbol>"}' is declared with conflicting types across endpoints; give it the same type in every endpoint, or use separate clients`>;
+    }
+  : never;
 
 /**
  * Keys covered by client-level defaults. `never` marks a config that declares no defaults, and must

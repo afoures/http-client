@@ -95,7 +95,9 @@ const api = http_client(
 ```
 
 The `context` option is typed as the merged shape of every endpoint's declared context, so your
-editor proposes the valid keys and rejects unknown or mistyped ones.
+editor proposes the valid keys and rejects unknown or mistyped ones. A key that several endpoints
+declare with [conflicting types](./dynamic-context.md#shared-keys-must-agree-on-their-type) cannot
+take a client-level default.
 
 Context is merged in this order (later overrides earlier):
 

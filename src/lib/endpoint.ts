@@ -460,7 +460,7 @@ export class Endpoint<
     const parse_response = async (parser: Required<Parser.Any>): Promise<unknown | ParseError> => {
       if (parser.parse == null) {
         return new ParseError("Response parsing failed", {
-          cause: new Error("parser.parse in not defined"),
+          cause: new Error("parser.parse is not defined"),
           operation: "parse_response",
           response: {
             status,

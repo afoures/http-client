@@ -8,6 +8,7 @@ import {
 } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import { define_context } from "./endpoint.ts";
+import { type ErrorMessage } from "./types.ts";
 import z from "zod";
 
 type Equal<left, right> =
@@ -221,3 +222,97 @@ const both = create_precise_client({
   context: { tz: "Europe/Paris", locale: "en" },
 });
 await both.nested.with_default({});
+
+// --- conflicting context keys across endpoints ---
+
+// two endpoints declaring the same key with incompatible types: a client-level default for it would
+// be valid for one endpoint and invalid for the other, so `ClientContext` rejects the value.
+function context_endpoint<context_type>() {
+  return new Endpoint({
+    method: "GET",
+    pathname: "/x",
+    context: define_context<context_type>(),
+    responses: { 200: { schema: () => z.object({ ok: z.boolean() }), parse: "json" } },
+  });
+}
+
+const tenant_string = context_endpoint<{ tenant: string }>();
+const tenant_number = context_endpoint<{ tenant: number; locale: string }>();
+const tenant_string_too = context_endpoint<{ tenant: string; locale: string }>();
+const tenant_boolean = context_endpoint<{ tenant: boolean }>();
+const tenant_boolean_too = context_endpoint<{ tenant: boolean }>();
+const tenant_widened = context_endpoint<{ tenant: string | number }>();
+
+type ConflictingTenant =
+  ErrorMessage<"context key 'tenant' is declared with conflicting types across endpoints; give it the same type in every endpoint, or use separate clients">;
+
+// 1. a tree with no context at all still accepts a config with no `context`
+http_client({ no_ctx }, { base_url: "x" });
+
+// 2. consistent keys: the client-level default is accepted, and relaxes the key at both call sites
+const consistent = http_client(
+  { tenant_string, tenant_string_too },
+  { base_url: "x", context: { tenant: "acme" } },
+);
+await consistent.tenant_string({});
+await consistent.tenant_string_too({ context: { locale: "fr" } });
+// @ts-expect-error: only `tenant` is defaulted, `locale` is still required
+await consistent.tenant_string_too({});
+
+// 3. conflicting `tenant`: a client-level default for it is rejected
+http_client(
+  { tenant_string, tenant_number },
+  {
+    base_url: "x",
+    // @ts-expect-error: `tenant` is `string` in one endpoint and `number` in another
+    context: { tenant: "acme" },
+  },
+);
+
+// 4. a conflicting key the config leaves alone is fine; it just stays required at every call site
+const conflicting = http_client({ tenant_string, tenant_number }, { base_url: "x" });
+await conflicting.tenant_string({ context: { tenant: "acme" } });
+await conflicting.tenant_number({ context: { tenant: 1, locale: "fr" } });
+// @ts-expect-error: nothing is defaulted, so `tenant` is required
+await conflicting.tenant_string({});
+// @ts-expect-error: nothing is defaulted, so `tenant` is required
+await conflicting.tenant_number({ context: { locale: "fr" } });
+
+// 5. a non-colliding sibling key in the same tree is unaffected
+http_client({ tenant_string, tenant_number }, { base_url: "x", context: { locale: "fr" } });
+
+// 6. `boolean` is `true | false`, so a cardinality-based check would flag it: it must not
+http_client({ tenant_boolean, tenant_boolean_too }, { base_url: "x", context: { tenant: true } });
+
+// 7. a union declared by a single endpoint is consistent with itself
+http_client({ tenant_widened }, { base_url: "x", context: { tenant: 1 } });
+http_client({ tenant_widened }, { base_url: "x", context: { tenant: "acme" } });
+
+// 8. a union in one endpoint and a narrower type in another do collide: `1` would be valid for the
+// first and invalid for the second, which is the exact unsoundness being closed
+http_client(
+  { tenant_widened, tenant_string },
+  {
+    base_url: "x",
+    // @ts-expect-error: `string | number` in one endpoint and `string` in another
+    context: { tenant: "acme" },
+  },
+);
+
+// 9. the wrapper pattern documented on `HttpClientConfig` produces the same diagnostics
+const mixed_endpoints = { billing: tenant_string, metrics: tenant_number };
+
+function create_mixed_client<
+  const default_context extends ClientContext<typeof mixed_endpoints> = never,
+>(config: HttpClientConfig<typeof mixed_endpoints, default_context>) {
+  return http_client(mixed_endpoints, config);
+}
+
+// @ts-expect-error: `tenant` is declared with conflicting types across the tree
+create_mixed_client({ base_url: "x", context: { tenant: "acme" } });
+create_mixed_client({ base_url: "x", context: { locale: "fr" } });
+
+// 10. the resulting shape, pinned: the colliding key carries the diagnostic, the rest are usable
+assert_type<
+  Equal<ClientContext<typeof mixed_endpoints>, { tenant?: ConflictingTenant; locale?: string }>
+>();

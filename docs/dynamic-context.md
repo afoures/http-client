@@ -121,6 +121,31 @@ await api.report({ params: { id: "1" } });
 await api.report({ params: { id: "1" }, context: { tz: "PST" } }); // override a default
 ```
 
+#### Shared keys must agree on their type
+
+A client-level default applies to every endpoint declaring that key, so all of them must declare it
+with the same type. If two endpoints disagree, a client-level default for that key is a compile
+error:
+
+```typescript
+const endpoints = {
+  billing: new Endpoint({ context: define_context<{ tenant: string }>() /* ... */ }),
+  metrics: new Endpoint({ context: define_context<{ tenant: number }>() /* ... */ }),
+};
+
+http_client(endpoints, {
+  base_url: "https://api.example.com",
+  // error: context key 'tenant' is declared with conflicting types across endpoints
+  context: { tenant: "acme" },
+});
+```
+
+The error fires on the value, not on the tree: the same endpoints are fine as long as no
+client-level default is set for `tenant`, and other keys in the config are unaffected. To set one,
+either align the type in every endpoint that declares the key, or split the endpoints across
+separate clients. Endpoint-level defaults and per-call context never collide, since each is typed
+from a single endpoint's context.
+
 ## Type inference
 
 - The response `data` type is inferred from the schema the factory **returns**
