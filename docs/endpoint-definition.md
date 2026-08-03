@@ -108,12 +108,14 @@ const endpoint = new Endpoint(
 The second argument accepts:
 
 - `headers`: Default headers for all requests
-- `timeout`: Request timeout in milliseconds
+- `timeout`: Request timeouts in milliseconds, as `{ total, attempt }` or a bare number (shorthand
+  for `{ total }`)
 - `retry`: Default retry policy
 
-These can be overridden per-request.
+These can be overridden per-request. `headers`, `timeout` and `retry` merge per key, so a default
+that a call does not mention survives.
 
-See [Retry Policy](./retry-policy.md) for retry configuration.
+See [Timeouts](./http-client.md#timeouts) and [Retry Policy](./retry-policy.md) for configuration.
 
 ## Low-level Methods
 

@@ -172,10 +172,43 @@ const result = await api.users.get({
   params: { id: "123" },
   headers: { "X-Custom": "value" },
   signal: abortController.signal,
-  timeout: 5000,
+  timeout: { total: 5000, attempt: 2000 },
   retry: { attempts: 3, delay: 1000 },
 });
 ```
+
+### Timeouts
+
+`timeout` accepts two bounds, and a bare number is shorthand for `{ total }`:
+
+```typescript
+await api.users.get({ params, timeout: 5000 }); // the whole call gets 5 seconds
+await api.users.get({ params, timeout: { total: 5000 } }); // the same thing, spelled out
+await api.users.get({ params, timeout: { attempt: 2000 } }); // each try gets 2s, the call is unbounded
+await api.users.get({ params, timeout: { total: 5000, attempt: 2000 } }); // both
+```
+
+- `total` is the **call deadline**. It covers every attempt, every inter-attempt retry delay, and
+  response parsing. When it expires the call is over: the retry condition is never consulted, and
+  the error reads `Call deadline of 5000ms exceeded`.
+- `attempt` bounds **one try**. It has no default. Use it to cut a hung connection loose so the
+  retry policy can start a fresh one; an expiry goes through `when` like any other failure and is
+  retried by the default condition.
+
+Both are floored and clamped to `0`, and `0` means "already expired", not "disabled": only omitting
+a key leaves that bound off. So a computed budget that runs out fails fast:
+
+```typescript
+// a budget of 0 (or negative) gives a TimeoutError and zero attempts
+await api.users.get({ params, timeout: { total: budget_remaining() } });
+```
+
+`NaN` and `Infinity` have no sensible reading and come back as an `UnexpectedError` with
+`context.operation === "resolve_timeout"`.
+
+The two layers merge per key, so a client-level `{ attempt: 2000 }` survives a per-call
+`{ total: 5000 }` instead of being replaced by it. See
+[Retry Policy](./retry-policy.md#timeouts-and-retries) for how the bounds interact with retries.
 
 ## Headers with Reducers
 

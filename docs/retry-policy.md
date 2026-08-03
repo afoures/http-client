@@ -259,6 +259,55 @@ const endpoint = new Endpoint({
 
 Per-request retry overrides endpoint defaults.
 
+## Timeouts and Retries
+
+`timeout` has two bounds and they sit on opposite sides of the retry loop.
+
+`total` is the call deadline. It covers every attempt **and every delay between them**, so it caps
+the wall-clock time of the whole retry sequence:
+
+```typescript
+const result = await api.users.get({
+  params: { id: "123" },
+  timeout: { total: 5000 },
+  retry: { attempts: 4, delay: 1000 },
+});
+// gives up 5 seconds in, wherever it happens to be: mid-request or mid-delay
+```
+
+It is **terminal**. A blown deadline is never offered to `when`, because the budget is gone and
+retrying it is incoherent, and because `default_retry_condition` retries `TimeoutError`, so the
+call would otherwise keep going until `attempts` ran out. The error reads
+`Call deadline of 5000ms exceeded`.
+
+`attempt` bounds a single try and is **retryable**, which is the entire point of it: it exists to
+cut a hung connection loose so the policy can start a fresh one.
+
+```typescript
+const result = await api.users.get({
+  params: { id: "123" },
+  timeout: { attempt: 2000 },
+  retry: { attempts: 3, delay: 1000 },
+});
+// three tries, each cut at 2 seconds, with a second of delay between them
+```
+
+Combine them to bound both:
+
+```typescript
+const result = await api.users.get({
+  params: { id: "123" },
+  timeout: { total: 5000, attempt: 2000 },
+  retry: { attempts: 4, delay: 1000 },
+});
+// no try runs past 2 seconds, and the whole thing is over by 5
+```
+
+An abort during a delay ends the call, and the error tells you where it came from: a caller's
+`AbortController` gives an `AbortedError`, a `total` expiry or a caller-supplied
+`AbortSignal.timeout(n)` gives a `TimeoutError`. Both carry
+`context.operation === "retry_delay"` and the attempt number that had just completed.
+
 ## AbortSignal with Retry
 
 Retries respect `AbortSignal`:

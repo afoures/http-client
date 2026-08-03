@@ -78,7 +78,7 @@ type GetUserInput = Parameters<typeof client.get_user>[0];
 assert_type<Equal<GetUserInput["params"], { id: string }>>();
 assert_type<Equal<GetUserInput["query"], { include: string; page: string }>>();
 // request-init keys are merged in (OptionalRequestInit + DefaultRequestInit)
-assert_type<Equal<GetUserInput["timeout"], number | undefined>>();
+assert_type<Equal<GetUserInput["timeout"], number | HTTPFetch.TimeoutConfig | undefined>>();
 
 // optional path param flows through the mapped fetch input
 assert_type<

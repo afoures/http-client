@@ -1,10 +1,13 @@
+import type { HTTPFetch } from "./types.ts";
+
 type RequestContext = {
   url: string;
   method: string;
   pathname?: string;
   baseUrl?: string;
   headers?: Headers;
-  timeout?: number;
+  /** The normalized timeouts the call ran under, never the shorthand number the caller may have passed. */
+  timeout?: HTTPFetch.TimeoutConfig;
 };
 
 type ResponseContext = {

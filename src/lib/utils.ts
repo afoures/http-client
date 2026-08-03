@@ -85,11 +85,39 @@ export function remove_custom_options(
   return rest;
 }
 
+function to_timeout_config(
+  value: number | HTTPFetch.TimeoutConfig | undefined,
+): HTTPFetch.TimeoutConfig {
+  return typeof value === "number" ? { total: value } : (value ?? {});
+}
+
+/**
+ * Merge `timeout` per key, like `retry`, so a client-level `{ attempt }` survives a per-call
+ * `{ total }` instead of being replaced wholesale. An empty result collapses back to `undefined`
+ * so `ErrorContext` never carries a meaningless `{}`. Shape only: validation belongs to the caller,
+ * since this is a synchronous util with nowhere to put an error.
+ */
+function merge_timeout(
+  left: number | HTTPFetch.TimeoutConfig | undefined,
+  right: number | HTTPFetch.TimeoutConfig | undefined,
+): HTTPFetch.TimeoutConfig | undefined {
+  const merged = { ...to_timeout_config(left), ...to_timeout_config(right) };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/** The result of {@link merge_options}: the two custom keys resolved, and `headers` always present. */
+export type MergedOptions = Omit<
+  HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
+  "timeout"
+> & {
+  timeout?: HTTPFetch.TimeoutConfig;
+};
+
 export function merge_options(
   ...sources: Array<HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit>
-) {
+): MergedOptions & { headers: Headers } {
   return {
-    ...sources.reduce((acc, source) => {
+    ...sources.reduce<MergedOptions>((acc, source) => {
       return {
         ...acc,
         ...source,
@@ -99,6 +127,7 @@ export function merge_options(
             : acc.signal
           : source.signal,
         retry: { ...acc.retry, ...source.retry },
+        timeout: merge_timeout(acc.timeout, source.timeout),
       };
     }, {}),
     headers: merge_headers(...sources.map((source) => source.headers)),

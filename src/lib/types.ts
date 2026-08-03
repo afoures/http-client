@@ -383,10 +383,21 @@ export namespace HTTPFetch {
     headers?: HeadersInitWithReducer;
   } & Omit<RequestInit, "body" | "method" | "headers">;
 
+  /**
+   * Request timeouts in milliseconds. Both keys are floored and clamped to `0`, and `0` means
+   * "already expired", not "disabled": only omitting a key leaves that bound off.
+   */
+  export type TimeoutConfig = {
+    /** Bounds the whole call: every attempt, every inter-attempt delay, and response parsing. Terminal, so an expiry is never offered to the retry condition. */
+    total?: number;
+    /** Bounds a single attempt. No default; use it to cut a hung connection loose and retry. Retryable, so an expiry goes through the retry condition like any other failure. */
+    attempt?: number;
+  };
+
   /** Client-specific request options layered on top of `RequestInit`. */
   export type OptionalRequestInit = {
-    /** Request timeout in milliseconds. */
-    timeout?: number;
+    /** Request timeout in milliseconds. A bare number is shorthand for `{ total }`. */
+    timeout?: number | TimeoutConfig;
     /** Retry policy for this request. */
     retry?: RetryPolicy.Configuration;
   };

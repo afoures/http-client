@@ -195,6 +195,29 @@ describe("merge_options", () => {
     assert.equal(result.retry?.delay, 1000);
   });
 
+  test("timeout merging is per key, like retry", () => {
+    const result = merge_options({ timeout: { attempt: 1000 } }, { timeout: { total: 5000 } });
+    assert.deepEqual(result.timeout, { attempt: 1000, total: 5000 });
+  });
+
+  test("a later timeout key overrides an earlier one and leaves the rest", () => {
+    const result = merge_options(
+      { timeout: { total: 5000, attempt: 1000 } },
+      { timeout: { attempt: 2000 } },
+    );
+    assert.deepEqual(result.timeout, { total: 5000, attempt: 2000 });
+  });
+
+  test("a bare number is normalized to `{ total }` before merging", () => {
+    const result = merge_options({ timeout: 3000 }, { timeout: { attempt: 500 } });
+    assert.deepEqual(result.timeout, { total: 3000, attempt: 500 });
+  });
+
+  test("no timeout anywhere stays undefined rather than an empty object", () => {
+    const result = merge_options({ retry: { attempts: 1 } }, {});
+    assert.equal(result.timeout, undefined);
+  });
+
   test("headers delegation to merge_headers", () => {
     const result = merge_options(
       { headers: { "Content-Type": "text/plain" } },
@@ -220,7 +243,7 @@ describe("merge_options", () => {
     assert.equal(result.headers.get("x-default"), "value1");
     assert.equal(result.headers.get("x-override"), "value2");
     assert.ok(result.signal instanceof AbortSignal);
-    assert.equal(result.timeout, 5000);
+    assert.deepEqual(result.timeout, { total: 5000 });
     assert.equal(result.retry?.attempts, 3);
     assert.equal(result.retry?.delay, 100);
   });

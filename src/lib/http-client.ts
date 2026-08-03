@@ -10,7 +10,13 @@ import {
   type RetryPolicy,
   type Schema,
 } from "./types.ts";
-import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
+import {
+  AbortedError,
+  NetworkError,
+  TimeoutError,
+  UnexpectedError,
+  type ErrorContext,
+} from "./errors.ts";
 import {
   default_retry_condition,
   extract_args,
@@ -34,6 +40,59 @@ type ValidateEndpointMap<endpoints> = {
 };
 
 type CustomFetch = (request: Request) => Promise<Response>;
+
+/**
+ * Floor and clamp both keys, collapsing an empty result to `undefined`. Normalization is required
+ * rather than defensive: `AbortSignal.timeout` throws a `RangeError` on a fractional or negative
+ * delay, and `timeout: budget_remaining / 2` reaches both. Clamping lands on the right semantics
+ * too, since a negative budget is an exhausted budget.
+ *
+ * `NaN` and `Infinity` have no sensible reading, so they come back as an {@link UnexpectedError}
+ * naming the key. An error rather than a throw: unlike `base_url`, a timeout can be computed from
+ * runtime state, so a bad one is a call outcome, not a construction mistake.
+ */
+function resolve_timeout(
+  value: number | HTTPFetch.TimeoutConfig | undefined,
+  context: Partial<ErrorContext>,
+): HTTPFetch.TimeoutConfig | undefined | UnexpectedError {
+  const config = typeof value === "number" ? { total: value } : value;
+  const resolved: HTTPFetch.TimeoutConfig = {};
+
+  for (const key of ["total", "attempt"] as const) {
+    const raw = config?.[key];
+    if (raw === undefined) continue;
+    if (!Number.isFinite(raw)) {
+      return new UnexpectedError(
+        `Invalid timeout.${key}: ${raw}. Expected a finite number of milliseconds.`,
+        { cause: raw, operation: "resolve_timeout", ...context },
+      );
+    }
+    resolved[key] = Math.max(0, Math.floor(raw));
+  }
+
+  return resolved.total === undefined && resolved.attempt === undefined ? undefined : resolved;
+}
+
+/**
+ * A budget of `0` is exhausted from the outset, but `AbortSignal.timeout(0)` fires on a timer, so
+ * it would still let one attempt start. Abort synchronously instead, keeping the reason shaped like
+ * the runtime's so both paths classify identically.
+ */
+function deadline_signal_for(total: number): AbortSignal {
+  return total === 0
+    ? AbortSignal.abort(
+        new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+      )
+    : AbortSignal.timeout(total);
+}
+
+/** `undefined` for no signals, the signal itself for one, `AbortSignal.any` beyond that. */
+function combine(...signals: Array<AbortSignal | null | undefined>): AbortSignal | undefined {
+  const present = signals.filter((signal) => signal != null);
+  if (present.length === 0) return undefined;
+  if (present.length === 1) return present[0];
+  return AbortSignal.any(present);
+}
 
 type Hooks = {
   on_request?: (request: Request) => void;
@@ -225,6 +284,23 @@ export function fetch_endpoint_factory<
 
     let request_headers = headers;
 
+    const resolved_timeout = resolve_timeout(merged_options.timeout, {
+      request: { url: base_url, method: endpoint.method, baseUrl: base_url },
+      timing: { startTime: start_time },
+    });
+    if (resolved_timeout instanceof Error) return resolved_timeout;
+    const timeout = resolved_timeout;
+
+    /**
+     * Built once, before anything else the call does, so `total` really is the call deadline: it
+     * covers URL generation, body serialization, every attempt, every inter-attempt delay, and
+     * response parsing. `call_signal` governs the sleep as well as every attempt, which is why no
+     * remaining-budget arithmetic is needed anywhere below.
+     */
+    const deadline_signal =
+      timeout?.total !== undefined ? deadline_signal_for(timeout.total) : undefined;
+    const call_signal = combine(merged_options.signal, deadline_signal);
+
     const url = await endpoint
       .generate_url(
         {
@@ -295,12 +371,71 @@ export function fetch_endpoint_factory<
     let response: Response | undefined;
     let error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
 
+    /**
+     * A `total` expiry is reported against the deadline it blew rather than by inspecting `reason`,
+     * so the message names the configured budget and the two timeouts stay distinguishable in the
+     * error with no extra field. Anything else is classified from the reason, which may be any
+     * value at all since `AbortController.abort(reason)` accepts one: a caller passing
+     * `AbortSignal.timeout(n)` gets a `TimeoutError`, a plain `abort()` an `AbortedError`.
+     */
+    function classify_abort(reason: unknown, operation: string) {
+      const context = {
+        operation,
+        request: {
+          url: url instanceof URL ? url.toString() : base_url,
+          method: endpoint.method,
+          timeout,
+          baseUrl: base_url,
+        },
+        timing: { startTime: start_time, duration: Date.now() - start_time, attempt },
+      } satisfies Partial<ErrorContext>;
+
+      if (deadline_signal?.aborted) {
+        return new TimeoutError(`Call deadline of ${timeout?.total}ms exceeded`, {
+          cause: deadline_signal.reason,
+          ...context,
+        });
+      }
+
+      const message = reason instanceof Error ? reason.message : "The operation was aborted";
+      return reason instanceof Error && reason.name === "TimeoutError"
+        ? new TimeoutError(message, { cause: reason, ...context })
+        : new AbortedError(message, { cause: reason, ...context });
+    }
+
+    /**
+     * A `total` expiry must never reach `when`: the budget is gone, so retrying is incoherent, and
+     * `default_retry_condition` retries `TimeoutError`, which would otherwise loop until attempts
+     * run out. The two timeouts are told apart by checking the deadline signal directly rather than
+     * by inspecting the error, since an `attempt` expiry produces an identical `TimeoutError`.
+     */
+    function terminal_abort(operation: string) {
+      if (deadline_signal?.aborted) return classify_abort(deadline_signal.reason, operation);
+      if (merged_options.signal?.aborted) {
+        return classify_abort(merged_options.signal.reason, operation);
+      }
+      return undefined;
+    }
+
     do {
       response = undefined;
-      const signals: Array<AbortSignal> = [];
-      if (merged_options.signal) signals.push(merged_options.signal);
-      if (merged_options.timeout) signals.push(AbortSignal.timeout(merged_options.timeout));
-      const abort_signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+
+      /**
+       * Catches a deadline or caller abort that landed before this attempt: during URL generation,
+       * during a `when` / `attempts` / `recover` callback, or on a `total` of `0`. Without it the
+       * loop would start an attempt whose signal is already aborted, which works but wastes a trip
+       * through `fetch`.
+       */
+      const pending_abort = terminal_abort("fetch");
+      if (pending_abort) {
+        error = pending_abort;
+        break;
+      }
+
+      const attempt_signal = combine(
+        call_signal,
+        timeout?.attempt !== undefined ? AbortSignal.timeout(timeout.attempt) : undefined,
+      );
 
       try {
         request = new Request(url, {
@@ -308,7 +443,7 @@ export function fetch_endpoint_factory<
           method: endpoint.method,
           body: serialized.body,
           headers: request_headers,
-          signal: abort_signal,
+          signal: attempt_signal,
         });
       } catch (local_error) {
         error = new UnexpectedError("Failed to create request", {
@@ -318,7 +453,7 @@ export function fetch_endpoint_factory<
             url: url instanceof URL ? url.toString() : base_url,
             method: endpoint.method,
             headers,
-            timeout: merged_options.timeout,
+            timeout,
             baseUrl: base_url,
           },
           timing: { startTime: start_time, attempt: 1 },
@@ -340,7 +475,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: merged_options.timeout,
+              timeout,
             },
             timing: {
               startTime: start_time,
@@ -355,7 +490,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: merged_options.timeout,
+              timeout,
             },
             timing: {
               startTime: start_time,
@@ -370,7 +505,7 @@ export function fetch_endpoint_factory<
             request: {
               url: request.url,
               method: request.method,
-              timeout: merged_options.timeout,
+              timeout,
             },
             timing: {
               startTime: start_time,
@@ -381,6 +516,13 @@ export function fetch_endpoint_factory<
         }
       }
 
+      const settled_abort = terminal_abort("fetch");
+      if (settled_abort) {
+        error = settled_abort;
+        break;
+      }
+
+      let delay = 0;
       try {
         const should_retry = await retry_policy.when({
           request,
@@ -395,13 +537,10 @@ export function fetch_endpoint_factory<
             : retry_policy.attempts;
         if (attempt >= max_attempts) break;
 
-        const delay =
+        delay =
           typeof retry_policy.delay === "function"
             ? await retry_policy.delay({ request, response, error, attempt })
             : retry_policy.delay;
-        if (delay > 0) {
-          await sleep(delay, abort_signal);
-        }
       } catch (local_error) {
         error = new UnexpectedError("Failed to check retry policy", {
           cause: local_error,
@@ -409,7 +548,7 @@ export function fetch_endpoint_factory<
           request: {
             url: url instanceof URL ? url.toString() : base_url,
             method: endpoint.method,
-            timeout: merged_options.timeout,
+            timeout,
             baseUrl: base_url,
           },
           timing: {
@@ -420,6 +559,20 @@ export function fetch_endpoint_factory<
           },
         });
         break;
+      }
+
+      /**
+       * Outside the retry-policy try block: `sleep` only ever rejects on abort, and routing that
+       * through the catch above would launder any abort into an `UnexpectedError` and end the call
+       * with "Failed to check retry policy".
+       */
+      if (delay > 0) {
+        try {
+          await sleep(delay, call_signal);
+        } catch (reason) {
+          error = classify_abort(reason, "retry_delay");
+          break;
+        }
       }
 
       if (retry_policy.recover) {
@@ -439,7 +592,7 @@ export function fetch_endpoint_factory<
             request: {
               url: url instanceof URL ? url.toString() : base_url,
               method: endpoint.method,
-              timeout: merged_options.timeout,
+              timeout,
               baseUrl: base_url,
             },
             timing: { startTime: start_time, attempt },
@@ -464,7 +617,7 @@ export function fetch_endpoint_factory<
         request: {
           url: url instanceof URL ? url.toString() : base_url,
           method: endpoint.method,
-          timeout: merged_options.timeout,
+          timeout,
           baseUrl: base_url,
         },
         timing: { startTime: start_time, attempt },
@@ -500,7 +653,7 @@ export function fetch_endpoint_factory<
         request: {
           url: response.url,
           method: request?.method,
-          timeout: merged_options.timeout,
+          timeout,
           baseUrl: base_url,
         },
         response: {

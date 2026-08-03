@@ -13,6 +13,7 @@ import {
   TimeoutError,
   UnexpectedError,
 } from "./errors.ts";
+import type { HTTPFetch } from "./types.ts";
 import z from "zod";
 import { setupServer } from "msw/node";
 import { delay, http, HttpResponse } from "msw";
@@ -213,6 +214,346 @@ describe("fetch_endpoint_factory", () => {
     const result = await fetch_endpoint({ timeout: 10 });
 
     assert.ok(result instanceof TimeoutError);
+  });
+
+  describe("timeout", () => {
+    /** Answers instantly with `503`, so only the timeout config decides when the call ends. */
+    function serve_instant_503() {
+      let attempts = 0;
+      server.use(
+        http.get(`${API_BASE_URL}/users`, () => {
+          attempts++;
+          return HttpResponse.json({ message: "unavailable" }, { status: 503 });
+        }),
+      );
+      return () => attempts;
+    }
+
+    /** Answers after `ms`, so an `attempt` bound shorter than `ms` always cuts the attempt. */
+    function serve_slow(ms: number) {
+      let attempts = 0;
+      server.use(
+        http.get(`${API_BASE_URL}/users`, async () => {
+          attempts++;
+          await delay(ms);
+          return HttpResponse.json({});
+        }),
+      );
+      return () => attempts;
+    }
+
+    function make_client(
+      client_options?: HTTPFetch.OptionalRequestInit,
+      endpoint_options?: HTTPFetch.OptionalRequestInit,
+    ) {
+      return fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: new Endpoint({ method: "GET", pathname: "/users" }, endpoint_options),
+        custom_fetch: fetch,
+        get_default_options: () => client_options ?? {},
+      });
+    }
+
+    describe("semantics", () => {
+      test("`total` bounds the whole call, delays included", async () => {
+        const attempts = serve_instant_503();
+        const fetch_endpoint = make_client();
+        const started = Date.now();
+
+        const result = await fetch_endpoint({
+          timeout: { total: 100 },
+          retry: { attempts: 4, delay: 50 },
+        });
+        const elapsed = Date.now() - started;
+
+        assert.ok(
+          result instanceof TimeoutError,
+          `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.match(result.message, /Call deadline of 100ms exceeded/);
+        assert.ok(elapsed < 250, `expected the call to end near 100ms, took ${elapsed}ms`);
+        assert.ok(attempts() >= 2, `expected more than one attempt, got ${attempts()}`);
+      });
+
+      test("`attempt` bounds one try and leaves the rest of the budget alone", async () => {
+        const attempts = serve_slow(60);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({
+          timeout: { attempt: 30 },
+          retry: { attempts: 3 },
+        });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.equal(attempts(), 3);
+      });
+
+      test("`total` and `attempt` together: attempts are cut, the call ends on the deadline", async () => {
+        const attempts = serve_slow(60);
+        const fetch_endpoint = make_client();
+        const started = Date.now();
+
+        const result = await fetch_endpoint({
+          timeout: { total: 200, attempt: 30 },
+          retry: { attempts: 20 },
+        });
+        const elapsed = Date.now() - started;
+
+        assert.ok(result instanceof TimeoutError);
+        assert.match(result.message, /Call deadline of 200ms exceeded/);
+        assert.ok(elapsed < 400, `expected the call to end near 200ms, took ${elapsed}ms`);
+        assert.ok(attempts() >= 2, `expected several cut attempts, got ${attempts()}`);
+      });
+
+      test("a bare number is shorthand for `{ total }`", async () => {
+        const attempts = serve_instant_503();
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({
+          timeout: 100,
+          retry: { attempts: 4, delay: 50 },
+        });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.match(result.message, /Call deadline of 100ms exceeded/);
+        assert.deepEqual(result.context.request?.timeout, { total: 100 });
+        assert.ok(attempts() >= 2);
+      });
+
+      test("regression: an `attempt` bound no longer fires during the retry delay", async () => {
+        const attempts = serve_instant_503();
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({
+          timeout: { attempt: 50 },
+          retry: { attempts: 3, delay: 100 },
+        });
+
+        assert.ok(
+          !(result instanceof Error),
+          `expected the third response, got ${result instanceof Error ? `${result.name}: ${result.message}` : "success"}`,
+        );
+        assert.equal(result.status, 503);
+        assert.equal(attempts(), 3);
+      });
+    });
+
+    describe("terminal versus retryable", () => {
+      test("a `total` expiry never reaches `when`", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+        const when_calls: number[] = [];
+
+        const result = await fetch_endpoint({
+          timeout: { total: 30 },
+          retry: {
+            attempts: 3,
+            when: () => {
+              when_calls.push(1);
+              return true;
+            },
+          },
+        });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.equal(when_calls.length, 0, "a blown deadline was offered to the retry condition");
+        assert.equal(attempts(), 1);
+      });
+
+      test("an `attempt` expiry reaches `when` and is retried by default", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+        const seen: Array<string | undefined> = [];
+
+        await fetch_endpoint({
+          timeout: { attempt: 20 },
+          retry: {
+            attempts: 3,
+            when: (ctx) => {
+              seen.push(ctx.error?.name);
+              return default_retry_condition(ctx);
+            },
+          },
+        });
+
+        assert.deepEqual(seen, ["TimeoutError", "TimeoutError", "TimeoutError"]);
+        assert.equal(attempts(), 3);
+      });
+
+      test("the two expiries are distinguishable by message", async () => {
+        serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const deadline = await fetch_endpoint({ timeout: { total: 20 } });
+        const per_attempt = await fetch_endpoint({ timeout: { attempt: 20 } });
+
+        assert.ok(deadline instanceof TimeoutError);
+        assert.ok(per_attempt instanceof TimeoutError);
+        assert.match(deadline.message, /Call deadline of 20ms exceeded/);
+        assert.doesNotMatch(per_attempt.message, /Call deadline/);
+      });
+    });
+
+    describe("abort classification", () => {
+      test("an abort mid-delay yields an AbortedError, not an UnexpectedError", async () => {
+        serve_instant_503();
+        const fetch_endpoint = make_client();
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 30);
+
+        const result = await fetch_endpoint({
+          signal: controller.signal,
+          retry: { attempts: 3, delay: 200 },
+        });
+
+        assert.ok(
+          result instanceof AbortedError,
+          `expected AbortedError, got ${result instanceof Error ? `${result.name}: ${result.message}` : "success"}`,
+        );
+        assert.equal(result.context.operation, "retry_delay");
+      });
+
+      test("a non-Error abort reason is carried through as the cause", async () => {
+        serve_instant_503();
+        const fetch_endpoint = make_client();
+        const controller = new AbortController();
+        setTimeout(() => controller.abort("gone"), 30);
+
+        const result = await fetch_endpoint({
+          signal: controller.signal,
+          retry: { attempts: 3, delay: 200 },
+        });
+
+        assert.ok(result instanceof AbortedError);
+        assert.equal(result.cause, "gone");
+        assert.equal(result.message, "The operation was aborted");
+      });
+
+      test("a caller-supplied timeout signal firing mid-delay yields a TimeoutError", async () => {
+        serve_instant_503();
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({
+          signal: AbortSignal.timeout(30),
+          retry: { attempts: 3, delay: 200 },
+        });
+
+        assert.ok(
+          result instanceof TimeoutError,
+          `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.doesNotMatch(result.message, /Call deadline/);
+      });
+
+      test("a delay abort reports the attempt that just completed", async () => {
+        serve_instant_503();
+        const fetch_endpoint = make_client();
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 30);
+
+        const result = await fetch_endpoint({
+          signal: controller.signal,
+          retry: { attempts: 3, delay: 200 },
+        });
+
+        assert.ok(result instanceof AbortedError);
+        assert.equal(result.context.timing?.attempt, 1);
+      });
+    });
+
+    describe("normalization", () => {
+      test("a fractional value is floored instead of throwing a RangeError", async () => {
+        serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { total: 1.5 } });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.deepEqual(result.context.request?.timeout, { total: 1 });
+      });
+
+      test("a negative value is an exhausted budget, not a RangeError", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { total: -1 } });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.deepEqual(result.context.request?.timeout, { total: 0 });
+        assert.equal(attempts(), 0);
+      });
+
+      test("`0` means immediately, not never", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { total: 0 } });
+
+        assert.ok(
+          result instanceof TimeoutError,
+          `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.match(result.message, /Call deadline of 0ms exceeded/);
+        assert.equal(attempts(), 0);
+      });
+
+      test("a non-finite value is a caller error naming the key", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { total: Number.NaN } });
+
+        assert.ok(
+          result instanceof UnexpectedError,
+          `expected UnexpectedError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.equal(result.context.operation, "resolve_timeout");
+        assert.match(result.message, /timeout\.total/);
+        assert.equal(attempts(), 0);
+      });
+
+      test("an explicit `undefined` leaves the call unbounded", async () => {
+        serve_slow(50);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: undefined });
+
+        assert.ok(!(result instanceof Error));
+        assert.equal(result.ok, true);
+      });
+    });
+
+    describe("merging", () => {
+      test("client-level `attempt` survives a per-call `total`", async () => {
+        serve_slow(200);
+        const fetch_endpoint = make_client({ timeout: { attempt: 1000 } });
+
+        const result = await fetch_endpoint({ timeout: { total: 20 } });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.deepEqual(result.context.request?.timeout, { attempt: 1000, total: 20 });
+      });
+
+      test("a per-call `attempt` overrides the client-level one and keeps `total`", async () => {
+        serve_slow(200);
+        const fetch_endpoint = make_client({ timeout: { total: 20, attempt: 1000 } });
+
+        const result = await fetch_endpoint({ timeout: { attempt: 2000 } });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.deepEqual(result.context.request?.timeout, { total: 20, attempt: 2000 });
+      });
+
+      test("a client-level bare number merges with a per-call `attempt`", async () => {
+        serve_slow(200);
+        const fetch_endpoint = make_client({ timeout: 3000 }, { timeout: { total: 20 } });
+
+        const result = await fetch_endpoint({ timeout: { attempt: 500 } });
+
+        assert.ok(result instanceof TimeoutError);
+        assert.deepEqual(result.context.request?.timeout, { total: 20, attempt: 500 });
+      });
+    });
   });
 
   test("AbortSignal handling - before request starts", async () => {
@@ -1456,13 +1797,16 @@ describe("fetch_endpoint_factory", () => {
       assert.equal(attempts(), 3);
     });
 
-    test("a timeout is retried", async () => {
+    test("an attempt timeout is retried", async () => {
       const { fetch_endpoint, attempts } = setup(async () => {
         await delay(200);
         return HttpResponse.json({});
       });
 
-      const result = await fetch_endpoint({ timeout: 20, retry: { attempts: 3 } });
+      const result = await fetch_endpoint({
+        timeout: { attempt: 20 },
+        retry: { attempts: 3 },
+      });
 
       assert.ok(
         result instanceof TimeoutError,

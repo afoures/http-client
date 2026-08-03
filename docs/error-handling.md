@@ -36,9 +36,13 @@ const result = await api.users.get({ params: { id: "123" }, timeout: 1000 });
 
 if (result instanceof TimeoutError) {
   console.log(result.kind); // "TimeoutError"
-  console.log(result.context.operation); // "fetch"
+  console.log(result.context.operation); // "fetch" | "retry_delay"
 }
 ```
+
+The message tells the two bounds apart: a `total` expiry reads `Call deadline of 1000ms exceeded`,
+an `attempt` expiry keeps the runtime's own `The operation was aborted due to timeout`. See
+[Timeouts](./http-client.md#timeouts).
 
 ### `AbortedError`
 
@@ -215,9 +219,27 @@ All errors have a `context` property with the operation that failed:
 ```typescript
 if (result instanceof HttpClientError) {
   result.context.operation;
-  // "fetch" | "generate_url" | "serialize_body" | "parse_response" | "create_request" | "retry_policy" | "..."
+  // "resolve_timeout" | "generate_url" | "serialize_body" | "create_request" | "fetch"
+  // | "retry_policy" | "retry_delay" | "recover" | "parse_response"
 }
 ```
+
+Roughly in the order a call runs through them:
+
+| Operation         | Failed at                                                        |
+| ----------------- | ---------------------------------------------------------------- |
+| `resolve_timeout` | reading `timeout`: a key was `NaN` or `Infinity`                 |
+| `generate_url`    | validating or serializing `params` / `query`                     |
+| `serialize_body`  | validating or serializing `body`                                 |
+| `create_request`  | constructing the `Request`                                       |
+| `fetch`           | the request itself: network failure, timeout, or abort           |
+| `retry_policy`    | a `when`, `attempts` or `delay` callback threw                   |
+| `retry_delay`     | the wait between attempts was cut short by a timeout or an abort |
+| `recover`         | a `recover` callback threw                                       |
+| `parse_response`  | reading or validating the response body                          |
+
+`context.request.timeout` carries the **normalized** `{ total?, attempt? }` the call actually ran
+under, never the bare number a caller may have passed.
 
 ## Raw Response
 
