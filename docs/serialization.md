@@ -77,7 +77,7 @@ const endpoint = new Endpoint({
   pathname: "/users",
   query: {
     schema: z.object({
-      page: z.number().transform(String),
+      page: z.number(),
       search: z.string().optional(),
     }),
   },
@@ -115,7 +115,27 @@ const url = await endpoint.generate_url({
 // https://api.example.com/users?tags=admin,active
 ```
 
-`serialize` is optional (defaulting to `"urlencoded"`) only when the schema output is a shape `URLSearchParams` accepts: `Record<string, string>`, `Array<[string, string]>`, or `undefined`. For anything richer (nested objects, or arrays that aren't key/value pairs) `serialize` is **required** and `"urlencoded"` is no longer offered, since it would stringify nested values into `[object Object]`.
+`serialize` is optional (defaulting to `"urlencoded"`) only when the schema output is a shape the default encoder accepts: a record of `string | number | boolean | null | undefined` values (or arrays of those), a list of `[key, value]` entries, or `undefined`. For anything richer (nested objects, or arrays that aren't key/value pairs) `serialize` is **required** and `"urlencoded"` is no longer offered, since it would stringify nested values into `[object Object]`.
+
+### What `"urlencoded"` encodes to
+
+Several of these shapes have more than one convention in the wild, so the default encoder commits to the ones `URLSearchParams` implements natively (a query is a flat list of name/value pairs, per the WHATWG URL Standard):
+
+| Value               | Encoded as                | Not                                 |
+| ------------------- | ------------------------- | ----------------------------------- |
+| an array            | one repeated key per item | `tags[]=a`, `tags[0]=a`, `tags=a,b` |
+| a number            | `String(value)`           |                                     |
+| a boolean           | `"true"` / `"false"`      | `1` / `0`, a bare valueless flag    |
+| `null`, `undefined` | dropped entirely          | `?cursor=`                          |
+
+```typescript
+{ tags: ["admin", "active"], page: 1, active: true, cursor: null }
+// ?tags=admin&tags=active&page=1&active=true
+```
+
+If your backend expects a different dialect (bracketed array keys, `1`/`0` booleans, an explicit empty value), pass a `serialize` function and build the `URLSearchParams` yourself.
+
+A value the encoder cannot express returns a `SerializationError` naming the key rather than writing `[object Object]`. That is reachable only by casting past the type above, since the compiler already requires `serialize` for those shapes.
 
 ## Body
 

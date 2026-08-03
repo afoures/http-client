@@ -476,17 +476,30 @@ export namespace Serializer {
         ) => Pathname.Params<pathname>;
       });
 
+  /** A value `"urlencoded"` can encode on its own. `null` and `undefined` are dropped from the query string. */
+  export type UrlencodedValue = string | number | boolean | null | undefined;
+
+  /**
+   * The schema outputs `"urlencoded"` can encode: a record whose values are leaves or arrays of
+   * leaves (an array becomes one repeated key per item), a list of `[key, value]` entries, or
+   * nothing at all.
+   */
+  export type UrlencodedCompatible =
+    | Record<string, UrlencodedValue | ReadonlyArray<UrlencodedValue>>
+    | ReadonlyArray<readonly [string, UrlencodedValue]>
+    | undefined;
+
   /**
    * Query-string serializer. `serialize` is `"urlencoded"` (default) or a function returning
-   * `URLSearchParams`. A function is required when the schema output isn't urlencoded-compatible
-   * (`Record<string, string>`, `Array<[string, string]>`, or `undefined`).
+   * `URLSearchParams`. A function is required when the schema output isn't
+   * {@link UrlencodedCompatible}.
    *
    * @example
    * { schema: z.object({ q: z.string() }), serialize: "urlencoded" }
    */
   export type QueryString<schema, context_type = unknown> = {
     schema: SchemaOrFactory<schema, context_type>;
-  } & (schema extends Schema._<any, Array<[string, string]> | Record<string, string> | undefined>
+  } & (schema extends Schema._<any, UrlencodedCompatible>
     ? {
         serialize?:
           | "urlencoded"

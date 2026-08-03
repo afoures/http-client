@@ -59,6 +59,149 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.searchParams.get("page"), "1");
   });
 
+  test("with query string - entry list becomes one key per pair", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.array(z.tuple([z.string(), z.string()])),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: [
+        ["a", "1"],
+        ["b", "2"],
+      ],
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "?a=1&b=2");
+  });
+
+  test("with query string - an array value repeats the key", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({ tags: z.array(z.string()) }),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { tags: ["a", "b"] },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "?tags=a&tags=b");
+    assert.deepEqual(url.searchParams.getAll("tags"), ["a", "b"]);
+  });
+
+  test("with query string - numbers and booleans are stringified", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({ page: z.number(), active: z.boolean() }),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { page: 1, active: true },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "?page=1&active=true");
+  });
+
+  test("with query string - null and undefined values are skipped", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({
+          a: z.string().nullable(),
+          b: z.string().optional(),
+          c: z.string(),
+        }),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { a: null, b: undefined, c: "x" },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "?c=x");
+  });
+
+  test("with query string - an empty array value emits nothing", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({ a: z.array(z.string()) }),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { a: [] },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "");
+  });
+
+  test("with query string - values are percent-encoded and round-trip", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({ q: z.string() }),
+      },
+    });
+    const url = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { q: "a b&c" },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.search, "?q=a+b%26c");
+    assert.equal(url.searchParams.get("q"), "a b&c");
+  });
+
+  test("with query string - a nested object value returns a SerializationError naming the key", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.object({ a: z.object({ nested: z.number() }) }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize: "urlencoded" as any,
+      },
+    });
+    const result = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: { a: { nested: 1 } },
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.equal(result.context.operation, "generate_url");
+    assert.match((result.cause as Error).message, /`a`/);
+  });
+
+  test("with query string - a non-pair array entry returns a SerializationError", async () => {
+    const endpoint = new Endpoint({
+      method: "GET",
+      pathname: "/users",
+      query: {
+        schema: z.array(z.array(z.string())),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize: "urlencoded" as any,
+      },
+    });
+    const result = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      query: [["a", "1", "extra"]],
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.equal(result.context.operation, "generate_url");
+    assert.match((result.cause as Error).message, /\[key, value\] entries/);
+  });
+
   test("with pathname params - without schema", async () => {
     const endpoint = new Endpoint({
       method: "GET",

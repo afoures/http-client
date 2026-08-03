@@ -350,19 +350,25 @@ export class Endpoint<
         }
       } else if (this.#serializers.query.serialize === "urlencoded") {
         if (Array.isArray(transformed_query)) {
-          transformed_query.forEach((tuple, index) => {
-            if (Array.isArray(tuple)) {
-              tuple.forEach((value, tupleIndex) => {
-                search_params.append(`${index}[${tupleIndex}]`, String(value));
+          for (const entry of transformed_query) {
+            if (!Array.isArray(entry) || entry.length !== 2) {
+              return new SerializationError("Query serialization failed", {
+                cause: new Error(
+                  "an array query must be a list of [key, value] entries; use a `serialize` function for any other shape",
+                ),
+                operation: "generate_url",
+                input: { query: init.query },
               });
-            } else {
-              search_params.append(String(index), String(tuple));
             }
-          });
+            const [key, value] = entry;
+            if (!append_query_value(search_params, String(key), value)) {
+              return query_value_error(String(key), init.query);
+            }
+          }
         } else if (transformed_query !== null && typeof transformed_query === "object") {
           for (const [key, value] of Object.entries(transformed_query)) {
-            if (value !== undefined && value !== null) {
-              search_params.set(key, String(value));
+            if (!append_query_value(search_params, key, value)) {
+              return query_value_error(key, init.query);
             }
           }
         }
@@ -567,6 +573,36 @@ function resolve_schema(
   context: unknown,
 ): Schema.Any {
   return typeof schema === "function" ? schema(context) : schema;
+}
+
+type urlencoded_leaf = string | number | boolean;
+
+/**
+ * Append `value` under `key`, expanding an array into one repeated key per item (`?tags=a&tags=b`).
+ * `null` and `undefined` are skipped. Returns `false` for a value `"urlencoded"` cannot encode, so
+ * the caller can surface it as a {@link SerializationError} instead of writing `[object Object]`.
+ */
+function append_query_value(target: URLSearchParams, key: string, value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (!append_query_value(target, key, item)) return false;
+    }
+    return true;
+  }
+  if (typeof value === "object") return false;
+  target.append(key, String(value as urlencoded_leaf));
+  return true;
+}
+
+function query_value_error(key: string, query: unknown): SerializationError {
+  return new SerializationError("Query serialization failed", {
+    cause: new Error(
+      `the query value at \`${key}\` is not urlencoded-compatible; use a \`serialize\` function to encode it`,
+    ),
+    operation: "generate_url",
+    input: { query },
+  });
 }
 
 async function parse_as_json(response: Response): Promise<Json.Value | null> {

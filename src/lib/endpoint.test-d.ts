@@ -296,6 +296,19 @@ new Endpoint({
   pathname: "/search",
   query: { schema: z.array(z.tuple([z.string(), z.string()])) },
 });
+// query: array, number and boolean values are urlencoded-compatible, so `serialize` stays optional
+new Endpoint({
+  method: "GET",
+  pathname: "/search",
+  query: {
+    schema: z.object({
+      tags: z.array(z.string()),
+      page: z.number(),
+      active: z.boolean(),
+      cursor: z.string().nullable().optional(),
+    }),
+  },
+});
 // query: a loose `string[][]` output is NOT urlencoded-compatible (pairs aren't guaranteed)
 new Endpoint({
   method: "GET",
