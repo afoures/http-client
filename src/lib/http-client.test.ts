@@ -609,7 +609,7 @@ describe("fetch_endpoint_factory", () => {
     assert.ok(result instanceof AbortedError);
   });
 
-  test.skip("AbortSignal handling - after request", async () => {
+  test("AbortSignal handling - after request", async () => {
     const endpoint = new Endpoint({
       method: "GET",
       pathname: "/posts/:id",
@@ -621,27 +621,41 @@ describe("fetch_endpoint_factory", () => {
       },
     });
 
-    server.use(
-      http.get(`${API_BASE_URL}/posts/:id`, async () => {
-        return HttpResponse.json({ id: 1, title: "Post 1" });
-      }),
-    );
-
     const controller = new AbortController();
+
+    /**
+     * The abort has to land once `parse_response` has the body, which is the only way into the
+     * `AbortedError` branch of the parse catch: an abort raised any earlier is caught by the
+     * terminal abort check right after the fetch. Driving it from the body's `pull` makes that
+     * ordering deterministic, with two requirements. `highWaterMark: 0`, so nothing is pulled until
+     * a consumer asks for a chunk rather than eagerly at construction; and a stream built here
+     * rather than in an `msw` handler, since `msw` pumps a handler's stream while delivering the
+     * response, before `fetch` even resolves.
+     */
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
-      hooks: {
-        on_response() {
-          controller.abort();
-        },
+      custom_fetch: (request) => {
+        const body = new ReadableStream(
+          {
+            pull(stream_controller) {
+              controller.abort();
+              // what a real `fetch` body does when the caller's signal aborts mid-read
+              stream_controller.error(request.signal.reason);
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        return Promise.resolve(
+          new Response(body, { headers: { "Content-Type": "application/json" } }),
+        );
       },
     });
 
     const result = await fetch_endpoint({ params: { id: 1 }, signal: controller.signal });
 
     assert.ok(result instanceof AbortedError);
+    assert.equal(result.context.operation, "parse_response");
   });
 
   test("retry on failure - success on retry", async () => {

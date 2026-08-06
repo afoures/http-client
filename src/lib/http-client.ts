@@ -94,11 +94,6 @@ function combine(...signals: Array<AbortSignal | null | undefined>): AbortSignal
   return AbortSignal.any(present);
 }
 
-type Hooks = {
-  on_request?: (request: Request) => void;
-  on_response?: (response: Response) => void;
-};
-
 type map_to_fetch_endpoint_functions<endpoints, default_context = {}> = Pretty<{
   -readonly [name in keyof endpoints]: endpoints[name] extends Endpoint<
     infer http_method,
@@ -235,7 +230,6 @@ export function fetch_endpoint_factory<
   custom_fetch,
   get_default_options = () => ({}),
   client_context,
-  hooks = {},
 }: {
   base_url: string;
   endpoint: Endpoint<
@@ -253,7 +247,6 @@ export function fetch_endpoint_factory<
     HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit
   >;
   client_context?: default_context;
-  hooks?: Hooks;
 }) {
   async function fetch_endpoint(
     input: HTTPFetch.TypedParamsInit<pathname, params_schema> &
@@ -463,7 +456,6 @@ export function fetch_endpoint_factory<
 
       try {
         attempt++;
-        hooks.on_request?.(request);
         response = await custom_fetch(request);
         error = undefined;
       } catch (local_error) {
@@ -623,7 +615,6 @@ export function fetch_endpoint_factory<
         timing: { startTime: start_time, attempt },
       });
     }
-    hooks.on_response?.(response);
     const result = await endpoint.parse_response(response, context as any).catch(async (error) => {
       const response_body = await response
         .clone()
