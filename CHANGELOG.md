@@ -2,6 +2,132 @@
 
 This is the changelog for `http-client`.
 
+## 0.7.0
+
+### Breaking Changes
+
+- `HttpClientConfig` is now parameterized by the endpoint tree
+
+  `HttpClientConfig<client_context>` became `HttpClientConfig<endpoints, default_context?>`, so the client-level `context` shape is derived from the endpoints instead of being restated by hand:
+
+  ```ts
+  const endpoints = { rooms };
+
+  function create_my_client<const default_context extends ClientContext<typeof endpoints> = never>(
+    config: HttpClientConfig<typeof endpoints, default_context>,
+  ) {
+    return http_client(endpoints, config);
+  }
+  ```
+
+  The merged context shape is also exported as `ClientContext<endpoints>`, to constrain a wrapper's own context type parameter and keep the client-level defaults precise.
+
+  `default_context` defaults to `never`: without it, a config declares no client-level defaults, so its `context` is rejected and every declared context key stays required at the call site. Thread the type parameter to record the defaults a caller actually passed, which is what makes those keys optional per call.
+
+- `http_client` now throws on an invalid `base_url` instead of returning an error per call
+
+  An unparsable `base_url` is a static misconfiguration: it cannot depend on call input, so it was either always broken or never broken for a given client. It is now validated once in `http_client`, which throws a `TypeError`, rather than making every call return an `UnexpectedError` with `operation: "base_url_validation"`.
+
+  ```ts
+  // throws TypeError: Invalid base_url: /api. Expected an absolute URL parsable by `new URL()`.
+  const api = http_client(endpoints, { base_url: "/api" });
+  ```
+
+  This is the only failure the client throws instead of returning as a value. Call sites that matched on `operation === "base_url_validation"` no longer need that branch.
+
+- Replace `@remix-run/route-pattern` with a built-in pathname parser
+
+  The client no longer depends on `@remix-run/route-pattern`. Pathname patterns are parsed in-house, which leaves the package with no runtime dependencies. The supported syntax is unchanged: static text, `:param`, optional groups `(...)` that nest, and several params in one segment (`/v:major.:minor`). Param names keep the JavaScript identifier charset, `[a-zA-Z_$][a-zA-Z_$0-9]*`.
+
+  Percent-encoding of param values, dropping an optional group whose param is `undefined` or `null`, and reporting every missing required param rather than the first all behave as before.
+
+  A leading optional group that is dropped no longer leaves a protocol-relative `//`. Given `/(:lang)/users` with no `lang`, the generated pathname is now `/users` rather than `//users`, which `new URL()` resolved as the host `users` and so sent the request to a different origin.
+
+  A `?` or `#` in a `pathname` is now rejected, at the type level on the endpoint definition and at runtime when the pattern is compiled. Search params are declared with `query`; previously a `?` was parsed as a search-constraint pattern and a `#` was emitted as path text that `new URL()` then reinterpreted as a fragment.
+
+  Undocumented pattern syntax that came from the library is gone: wildcards (`*rest`), enums (`{a,b}`), and protocol, hostname, port or search patterns. Only pathnames are supported.
+
+  `generate_url` and the `Endpoint` constructor now throw `PathnameError` and `MissingParamsError`, exported from the package root, in place of the library's `CreateHrefError`.
+
+- A client-level `context` default for a key that endpoints declare with conflicting types is now a compile error
+
+  `ClientContext` checks, per key, that every endpoint declaring it agrees on its type. A key two endpoints declare as `string` and `number` resolves to an `ErrorMessage` instead of `string | number`, so supplying a client-level default for it fails to compile.
+
+  ```ts
+  const endpoints = {
+    billing: new Endpoint({ context: define_context<{ tenant: string }>() /* ... */ }),
+    metrics: new Endpoint({ context: define_context<{ tenant: number }>() /* ... */ }),
+  };
+
+  // error: context key 'tenant' is declared with conflicting types across endpoints
+  http_client(endpoints, { base_url: "https://api.example.com", context: { tenant: "acme" } });
+  ```
+
+  Previously this was accepted and unsound: the default made `tenant` optional at every call site, including the one needing a `number`, so a string reached a schema factory expecting a number. The check fires on the value, not the tree: the same endpoints are fine as long as no client-level default is set for the conflicting key. Fix by aligning the type in every endpoint that declares the key, or by using separate clients. Mutually assignable declarations stay valid, so `boolean` on both sides and a single endpoint's `string | number` are unaffected.
+
+- `EndpointMap` is no longer exported from the package root
+
+- The default retry condition now retries transient failures instead of every non-ok response.
+
+  ```typescript
+  // before: ({ response }) => response?.ok === false
+  // after:  retry NetworkError / TimeoutError, and 408, 429, 5xx
+  ```
+
+- `timeout` is now the call deadline, not a per-attempt bound
+
+  It used to bound each attempt, so `{ timeout: 5000, retry: { attempts: 4, delay: 1000 } }` could run for 23 seconds while the config said 5. It now covers the whole call: every attempt, every retry delay, and response parsing.
+
+  ```ts
+  await api.users.get({ timeout: 5000 }); // was 5s per attempt, now 5s for the call
+  await api.users.get({ timeout: { attempt: 5000 } }); // the old behavior
+  ```
+
+  `timeout` accepts `{ total?, attempt? }` and merges per key, so a client-level `{ attempt: 2000 }` survives a per-call `{ total: 5000 }`. `total` is terminal, so an expiry never reaches the retry condition; `attempt` is retryable, which is the point of it. This also fixes an attempt timeout firing during the retry delay, and an abort during a delay surfacing as `UnexpectedError: Failed to check retry policy` instead of an `AbortedError` with `operation: "retry_delay"`.
+
+- `timeout: 0` now means immediately, not never
+
+  A truthy gate made `0` disable the timeout, which was an oversight. Only `undefined` disables it now, so `{ total: 0 }` gives a `TimeoutError` and zero attempts. That is the reading a call deadline needs: people write `timeout: { total: budget_remaining() }`, and an exhausted budget must fail fast.
+
+  Both keys are also floored and clamped to `0`, so `1.5` and `-1` no longer throw a `RangeError` out of the call. `NaN` and `Infinity` come back as an `UnexpectedError` with `operation: "resolve_timeout"` naming the key.
+
+- `ErrorContext.request.timeout` is now a `TimeoutConfig`, not a number
+
+  It carries the normalized `{ total?, attempt? }` the call ran under, so `result.context.request?.timeout` reads `{ total: 5000 }` where it used to read `5000`. Breaking for anyone reading it as a number.
+
+- The default `"urlencoded"` query encoder now handles array values and entry lists correctly
+
+  ```text
+  { tags: ["a", "b"] }       was ?tags=a%2Cb                                    now ?tags=a&tags=b
+  [["a", "1"], ["b", "2"]]   was ?0%5B0%5D=a&0%5B1%5D=1&1%5B0%5D=b&1%5B1%5D=2   now ?a=1&b=2
+  ```
+
+  A value it cannot express (a nested object, or an entry that isn't a `[key, value]` pair) now returns a `SerializationError` naming the key instead of writing `[object Object]`. `null` and `undefined` are still skipped. `serialize` also stays optional for more schemas: numbers, booleans and array values are urlencoded-compatible now, so the cast that used to be needed to reach the comma-join is gone.
+
+### Features
+
+- Add a `kind` discriminant to every response envelope and error class
+
+  Each arm of a call result now carries a `kind` literal named after its own type or class, exported
+  as `HTTPFetch.ResponseKind` and `ErrorKind`. Its everyday use is telling the redirect arm apart
+  from the error responses, which `ok: false` alone does not:
+
+  ```ts
+  if (result instanceof Error) return console.error(result.message, result.context);
+
+  if (result.ok) console.log(result.data);
+  else if (result.kind === "RedirectMessage") console.warn(result.redirect_to);
+  else console.error(result.error);
+  ```
+
+  Because the error classes carry it too, `kind` can also narrow the whole union in one `switch` with
+  no `instanceof` and no value import. That form is for when a prototype check cannot be trusted:
+  after a spread, a clone or a serialization round-trip, or when two copies of this package end up
+  installed.
+
+  Reading a result is unaffected, since `kind` is an added field. Code that builds an envelope by
+  hand, such as a test fixture or a mock, has to add the matching `kind` for it to satisfy the type.
+
 ## 0.6.0
 
 ### Breaking Changes
