@@ -198,19 +198,21 @@ export namespace HTTPFetch {
   };
 
   /**
-   * Discriminant carried by every response envelope, named after the type it identifies. Together
-   * with the error classes' own `kind`, it makes a call result narrowable by a single flat `switch`
-   * with no `instanceof` and no value import, and it survives a spread or a serialization round-trip
-   * where a prototype would not.
+   * Discriminant carried by every response envelope, named after the type it identifies. It tells
+   * the redirect arm apart from the error responses, which `ok: false` alone does not, and unlike a
+   * prototype check it survives a spread or a serialization round-trip.
+   *
+   * Peel the errors off with `instanceof Error`, then narrow the envelopes on `status` (exact per
+   * status schemas, needs a `default` since the status space is open) or on `ok` (two branches, but
+   * `data` stays the union of every declared success shape). Switch on `kind` across the whole union
+   * only when `instanceof` cannot be trusted.
    *
    * @example
-   * switch (result.kind) {
-   *   case "SuccessfulResponse": return result.data;
-   *   case "RedirectMessage": return log(result.redirect_to);
-   *   case "ClientErrorResponse":
-   *   case "ServerErrorResponse": return handle(result.error);
-   *   default: return report(result.context);
-   * }
+   * if (result instanceof Error) return console.error(result.message, result.context);
+   *
+   * if (result.ok) console.log(result.data);
+   * else if (result.kind === "RedirectMessage") console.warn(result.redirect_to);
+   * else console.error(result.error);
    */
   export type ResponseKind =
     | "SuccessfulResponse"

@@ -226,46 +226,66 @@ const endpoint = new Endpoint({
 
 ## Response Handling
 
-All endpoint functions return a union of four response envelopes and the error instances. Every arm
-carries a `kind` literal, so the whole union narrows in one `switch`:
+All endpoint functions return a union of four response envelopes and the error instances. Failures
+are returned, never thrown, so peel them off with a single `instanceof Error` first. That is what
+makes `status` and `ok` reachable, since only the envelopes carry them.
+
+Narrow on `status` when the response schemas differ per code. Each branch then sees the exact
+declared shape:
 
 ```typescript
-const result = await api.users.get({ params: { id: "123" } });
+// declared responses: 200, 201, 404
+const result = await api.users.create({ body: { name: "Ada" } });
 
-switch (result.kind) {
-  case "SuccessfulResponse":
-    console.log(result.data);
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+switch (result.status) {
+  case 200:
+    console.log("already existed", result.data.id);
     break;
-  case "RedirectMessage":
-    console.warn("unexpected redirect to", result.redirect_to);
+  case 201:
+    console.log("created at", result.data.created_at);
     break;
-  case "ClientErrorResponse":
-  case "ServerErrorResponse":
-    console.log(result.error);
+  case 404:
+    console.warn(result.error.message);
     break;
   default:
-    // TimeoutError, NetworkError, SerializationError, etc.
-    console.log(result.message);
+    // undeclared statuses, 204 and 3xx land here, always keep this branch
+    console.warn("unhandled response", result.status);
 }
 ```
 
-Or peel the errors off with `instanceof Error` first, then narrow on `ok` and `status`. Note that
-`ok: false` covers redirects as well as errors, so the `else` of an `ok` check has no `error` field
-until you separate the redirect arm:
+Narrow on `ok` when the endpoint declares a single success shape, or when the call site only needs
+to know whether the request worked:
 
 ```typescript
-if (result instanceof Error) return;
+// declared responses: 200, 404
+const result = await api.users.get({ params: { id: "123" } });
+
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
 
 if (result.ok) {
   console.log(result.data);
 } else if (result.kind === "RedirectMessage") {
-  console.warn(result.redirect_to);
+  console.warn("unexpected redirect to", result.redirect_to);
 } else {
-  console.log(result.error);
+  console.error(result.error); // ClientErrorResponse | ServerErrorResponse
 }
 ```
 
-See [Error Handling](./error-handling.md) for the full list of kinds.
+The redirect arm needs its own branch because `ok: false` covers redirects as well as errors, so the
+`else` of an `ok` check has no `error` field until you separate it out. With `status` the question
+does not come up, since a `case 404` never sees a 3xx.
+
+See [Error Handling](./error-handling.md) for why a `status` chain always needs its `default`, for
+per-error handling, and for narrowing on `kind` when a value has been spread or serialized and
+`instanceof` no longer holds.
 
 ## Type Inference
 

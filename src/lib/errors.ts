@@ -41,11 +41,15 @@ export type ErrorContext = {
 
 /**
  * Discriminant carried by every error the client returns, mirroring `HTTPFetch.ResponseKind` on the
- * response envelopes so a call result can be narrowed by a single flat `switch`. Each value is the
- * class name, matching `name` at runtime; the difference is that `Error` types `name` as `string`,
- * so only `kind` can discriminate a union. Prefer it over `instanceof` when the value may have been
- * spread, cloned or serialized, or when two copies of this package could be installed, since all of
- * those break prototype checks and leave `kind` intact.
+ * response envelopes. Each value is the class name, matching `name` at runtime; the difference is
+ * that `Error` types `name` as `string`, so only `kind` can discriminate a union.
+ *
+ * `instanceof Error` is the check to reach for first, since it separates every failure from the
+ * response envelopes in one branch. Fall back to `kind` when the value may have been spread, cloned
+ * or serialized, or when two copies of this package could be installed, since all of those break
+ * prototype checks and leave `kind` intact.
+ *
+ * `"HttpClientError"` belongs to the base class, which a call never returns on its own.
  */
 export type ErrorKind =
   | "HttpClientError"
@@ -65,12 +69,11 @@ export type ErrorKind =
  *
  * @example
  * const result = await api.users.get({ params: { id: "1" } });
- * if (result instanceof UnexpectedError) return report(result.context);
- * if (result instanceof HttpClientError) return handle(result.context);
+ * if (result instanceof Error) return console.error(result.message, result.context);
  * // result is now a typed response
  */
 export class HttpClientError extends Error {
-  /** Discriminant for a flat `switch` over a call result; narrowed to a literal by each subclass. */
+  /** {@link ErrorKind} discriminant, for when `instanceof` is not available; narrowed to a literal by each subclass. */
   public readonly kind: ErrorKind = "HttpClientError";
 
   /** Structured details about the failure (operation, request, response, timing, input). */
@@ -138,7 +141,7 @@ export class NetworkError extends HttpClientError {
 
 /** Catch-all for the cases where something threw where a value was expected (a schema, serializer, parser or retry callback crashing) or a client invariant broke. Extends `Error` directly, not {@link HttpClientError}, so it cannot be swallowed by a single `instanceof HttpClientError` check. */
 export class UnexpectedError extends Error {
-  /** Discriminant for a flat `switch` over a call result. */
+  /** {@link ErrorKind} discriminant, for when `instanceof` is not available. */
   public readonly kind = "UnexpectedError";
 
   /** Structured details about the failure (operation, request, response, timing, input). */

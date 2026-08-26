@@ -33,6 +33,18 @@ const create_required = new Endpoint({
   responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
 });
 
+// several success codes with different schemas, the case `ok` cannot narrow on its own
+const create_user = new Endpoint({
+  method: "POST",
+  pathname: "/users",
+  body: { schema: z.object({ name: z.string() }), serialize: "json" },
+  responses: {
+    200: { schema: z.object({ id: z.string(), existing: z.literal(true) }), parse: "json" },
+    201: { schema: z.object({ id: z.string(), created_at: z.string() }), parse: "json" },
+    404: { schema: z.object({ message: z.string() }), parse: "json" },
+  },
+});
+
 // optional path param via the `(/:id)` group syntax (no schema)
 const get_user_optional = new Endpoint({
   method: "GET",
@@ -54,6 +66,7 @@ const client = http_client(
   {
     get_user,
     create_required,
+    create_user,
     get_user_optional,
     wildcard,
     // nested endpoint map → mapped recursively
@@ -335,6 +348,89 @@ async function kind_needs_no_peel() {
   use(result.status);
 }
 
+// the documented default: one `instanceof Error` peel, then narrow the envelopes
+async function peel_then_narrow() {
+  const result = await client.get_user({ params: { id: "1" }, query: { include: "a", page: "1" } });
+
+  if (result instanceof Error) {
+    use(result.message);
+    use(result.context);
+    return;
+  }
+
+  if (result.ok) {
+    use(result.data);
+  } else if (result.kind === "RedirectMessage") {
+    assert_type<Equal<typeof result.redirect_to, string | null>>();
+  } else {
+    // only the 4xx and 5xx envelopes are left, so `error` is reachable
+    assert_type<Equal<typeof result.kind, "ClientErrorResponse" | "ServerErrorResponse">>();
+    use(result.error);
+  }
+}
+
+// negative: the redirect arm has no `error`, so it must be split off before the `else`
+async function redirect_has_no_error() {
+  const result = await client.get_user({ params: { id: "1" }, query: { include: "a", page: "1" } });
+  if (result instanceof Error) return;
+
+  if (!result.ok) {
+    // @ts-expect-error: RedirectMessage is still in the union here
+    use(result.error);
+  }
+}
+
+// `status` reaches one declared schema per branch, where `ok` cannot
+async function status_narrows_per_schema() {
+  const result = await client.create_user({ body: { name: "Ada" } });
+  if (result instanceof Error) return;
+
+  if (result.status === 201) {
+    assert_type<Equal<typeof result.data, { id: string; created_at: string }>>();
+    // @ts-expect-error: the 200-only field is not reachable from the 201 arm
+    use(result.data.existing);
+  }
+
+  if (result.status === 404) {
+    assert_type<Equal<typeof result.error, { message: string }>>();
+    // @ts-expect-error: an error arm carries `error`, never `data`
+    use(result.data);
+  }
+}
+
+// the `ok` branch keeps every declared success shape in one union, so no field is directly readable
+async function ok_keeps_the_success_union() {
+  const result = await client.create_user({ body: { name: "Ada" } });
+  if (result instanceof Error) return;
+
+  if (result.ok) {
+    // `void` is an undeclared 2xx, `null` is 204
+    assert_type<
+      Equal<
+        typeof result.data,
+        void | { id: string; existing: true } | { id: string; created_at: string } | null
+      >
+    >();
+    // @ts-expect-error: reading a per-status field still requires narrowing on `status`
+    use(result.data.created_at);
+  }
+}
+
+// negative: a `status` chain is never exhaustive, which is why `default` is required
+async function status_chain_is_open() {
+  const result = await client.create_user({ body: { name: "Ada" } });
+  if (result instanceof Error) return;
+
+  if (result.status === 200) return;
+  if (result.status === 201) return;
+  if (result.status === 404) return;
+
+  // 204, 3xx, undeclared 2xx / 4xx and every 5xx are still in the union here
+  // @ts-expect-error: the remaining envelopes are not assignable to never
+  const leftover: never = result;
+  use(leftover);
+}
+
 // the response-side kinds are exactly the four envelopes
 assert_type<
   Equal<
@@ -343,4 +439,13 @@ assert_type<
   >
 >();
 
-use([exhaustive_switch, non_exhaustive_switch, kind_needs_no_peel]);
+use([
+  exhaustive_switch,
+  non_exhaustive_switch,
+  kind_needs_no_peel,
+  peel_then_narrow,
+  redirect_has_no_error,
+  status_narrows_per_schema,
+  ok_keeps_the_success_union,
+  status_chain_is_open,
+]);

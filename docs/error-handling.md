@@ -117,100 +117,181 @@ if (result instanceof UnexpectedError) {
 
 ## Checking Results
 
-A call resolves to one of four response envelopes or one of seven error instances. There are two
-ways to tell them apart.
-
-### Kind Check
-
-Every arm, response and error alike, carries a `kind` literal, so the whole union narrows in one flat
-`switch` with no `instanceof` and no value import:
+A call resolves to one of four response envelopes or one of six error instances. Every result is
+read the same way: peel the errors off with a single `instanceof Error`, then narrow the envelopes
+that remain.
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
+
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+// `result` is now a response envelope: narrow it on `status` or on `ok`
+```
+
+`instanceof Error` is the single check that covers every failure. `UnexpectedError` extends `Error`
+directly rather than `HttpClientError`, so `instanceof HttpClientError` is **not** a complete check.
+Peeling first is also what makes `status` and `ok` reachable, since only the envelopes carry them.
+
+The two ways to read the envelope are below. Narrow on `status` when the response schemas differ per
+code, which is the common case and the reason responses are declared per status at all. Narrow on
+`ok` when there is a single success shape and you only need to split success from failure.
+
+### Narrowing on `status`
+
+`status` narrows to the exact declared schema, so each branch sees one shape:
+
+```typescript
+// declared responses: 200, 201, 404
+const result = await api.users.create({ body: { name: "Ada" } });
+
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+switch (result.status) {
+  case 200:
+    console.log("already existed", result.data.id);
+    break;
+  case 201:
+    console.log("created at", result.data.created_at);
+    break;
+  case 404:
+    console.warn(result.error.message);
+    break;
+  default:
+    console.warn("unhandled response", result.status);
+}
+```
+
+**Always keep the `default` branch.** A `status` chain is never exhaustive, because the status space
+is open: any code the endpoint does not declare stays in the union, and so do `204` and every 3xx.
+After handling `200`, `201` and `404` above, what remains is
+
+```text
+204 | RedirectMessage | undeclared 2xx | undeclared 4xx | ServerErrorResponse
+```
+
+so the compiler cannot tell you that you forgot a code the way it can for a `kind` switch. An
+undeclared status carries the fallback type for its class rather than a schema, which is what
+`default` is there to handle.
+
+Compare exact statuses. Relational comparisons such as `result.status >= 400` do not narrow a union
+of numeric literals in TypeScript, so `result.error` stays inaccessible.
+
+### Narrowing on `ok`
+
+`ok` splits the envelopes in two, which is the shorter read when an endpoint declares one success
+shape, or when the call site only needs to know whether it worked:
+
+```typescript
+// declared responses: 200, 404
+const result = await api.users.get({ params: { id: "123" } });
+
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+if (result.ok) {
+  console.log(result.data);
+} else if (result.kind === "RedirectMessage") {
+  // rare under the default `redirect: "follow"`, see Response Parsing
+  console.warn("unexpected redirect to", result.redirect_to);
+} else {
+  console.error(result.error); // ClientErrorResponse | ServerErrorResponse
+}
+```
+
+The redirect arm needs its own branch because `ok: false` covers redirects as well as errors, so the
+`else` of an `ok` check has no `error` field until the redirect is separated out. Narrowing on
+`status` sidesteps this, since a `case 404` never sees a 3xx.
+
+The trade-off is precision. `ok` only tells you the response was a 2xx, so `data` stays the union of
+every success shape the endpoint declares. On the `create` endpoint above, the `ok` branch gives
+
+```typescript
+result.data; // void | { id: string; existing: true } | { id: string; created_at: string } | null
+```
+
+and no field is reachable without checking `status` anyway. The `void` arm is an undeclared 2xx and
+the `null` arm is `204`. Reach for `ok` when that union is a single type, and for `status` when it is
+not.
+
+### Reacting to a Specific Error
+
+Nest the checks inside the error branch when one kind needs its own handling:
+
+```typescript
+if (result instanceof Error) {
+  if (result instanceof TimeoutError) {
+    console.error("deadline exceeded after", result.context.timing?.duration, "ms");
+  } else if (result instanceof SerializationError) {
+    console.error("bad request input", result.cause);
+  } else {
+    console.error(result.message);
+  }
+  return;
+}
+```
+
+`TimeoutError` and `NetworkError` do not mean "retry this". The default retry condition already
+retries both, so by the time either reaches the caller the client has exhausted its attempts. See
+[Retry Policy](./retry-policy.md) to change how many, or which failures qualify.
+
+### Narrowing on `kind`
+
+Every arm, response and error alike, also carries a `kind` literal named after its own type or class.
+Reach for it when `instanceof` cannot be trusted: when the value may have been spread, cloned or
+serialized, or when two copies of this package could end up installed. All of those break a prototype
+check and leave `kind` intact.
+
+```typescript
+declare function assert_never(value: never): never;
 
 switch (result.kind) {
   case "SuccessfulResponse":
     console.log(result.data);
     break;
   case "RedirectMessage":
-    // rare under the default `redirect: "follow"`, see Response Parsing
     console.warn("unexpected redirect to", result.redirect_to);
     break;
   case "ClientErrorResponse":
   case "ServerErrorResponse":
-    show(result.error);
+    console.error(result.error);
     break;
   case "TimeoutError":
-  case "NetworkError":
-    retry();
-    break;
   case "AbortedError":
-    break;
+  case "NetworkError":
   case "SerializationError":
   case "ParseError":
   case "UnexpectedError":
-    report(result.context);
+    console.error(result.message, result.context);
     break;
+  default:
+    assert_never(result);
 }
 ```
 
-Add a `default` branch calling a `(value: never) => never` helper and the compiler will tell you when
-an arm is unhandled.
-
-Prefer `kind` when the value may have been spread, cloned or serialized, or when two copies of this
-package could end up installed. All of those break `instanceof` and leave `kind` intact.
+List the error kinds as real cases and keep `default` for the `(value: never) => never` call, as
+above. Collapsing the errors into `default` compiles, but it spends the exhaustiveness check: a kind
+added in a later release then falls into the error branch silently instead of failing the build.
 
 Each `kind` is the name of the type or class it identifies, so the value tells you exactly what to
 look up:
 
 - Responses, exported as `HTTPFetch.ResponseKind`: `"SuccessfulResponse"`, `"RedirectMessage"`,
   `"ClientErrorResponse"`, `"ServerErrorResponse"`.
-- Errors, exported as `ErrorKind`: `"HttpClientError"`, `"TimeoutError"`, `"AbortedError"`,
-  `"SerializationError"`, `"ParseError"`, `"NetworkError"`, `"UnexpectedError"`.
+- Errors, exported as `ErrorKind`: `"TimeoutError"`, `"AbortedError"`, `"SerializationError"`,
+  `"ParseError"`, `"NetworkError"`, `"UnexpectedError"`.
 
 For the error classes this matches `name`, which carries the same string. The difference is that
 `name` is typed as `string` by `Error` and so cannot discriminate a union, whereas `kind` is a literal
 type on each class.
-
-### Instance Check
-
-`instanceof Error` is the single check that covers every failure. Note that `UnexpectedError` extends
-`Error` directly rather than `HttpClientError`, so it must be handled on its own:
-
-```typescript
-const result = await api.users.get({ params: { id: "123" } });
-
-if (result instanceof Error) {
-  // Handle all error types
-  if (result instanceof TimeoutError) {
-    // Retry or show timeout message
-  } else if (result instanceof NetworkError) {
-    // Show network error, maybe retry
-  }
-  return;
-}
-
-// Handle successful response
-if (result.ok) {
-  console.log(result.data);
-}
-```
-
-Peeling the errors off first is also what makes `status` directly narrowable, since only the response
-envelopes carry it:
-
-```typescript
-if (result instanceof Error) return;
-
-if (result.status === 200) {
-  result.data; // typed from the 200 schema
-} else if (result.status === 404) {
-  result.error; // typed from the 404 schema
-}
-```
-
-Ranges do not narrow: `result.status >= 400` leaves the redirect arm in the union, so `result.error`
-stays inaccessible. Compare exact statuses, or switch on `kind`.
 
 ## Error Context
 

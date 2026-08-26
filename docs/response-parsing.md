@@ -203,41 +203,58 @@ if (result instanceof ParseError) {
 
 ## Handling All Cases
 
-Switch on `kind` to cover the response arms and the errors in one pass:
+Peel the errors off with a single `instanceof Error`, then narrow the response arms. Since a parser
+is declared per status, `status` is what gets you the parsed shape for one code:
 
 ```typescript
-const result = await api.users.get({ params: { id: "123" } });
+// declared responses: 200, 201, 404
+const result = await api.users.create({ body: { name: "Ada" } });
 
-switch (result.kind) {
-  case "SuccessfulResponse":
-    console.log(result.data);
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+switch (result.status) {
+  case 200:
+    console.log("already existed", result.data.id);
     break;
-  case "RedirectMessage":
-    console.log(result.redirect_to);
+  case 201:
+    console.log("created at", result.data.created_at);
     break;
-  case "ClientErrorResponse":
-  case "ServerErrorResponse":
-    console.log(result.error);
+  case 404:
+    console.warn(result.error.message);
     break;
   default:
-    // UnexpectedError, NetworkError, TimeoutError, etc.
-    console.log(result.message);
-}
-```
-
-To narrow on `status` instead, peel the errors off first, because only the response envelopes carry
-a `status`:
-
-```typescript
-if (result instanceof Error) return;
-
-if (result.status === 200) {
-  console.log(result.data);
-} else if (result.status === 404) {
-  console.log(result.error);
+    // an undeclared status is parsed by the `2xx` / `4xx` / `5xx` fallback, never a schema
+    console.warn("unhandled response", result.status);
 }
 ```
 
 Compare exact statuses. Relational comparisons such as `result.status >= 400` do not narrow a union
 of numeric literals in TypeScript, so the redirect arm stays in the type and `result.error` remains
 inaccessible.
+
+When an endpoint declares a single success shape, `ok` says the same thing in two branches:
+
+```typescript
+// declared responses: 200, 404
+const result = await api.users.get({ params: { id: "123" } });
+
+if (result instanceof Error) {
+  console.error(result.message, result.context);
+  return;
+}
+
+if (result.ok) {
+  console.log(result.data);
+} else if (result.kind === "RedirectMessage") {
+  console.warn("unexpected redirect to", result.redirect_to);
+} else {
+  console.error(result.error); // ClientErrorResponse | ServerErrorResponse
+}
+```
+
+`ok` only tells you the response was a 2xx, so on an endpoint declaring several success codes `data`
+stays the union of all of them and you end up checking `status` regardless. See
+[Error Handling](./error-handling.md#checking-results) for the full comparison.

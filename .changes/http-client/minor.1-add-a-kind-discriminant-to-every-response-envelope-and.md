@@ -1,28 +1,21 @@
 - Add a `kind` discriminant to every response envelope and error class
 
-  Each arm of a call result now carries a `kind` literal named after its own type or class, so the whole union narrows in one flat `switch`, with no `instanceof` and no value import:
+  Each arm of a call result now carries a `kind` literal named after its own type or class, exported
+  as `HTTPFetch.ResponseKind` and `ErrorKind`. Its everyday use is telling the redirect arm apart
+  from the error responses, which `ok: false` alone does not:
 
   ```ts
-  switch (result.kind) {
-    case "SuccessfulResponse":
-      return result.data;
-    case "RedirectMessage":
-      return log(result.redirect_to);
-    case "ClientErrorResponse":
-    case "ServerErrorResponse":
-      return handle(result.error);
-    case "TimeoutError":
-    case "NetworkError":
-      return retry();
-    default:
-      return report(result.context);
-  }
+  if (result instanceof Error) return console.error(result.message, result.context);
+
+  if (result.ok) console.log(result.data);
+  else if (result.kind === "RedirectMessage") console.warn(result.redirect_to);
+  else console.error(result.error);
   ```
 
-  The values are exported as `HTTPFetch.ResponseKind` and `ErrorKind`. Adding a `default` branch that calls a `(value: never) => never` helper turns an unhandled arm into a compile error.
+  Because the error classes carry it too, `kind` can also narrow the whole union in one `switch` with
+  no `instanceof` and no value import. That form is for when a prototype check cannot be trusted:
+  after a spread, a clone or a serialization round-trip, or when two copies of this package end up
+  installed.
 
-  Unlike `ok` and `status`, `kind` needs no prior `instanceof Error` check, because the error classes carry it too. It also survives a spread, a clone or a serialization round-trip, and keeps working when two copies of this package end up installed, all of which defeat `instanceof`.
-
-  For the error classes the value matches `name`, which already held the same string at runtime. The difference is that `Error` types `name` as `string`, so only `kind` can discriminate a union.
-
-  Reading a result is unaffected, since `kind` is an added field. Code that builds an envelope by hand, such as a test fixture or a mock, has to add the matching `kind` for it to satisfy the type.
+  Reading a result is unaffected, since `kind` is an added field. Code that builds an envelope by
+  hand, such as a test fixture or a mock, has to add the matching `kind` for it to satisfy the type.
