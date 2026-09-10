@@ -182,10 +182,12 @@ Resolution order for an incoming status is: exact status, then the matching
 
 ### Defaults When No Parser Matches
 
-If no parser (specific or wildcard) covers a status, the body is still never
-lost:
+If no parser (specific or wildcard) covers a status:
 
-- **2xx**: `data` is `null` at runtime (typed as `void`).
+- **2xx**: the body is discarded and `data` is `null`. Not declaring a parser for
+  a success status is taken as "I don't want this payload", so it is never read
+  into memory. Declare a `2xx` parser to keep it, with
+  `{ schema: z.string(), parse: "text" }` for the raw text.
 - **204 No Content**: always `data: null`, regardless of any parser.
 - **4xx / 5xx**: `error` is the raw response text (typed as `string`).
 - **3xx redirects**: never schema'd; you get `redirect_to` instead (see above).

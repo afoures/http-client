@@ -281,7 +281,11 @@ export namespace HTTPFetch {
         }[keyof errors & number]
     );
 
-  /** A 2xx response (`ok: true`), with `data` typed per status code (`204` always yields `null`) and a fallback for unlisted ones. */
+  /**
+   * A 2xx response (`ok: true`), with `data` typed per status code (`204` always yields `null`) and
+   * a fallback for unlisted ones. An unlisted status has its body discarded rather than read, so the
+   * fallback defaults to `null`; declare a `2xx` parser to type (and keep) those bodies.
+   */
   export type SuccessfulResponse<
     data extends Partial<Record<Exclude<HTTPStatus.SuccessfulResponse, 204>, any>>,
     fallback,
@@ -331,7 +335,7 @@ export namespace HTTPFetch {
     keyof map,
   ] extends [never]
     ?
-        | SuccessfulResponse<{}, void>
+        | SuccessfulResponse<{}, null>
         | ClientErrorResponse<{}, string>
         | ServerErrorResponse<{}, string>
         | RedirectMessage
@@ -344,7 +348,7 @@ export namespace HTTPFetch {
       :
           | SuccessfulResponse<
               extract_applicable_status<map, Exclude<HTTPStatus.SuccessfulResponse, 204>>,
-              extract_default<map, "2xx", void>
+              extract_default<map, "2xx", null>
             >
           | ClientErrorResponse<
               extract_applicable_status<map, HTTPStatus.ClientErrorResponse>,

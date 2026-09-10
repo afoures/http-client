@@ -458,11 +458,11 @@ async function ok_keeps_the_success_union() {
   if (result instanceof Error) return;
 
   if (result.ok) {
-    // `void` is an undeclared 2xx, `null` is 204
+    // `null` covers both an undeclared 2xx and 204
     assert_type<
       Equal<
         typeof result.data,
-        void | { id: string; existing: true } | { id: string; created_at: string } | null
+        { id: string; existing: true } | { id: string; created_at: string } | null
       >
     >();
     // @ts-expect-error: reading a per-status field still requires narrowing on `status`

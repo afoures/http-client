@@ -215,12 +215,11 @@ The trade-off is precision. `ok` only tells you the response was a 2xx, so `data
 every success shape the endpoint declares. On the `create` endpoint above, the `ok` branch gives
 
 ```typescript
-result.data; // void | { id: string; existing: true } | { id: string; created_at: string } | null
+result.data; // { id: string; existing: true } | { id: string; created_at: string } | null
 ```
 
-and no field is reachable without checking `status` anyway. The `void` arm is an undeclared 2xx and
-the `null` arm is `204`. Reach for `ok` when that union is a single type, and for `status` when it is
-not.
+and no field is reachable without checking `status` anyway. `null` covers both an undeclared
+2xx and `204`. Reach for `ok` when that union is a single type, and for `status` when it is not.
 
 ### Reacting to a Specific Error
 

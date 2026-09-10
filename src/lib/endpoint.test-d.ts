@@ -193,8 +193,8 @@ assert_type<
   >
 >();
 
-// unspecified 2xx falls back to the `2xx` default (`void` when none is declared)
-assert_type<Equal<Extract<GetUserResult, { ok: true; data: void }>["data"], void>>();
+// unspecified 2xx falls back to the `2xx` default (`null` when none is declared)
+assert_type<Equal<Extract<GetUserResult, { ok: true; data: null }>["data"], null>>();
 
 // the redirect arm is always present and exposes `redirect_to`
 assignable<string | null>(

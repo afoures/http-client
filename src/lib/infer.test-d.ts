@@ -89,7 +89,7 @@ assert_type<Equal<$infer.Query<typeof get_user>, { include: string; page: string
 // --- per-status data / error narrowing ---
 assert_type<Equal<$infer.Data<typeof client.get_user, 200>, { id: string; name: string }>>();
 assert_type<
-  Equal<$infer.Data<typeof client.get_user>, { id: string; name: string } | null | void>
+  Equal<$infer.Data<typeof client.get_user>, { id: string; name: string } | null>
 >();
 assert_type<Equal<$infer.Error<typeof client.get_user, 404>, { message: string; code: number }>>();
 assert_type<
