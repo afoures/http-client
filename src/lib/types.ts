@@ -135,21 +135,23 @@ export type HeadersInitWithReducer =
 export namespace RetryPolicy {
   /** Decides whether a completed attempt should be retried; defaults to `default_retry_condition`. */
   export type Condition = (context: {
-    request: Request;
-    response: Response | undefined;
+    request: HTTPFetch.RequestMetadata;
+    response: HTTPFetch.ResponseMetadata | undefined;
     error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
   }) => MaybePromise<boolean>;
 
   /** Maximum number of attempts, as a number or a function of the request. */
-  export type Attempts = number | ((context: { request: Request }) => MaybePromise<number>);
+  export type Attempts =
+    | number
+    | ((context: { request: HTTPFetch.RequestMetadata }) => MaybePromise<number>);
 
   /** Delay in milliseconds before the next attempt, as a number or a function of the attempt state (enables backoff). */
   export type Delay =
     | number
     | ((context: {
-        response: Response | undefined;
+        response: HTTPFetch.ResponseMetadata | undefined;
         error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
-        request: Request;
+        request: HTTPFetch.RequestMetadata;
         attempt: number;
       }) => MaybePromise<number>);
 
@@ -168,8 +170,8 @@ export namespace RetryPolicy {
    * (mutating it has no effect), convenient as a starting point for a replacement.
    */
   export type Recover = (context: {
-    request: Request;
-    response: Response | undefined;
+    request: HTTPFetch.RequestMetadata;
+    response: HTTPFetch.ResponseMetadata | undefined;
     error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
     attempt: number;
     current: { headers: Headers };
@@ -190,11 +192,36 @@ export namespace RetryPolicy {
 
 /** The typed response envelopes and request-input shapes produced by the client. */
 export namespace HTTPFetch {
+  /**
+   * Everything about a response except its body. The client hands one of these to the retry
+   * callbacks and to a custom `parse`, and never a `Response`, so a body is only reachable where it
+   * is owned: exactly one reader per response, which is what makes "read once or cancel" a
+   * guarantee rather than a convention.
+   */
+  export type ResponseMetadata = {
+    status: number;
+    ok: boolean;
+    url: string;
+    headers: Headers;
+  };
+
+  /**
+   * Everything about a sent request except its body, as handed to the retry callbacks.
+   *
+   * `headers` is the header set that attempt was sent with. Mutating it changes nothing, since each
+   * attempt builds its own request: return {@link RetryPolicy.Overrides} from `recover` to change
+   * the headers of the next one.
+   */
+  export type RequestMetadata = {
+    url: string;
+    method: HTTPMethod.Any;
+    headers: Headers;
+  };
+
   type SharedResponseContent = {
     method: HTTPMethod.Any;
-    url?: string;
+    url: string;
     headers: Headers;
-    raw_response: Response;
   };
 
   /**
@@ -549,14 +576,31 @@ export namespace Parser {
   /** Any parser config. */
   export type Any = {
     schema: Schema.Any;
-    parse: string | ((data: any) => any);
+    parse: string | ((body: any, metadata: HTTPFetch.ResponseMetadata) => any);
   };
 
   /**
-   * Response-body parser. `parse` is `"text"` for string schemas, `"json"` otherwise, or a function reading the raw body stream.
+   * Response-body parser. `parse` is `"text"` for string schemas, `"json"` otherwise, or a function
+   * reading the raw body stream.
+   *
+   * A `parse` function owns the body: it is the only place the client hands one out, and the client
+   * never reads it itself. Read it once, or forward the stream as the parsed value and let the
+   * caller read it; the client cancels it only if `parse` throws. `metadata` carries the status,
+   * headers and URL, so a parser can pick its decoding from `content-type` or serve a whole `4xx`
+   * class.
    *
    * @example
    * { schema: z.object({ id: z.string() }), parse: "json" }
+   *
+   * @example
+   * // decide from the response headers, and read the body exactly once
+   * {
+   *   schema: z.union([z.string(), z.object({ id: z.string() })]),
+   *   parse: async (body, metadata) =>
+   *     metadata.headers.get("content-type")?.includes("json")
+   *       ? new Response(body).json()
+   *       : new Response(body).text(),
+   * }
    */
   export type ResponseBody<schema> = {
     schema: schema;
@@ -566,7 +610,10 @@ export namespace Parser {
           : [schema] extends [Schema._<string, any>]
             ? "text"
             : "json")
-      | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
+      | ((
+          body: Response["body"],
+          metadata: HTTPFetch.ResponseMetadata,
+        ) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
   };
 
   /** Status keys a parser map may use: exact codes plus the `2xx`/`4xx`/`5xx` wildcards (excluding `204`). */

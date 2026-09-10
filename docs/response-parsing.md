@@ -18,8 +18,9 @@ type SuccessfulResponse<Data> = {
   ok: true;
   status: 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
   data: Data;
+  url: string;
+  method: HTTPMethod;
   headers: Headers;
-  raw_response: Response;
 };
 ```
 
@@ -31,8 +32,9 @@ type RedirectMessage = {
   ok: false;
   status: 300 | 301 | 302 | 303 | 304 | 307 | 308;
   redirect_to: string | null;
+  url: string;
+  method: HTTPMethod;
   headers: Headers;
-  raw_response: Response;
 };
 ```
 
@@ -44,8 +46,9 @@ type ClientErrorResponse<Error> = {
   ok: false
   status: 400 | 401 | 402 | 403 | 404 | /* ... */
   error: Error
+  url: string
+  method: HTTPMethod
   headers: Headers
-  raw_response: Response
 }
 ```
 
@@ -57,8 +60,9 @@ type ServerErrorResponse<Error> = {
   ok: false
   status: 500 | 501 | 502 | 503 | 504 | /* ... */
   error: Error
+  url: string
+  method: HTTPMethod
   headers: Headers
-  raw_response: Response
 }
 ```
 
@@ -96,7 +100,9 @@ required (there is no runtime default) and is narrowed by the schema:
 
 - `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema.
 - `"text"`: read the body as text. Required/allowed for string-input schemas; the compiler rejects `"text"` on an object schema.
-- A function: custom deserialization from the raw `Response["body"]` stream, allowed for any schema.
+- A function: custom deserialization, allowed for any schema. It receives the raw
+  `Response["body"]` stream, plus the response's `status`, `ok`, `url` and `headers` as a second
+  argument, which is what a wildcard parser needs to tell its statuses apart.
 
 ```typescript
 const endpoint = new Endpoint(
@@ -105,17 +111,50 @@ const endpoint = new Endpoint(
     responses: {
       // text body
       200: { schema: z.string(), parse: "text" },
-      // custom deserialization
+      // custom deserialization, with the response metadata to decide from
       "2xx": {
         schema: z.object({ value: z.number() }),
-        parse: async (body) => {
-          const text = await new Response(body).text();
-          return JSON.parse(text);
+        parse: async (body, metadata) => {
+          if (metadata.status === 202) return { value: 0 }; // accepted, no body to read
+          return JSON.parse(await new Response(body).text());
         },
       },
     },
   },
 );
+```
+
+### Reading the Body
+
+A body can only be read once, and a `parse` function is the only place you are handed one. Read it
+once there, and everything else takes care of itself:
+
+- Results carry `status`, `ok`, `url`, `method` and `headers`, and the
+  [retry callbacks](./retry-policy.md) see the same. Neither is given a `Response`, so nothing can
+  consume the body your parser needs and there is no `Body is unusable` to debug.
+- You never have to clean up. A body no parser asked for (a redirect, a `204`, a status you declared
+  no parser for, an attempt that was retried away) is released for you, as is a body your `parse`
+  left behind when it threw.
+
+To hand a body to your own caller instead of decoding it, return the stream as the parsed value.
+That makes the caller its reader, so it stays open:
+
+```typescript
+const download = new Endpoint(
+  { method: "GET", pathname: "/files/:id" },
+  {
+    responses: {
+      200: { schema: z.instanceof(ReadableStream), parse: async (body) => body! },
+    },
+  },
+);
+
+const api = http_client({ files: { download } }, { base_url: "https://api.example.com" });
+
+const result = await api.files.download({ params: { id: "1" } });
+if (!(result instanceof Error) && result.ok) {
+  await result.data.pipeTo(destination);
+}
 ```
 
 ### Status Wildcards

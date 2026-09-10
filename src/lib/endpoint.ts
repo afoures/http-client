@@ -4,7 +4,6 @@ import {
   type HTTPFetch,
   type HTTPMethod,
   type HTTPStatus,
-  type Json,
   type Parser,
   type Pathname,
   type Pretty,
@@ -12,92 +11,72 @@ import {
   type Serializer,
 } from "./types.ts";
 import { type CompiledPathname, compile_pathname, generate_pathname } from "./pathname.ts";
+import { discard_body, response_metadata } from "./utils.ts";
 
+/**
+ * The four response envelopes, each built from a response's metadata rather than the response
+ * itself. An envelope carries no `Response`, so nothing it is handed to can read (or re-read) a
+ * body that a parser already owns.
+ */
 const RESPONSE = {
   success(
     method: HTTPMethod.Any,
     data: any,
-    raw_response: Response,
+    response: HTTPFetch.ResponseMetadata,
   ): HTTPFetch.SuccessfulResponse<any, any> {
-    const response: HTTPFetch.SuccessfulResponse<any, any> = {
+    return {
       kind: "SuccessfulResponse",
       ok: true,
       method,
-      url: raw_response.url,
-      status: raw_response.status as HTTPStatus.SuccessfulResponse,
+      url: response.url,
+      status: response.status as HTTPStatus.SuccessfulResponse,
       data,
-      headers: raw_response.headers,
-      raw_response,
+      headers: response.headers,
     };
-    Object.defineProperty(response, "raw_response", {
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
-    return response;
   },
-  redirect(method: HTTPMethod.Any, raw_response: Response): HTTPFetch.RedirectMessage {
-    const redirect_to = raw_response.headers.get("Location") || null;
-    const response: HTTPFetch.RedirectMessage = {
+  redirect(
+    method: HTTPMethod.Any,
+    response: HTTPFetch.ResponseMetadata,
+  ): HTTPFetch.RedirectMessage {
+    return {
       kind: "RedirectMessage",
       ok: false,
       method,
-      url: raw_response.url,
-      status: raw_response.status as HTTPStatus.RedirectMessage,
-      redirect_to,
-      headers: raw_response.headers,
-      raw_response,
+      url: response.url,
+      status: response.status as HTTPStatus.RedirectMessage,
+      redirect_to: response.headers.get("Location") || null,
+      headers: response.headers,
     };
-    Object.defineProperty(response, "raw_response", {
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
-    return response;
   },
   client_error(
     method: HTTPMethod.Any,
     error: any,
-    raw_response: Response,
+    response: HTTPFetch.ResponseMetadata,
   ): HTTPFetch.ClientErrorResponse<any, any> {
-    const response: HTTPFetch.ClientErrorResponse<any, any> = {
+    return {
       kind: "ClientErrorResponse",
       ok: false,
       method,
-      url: raw_response.url,
-      status: raw_response.status as HTTPStatus.ClientErrorResponse,
+      url: response.url,
+      status: response.status as HTTPStatus.ClientErrorResponse,
       error,
-      headers: raw_response.headers,
-      raw_response,
+      headers: response.headers,
     };
-    Object.defineProperty(response, "raw_response", {
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
-    return response;
   },
   server_error(
     method: HTTPMethod.Any,
     error: any,
-    raw_response: Response,
+    response: HTTPFetch.ResponseMetadata,
   ): HTTPFetch.ServerErrorResponse<any, any> {
-    const response: HTTPFetch.ServerErrorResponse<any, any> = {
+    return {
       kind: "ServerErrorResponse",
       ok: false,
       method,
-      url: raw_response.url,
-      status: raw_response.status as HTTPStatus.ServerErrorResponse,
+      url: response.url,
+      status: response.status as HTTPStatus.ServerErrorResponse,
       error,
-      headers: raw_response.headers,
-      raw_response,
+      headers: response.headers,
     };
-    Object.defineProperty(response, "raw_response", {
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
-    return response;
   },
 };
 
@@ -470,7 +449,17 @@ export class Endpoint<
     }
   }
 
-  /** Parse a raw `Response` into a typed response envelope, selecting the parser for its status (exact status, then `2xx`/`4xx`/`5xx` fallback). Returns a {@link ParseError} as a value on failure, or an {@link UnexpectedError} if a definition factory throws. */
+  /**
+   * Parse a raw `Response` into a typed response envelope, selecting the parser for its status
+   * (exact status, then `2xx`/`4xx`/`5xx` fallback). Returns a {@link ParseError} as a value on
+   * failure, or an {@link UnexpectedError} if a definition factory throws or the status is one no
+   * envelope covers (1xx).
+   *
+   * Takes ownership of the response body, which it reads at most once and never clones. The status's
+   * `parse` is the reader, or `text()` for an unparsed error status; every other outcome, this
+   * method's own failures included, cancels the body instead. Nothing it returns exposes one, so a
+   * response handed here is spent.
+   */
   async parse_response(
     raw_response: Response,
     context?: context_type,
@@ -479,22 +468,33 @@ export class Endpoint<
   ): Promise<
     HTTPFetch.AnyResponse<extract_outputs<response_schemas>> | ParseError | UnexpectedError
   > {
-    const response = raw_response.clone();
+    const metadata = response_metadata(raw_response);
     const status = raw_response.status;
 
     if (status >= 300 && status < 400) {
-      return RESPONSE.redirect(this.#method, raw_response) as HTTPFetch.AnyResponse<
+      discard_body(raw_response);
+      return RESPONSE.redirect(this.#method, metadata) as HTTPFetch.AnyResponse<
         extract_outputs<response_schemas>
       >;
     }
 
     const definition = resolved ?? this.resolve_definition(context);
-    if (definition instanceof Error) return definition;
+    if (definition instanceof Error) {
+      discard_body(raw_response);
+      return definition;
+    }
 
     const parser = get_parser_for(definition.parsers, status);
 
-    const parse_response = async (parser: Parser.Any): Promise<unknown | ParseError> => {
+    /**
+     * Every exit discards the body, which is safe in each case and not merely tidy: a `parse` that
+     * threw cannot also have handed its stream to someone else, and one that read or locked the
+     * body first is skipped by {@link discard_body}'s guards. A `parse` that *succeeds* is left
+     * alone, since the stream it forwards may be the parsed value itself.
+     */
+    const parse_body = async (parser: Parser.Any): Promise<unknown | ParseError> => {
       if (parser.parse == null) {
+        discard_body(raw_response);
         return new ParseError("Response parsing failed", {
           cause: new Error("parser.parse is not defined"),
           operation: "parse_response",
@@ -507,8 +507,9 @@ export class Endpoint<
       let parsed;
       if (typeof parser.parse === "function") {
         try {
-          parsed = await parser.parse(response.body);
+          parsed = await parser.parse(raw_response.body, metadata);
         } catch (cause) {
+          discard_body(raw_response);
           return new ParseError("Response parsing failed", {
             cause,
             operation: "parse_response",
@@ -519,9 +520,25 @@ export class Endpoint<
           });
         }
       } else if (parser.parse === "json") {
-        parsed = await parse_as_json(response);
+        // Read as text and parsed here rather than through `response.json()`, so malformed JSON can
+        // be reported with the text it choked on: the one read has already happened, and this is
+        // the last point where that body still exists in any form.
+        const text = await raw_response.text();
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch (cause) {
+          return new ParseError("Response parsing failed", {
+            cause,
+            operation: "parse_response",
+            response: {
+              status,
+              headers: raw_response.headers,
+              body: text,
+            },
+          });
+        }
       } else if (parser.parse === "text") {
-        parsed = await response.text();
+        parsed = await raw_response.text();
       }
 
       const result = await parser.schema["~standard"].validate(parsed);
@@ -544,40 +561,51 @@ export class Endpoint<
     if (status >= 400 && status < 600) {
       let error: any;
       if (parser) {
-        const parsed = await parse_response(parser);
+        const parsed = await parse_body(parser);
         if (parsed instanceof ParseError) return parsed;
         error = parsed;
       } else {
-        error = await response.text();
+        error = await raw_response.text();
       }
 
       return (
         status < 500
-          ? RESPONSE.client_error(this.#method, error, raw_response)
-          : RESPONSE.server_error(this.#method, error, raw_response)
+          ? RESPONSE.client_error(this.#method, error, metadata)
+          : RESPONSE.server_error(this.#method, error, metadata)
       ) as HTTPFetch.AnyResponse<extract_outputs<response_schemas>>;
     }
 
     if (status >= 200 && status < 300) {
       if (status === 204) {
-        return RESPONSE.success(this.#method, null, raw_response) as HTTPFetch.AnyResponse<
+        discard_body(raw_response);
+        return RESPONSE.success(this.#method, null, metadata) as HTTPFetch.AnyResponse<
           extract_outputs<response_schemas>
         >;
       }
 
       let data: any = null;
       if (parser) {
-        const parsed = await parse_response(parser);
+        const parsed = await parse_body(parser);
         if (parsed instanceof ParseError) return parsed;
         data = parsed;
+      } else {
+        discard_body(raw_response);
       }
 
-      return RESPONSE.success(this.#method, data, raw_response) as HTTPFetch.AnyResponse<
+      return RESPONSE.success(this.#method, data, metadata) as HTTPFetch.AnyResponse<
         extract_outputs<response_schemas>
       >;
     }
 
-    throw new Error(`Unhandled status code: ${status}`);
+    // 1xx, which no envelope covers. Returned rather than thrown, like every other failure, so the
+    // client never has to catch its way to a result.
+    discard_body(raw_response);
+    return new UnexpectedError(`Unhandled status code: ${status}`, {
+      cause: new Error(`Unhandled status code: ${status}`),
+      operation: "parse_response",
+      request: { url: raw_response.url, method: this.#method },
+      response: { status, headers: raw_response.headers },
+    });
   }
 }
 
@@ -645,18 +673,6 @@ function query_value_error(key: string, query: unknown): SerializationError {
     operation: "generate_url",
     input: { query },
   });
-}
-
-async function parse_as_json(response: Response): Promise<Json.Value | null> {
-  const text = await response.text();
-  try {
-    if (text) return JSON.parse(text);
-    return null;
-  } catch (e) {
-    throw new Error(
-      `Failed to parse response as JSON: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
 }
 
 function as_serializer(

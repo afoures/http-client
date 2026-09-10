@@ -1,4 +1,47 @@
-import type { HeadersInitWithReducer, HTTPFetch, Pathname, RetryPolicy, Schema } from "./types";
+import type {
+  HeadersInitWithReducer,
+  HTTPFetch,
+  HTTPMethod,
+  Pathname,
+  RetryPolicy,
+  Schema,
+} from "./types";
+
+/**
+ * Release a response body the client will not read. Every response it obtains ends up either handed
+ * to a parser or passed through here, so a discarded attempt frees its connection instead of
+ * pinning it until the stream is garbage collected.
+ *
+ * Both guards are needed and neither is redundant: `cancel()` on a body already read throws, and a
+ * stream that a parser locked without reading is *not* `bodyUsed`, so only `locked` catches it. The
+ * returned promise is dropped, and its rejection with it: a body torn down mid-flight is exactly the
+ * case this exists for, not something to report.
+ */
+export function discard_body(response: Response | undefined): void {
+  const body = response?.body;
+  if (!body || response.bodyUsed || body.locked) return;
+  body.cancel().catch(() => {});
+}
+
+/** Everything about a response except its body, as handed to a parser and the retry callbacks. */
+export function response_metadata(response: Response): HTTPFetch.ResponseMetadata {
+  return {
+    status: response.status,
+    ok: response.ok,
+    url: response.url,
+    headers: response.headers,
+  };
+}
+
+/** Everything about a sent request except its body, as handed to the retry callbacks. */
+export function request_metadata(request: Request): HTTPFetch.RequestMetadata {
+  return {
+    url: request.url,
+    // Narrowed rather than checked: the client builds every request from an endpoint's method.
+    method: request.method as HTTPMethod.Any,
+    headers: request.headers,
+  };
+}
 
 function get_entries(source: HeadersInitWithReducer) {
   if (source instanceof Headers) {

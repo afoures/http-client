@@ -19,10 +19,13 @@ import {
 } from "./errors.ts";
 import {
   default_retry_condition,
+  discard_body,
   extract_args,
   merge_context,
   merge_options,
   remove_custom_options,
+  request_metadata,
+  response_metadata,
   sleep,
 } from "./utils.ts";
 
@@ -419,6 +422,10 @@ export function fetch_endpoint_factory<
     }
 
     do {
+      // Reached only when the previous attempt is being retried, so its response is spent: nothing
+      // will ever read that body, and cancelling it hands the connection back now rather than
+      // whenever the dangling stream is collected.
+      discard_body(response);
       response = undefined;
 
       /**
@@ -522,24 +529,38 @@ export function fetch_endpoint_factory<
         break;
       }
 
+      /**
+       * The retry callbacks see metadata, never the request or response themselves: the body of the
+       * response they are deciding about still has to be read by the parser (or cancelled here), and
+       * a callback that consumed it would leave the call with nothing to parse. Built once per
+       * attempt and shared by all three.
+       */
+      const attempt_request = request_metadata(request);
+      const attempt_response = response ? response_metadata(response) : undefined;
+
       let delay = 0;
       try {
         const should_retry = await retry_policy.when({
-          request,
-          response,
+          request: attempt_request,
+          response: attempt_response,
           error,
         });
         if (!should_retry) break;
 
         const max_attempts =
           typeof retry_policy.attempts === "function"
-            ? await retry_policy.attempts({ request })
+            ? await retry_policy.attempts({ request: attempt_request })
             : retry_policy.attempts;
         if (attempt >= max_attempts) break;
 
         delay =
           typeof retry_policy.delay === "function"
-            ? await retry_policy.delay({ request, response, error, attempt })
+            ? await retry_policy.delay({
+                request: attempt_request,
+                response: attempt_response,
+                error,
+                attempt,
+              })
             : retry_policy.delay;
       } catch (local_error) {
         error = new UnexpectedError("Failed to check retry policy", {
@@ -579,8 +600,8 @@ export function fetch_endpoint_factory<
         let overrides: RetryPolicy.Overrides | void;
         try {
           overrides = await retry_policy.recover({
-            request,
-            response,
+            request: attempt_request,
+            response: attempt_response,
             error,
             attempt,
             current: { headers: new Headers(request_headers) },
@@ -609,7 +630,12 @@ export function fetch_endpoint_factory<
       // oxlint-disable-next-line no-constant-condition
     } while (true);
 
-    if (error) return error;
+    // A response can be in hand even on the error paths (an abort or a throwing retry callback
+    // after the attempt settled), and it is never parsed from here, so its body is spent too.
+    if (error) {
+      discard_body(response);
+      return error;
+    }
     if (!response) {
       return new UnexpectedError("No response received", {
         cause: "No response received",
@@ -623,48 +649,36 @@ export function fetch_endpoint_factory<
         timing: { startTime: start_time, attempt },
       });
     }
+    /**
+     * `parse_response` returns its failures, so this only catches a body read that rejected under it
+     * (an abort landing mid-stream) or a broken invariant. Neither can report the body: it is the
+     * thing that failed, there is no second copy, and reading one is what this whole design is
+     * built to prevent. `discard_body` releases whatever is left of it.
+     */
     const result = await endpoint
       .parse_response(response, context as any, definition)
-      .catch(async (error) => {
-        const response_body = await response
-          .clone()
-          .text()
-          .catch(() => undefined);
+      .catch((error) => {
+        discard_body(response);
 
-        if (error instanceof Error && error.name === "AbortError") {
-          return new AbortedError(error.message, {
-            cause: error,
-            operation: "parse_response",
-            request: {
-              url: response.url,
-              method: request?.method,
-            },
-            response: {
-              status: response.status,
-              statusText: response.statusText,
-              headers: response.headers,
-              body: response_body,
-            },
-            timing: { startTime: start_time, attempt },
-          });
-        }
-        return new UnexpectedError("Failed to parse response", {
-          cause: error,
+        const context = {
           operation: "parse_response",
           request: {
             url: response.url,
-            method: request?.method,
+            method: endpoint.method,
             timeout,
             baseUrl: base_url,
           },
           response: {
             status: response.status,
-            statusText: response.statusText,
             headers: response.headers,
-            body: response_body,
           },
           timing: { startTime: start_time, attempt },
-        });
+        } satisfies Partial<ErrorContext>;
+
+        if (error instanceof Error && error.name === "AbortError") {
+          return new AbortedError(error.message, { cause: error, ...context });
+        }
+        return new UnexpectedError("Failed to parse response", { cause: error, ...context });
       });
 
     return result;

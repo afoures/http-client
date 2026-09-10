@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { Endpoint } from "./endpoint.ts";
 import z from "zod";
-import { ParseError, SerializationError } from "./errors.ts";
+import { ParseError, SerializationError, UnexpectedError } from "./errors.ts";
 
 describe("Endpoint.generate_url", () => {
   test("basic pathname without params or query", async () => {
@@ -781,7 +781,6 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { id: 1, name: "Test" });
     assert.ok(result.headers instanceof Headers);
-    assert.equal(result.raw_response, response);
   });
 
   test("201 Created with JSON body", async () => {
@@ -1267,7 +1266,7 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.headers.get("Content-Type"), "application/json");
   });
 
-  test("raw response preserved", async () => {
+  test("the envelope exposes the response metadata, and no response", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
       {
@@ -1286,7 +1285,10 @@ describe("Endpoint.parse_response", () => {
     const result = await endpoint.parse_response(response);
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
-    assert.equal(result.raw_response, response);
+    assert.equal(result.url, response.url);
+    assert.equal(result.headers, response.headers);
+    assert.ok(!Object.hasOwn(result, "raw_response"));
+    assert.equal(response.bodyUsed, true);
   });
 
   test("query serializer with explicit `serialize: undefined` falls back to urlencoded default", async () => {
@@ -1492,6 +1494,156 @@ describe("Endpoint.parse_response", () => {
     assert.ok(!(b instanceof Error));
     assert.equal(b.status, 204);
     assert.equal(b.data, null);
+  });
+});
+
+describe("Endpoint.parse_response body ownership", () => {
+  /** A body that stays open after its chunk, so a `cancel()` reaches the underlying source. */
+  function open_body(content: string) {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(content));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { body, was_cancelled: () => cancelled };
+  }
+
+  const cancelled_cases = [
+    {
+      name: "a redirect",
+      endpoint: new Endpoint({ method: "GET", pathname: "/x" }),
+      status: 302,
+    },
+    {
+      name: "a 2xx with no parser for it",
+      endpoint: new Endpoint(
+        { method: "GET", pathname: "/x" },
+        { responses: { 201: { schema: z.string(), parse: "text" } } },
+      ),
+      status: 200,
+    },
+  ] as const;
+
+  for (const { name, endpoint, status } of cancelled_cases) {
+    test(`cancels the body of ${name}`, async () => {
+      const { body, was_cancelled } = open_body("never read");
+      await endpoint.parse_response(new Response(body, { status }));
+      assert.equal(was_cancelled(), true);
+    });
+  }
+
+  test("a status no envelope covers comes back as an error, and its body is cancelled", async () => {
+    const endpoint = new Endpoint({ method: "GET", pathname: "/x" });
+    const { body, was_cancelled } = open_body("informational");
+    // `new Response` refuses a 1xx status, and `fetch` never surfaces one either: the branch is
+    // defensive, so reaching it takes a response-shaped stand-in.
+    const informational = {
+      status: 103,
+      ok: false,
+      url: "https://api.example.com/x",
+      headers: new Headers(),
+      body,
+      bodyUsed: false,
+    } as Response;
+
+    const result = await endpoint.parse_response(informational);
+
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "parse_response");
+    assert.equal(result.context.response?.status, 103);
+    assert.equal(was_cancelled(), true);
+  });
+
+  test("leaves the body a successful parse forwarded as its value", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/download" },
+      {
+        responses: {
+          200: {
+            schema: z.instanceof(ReadableStream),
+            // The streaming case: `parse` hands the stream on as the parsed value instead of
+            // reading it, so the caller is the reader and nothing may cancel it here.
+            parse: async (body) => body!,
+          },
+        },
+      },
+    );
+    const { body, was_cancelled } = open_body("streamed");
+    const result = await endpoint.parse_response(new Response(body, { status: 200 }));
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(was_cancelled(), false);
+    assert.ok(result.ok);
+    const reader = (result.data as ReadableStream<Uint8Array>).getReader();
+    const { value } = await reader.read();
+    assert.equal(new TextDecoder().decode(value), "streamed");
+  });
+
+  test("cancels the body a failing parse left untouched", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      {
+        responses: {
+          200: {
+            schema: z.string(),
+            parse: async () => {
+              throw new Error("parser blew up");
+            },
+          },
+        },
+      },
+    );
+    const { body, was_cancelled } = open_body("never read");
+    const result = await endpoint.parse_response(new Response(body, { status: 200 }));
+
+    assert.ok(result instanceof ParseError);
+    assert.equal(was_cancelled(), true);
+  });
+
+  test("hands a custom parse the response metadata alongside the body", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      {
+        responses: {
+          "2xx": {
+            schema: z.object({ status: z.number(), content_type: z.string(), text: z.string() }),
+            parse: async (body, metadata) => ({
+              status: metadata.status,
+              content_type: metadata.headers.get("content-type") ?? "",
+              text: await new Response(body).text(),
+            }),
+          },
+        },
+      },
+    );
+
+    const result = await endpoint.parse_response(
+      new Response("payload", { status: 202, headers: { "content-type": "text/plain" } }),
+    );
+
+    assert.ok(!(result instanceof Error));
+    assert.ok(result.ok);
+    assert.deepEqual(result.data, {
+      status: 202,
+      content_type: "text/plain",
+      text: "payload",
+    });
+  });
+
+  test("reports malformed JSON as a ParseError carrying the text it read", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      { responses: { 200: { schema: z.object({ id: z.number() }), parse: "json" } } },
+    );
+
+    const result = await endpoint.parse_response(new Response("{ nope", { status: 200 }));
+
+    assert.ok(result instanceof ParseError);
+    assert.equal(result.context.response?.body, "{ nope");
   });
 });
 

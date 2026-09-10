@@ -5,30 +5,43 @@ Configure automatic retries for failed requests.
 ## Configuration
 
 ```typescript
+// everything about the request that was sent, except its body
+type RequestMetadata = { url: string; method: HTTPMethod; headers: Headers };
+// everything about the response, except its body
+type ResponseMetadata = { status: number; ok: boolean; url: string; headers: Headers };
+
 type RetryPolicy = {
-  attempts?: number | ((ctx: { request: Request }) => number | Promise<number>);
+  attempts?: number | ((ctx: { request: RequestMetadata }) => number | Promise<number>);
   delay?:
     | number
     | ((ctx: {
-        request: Request;
-        response?: Response;
+        request: RequestMetadata;
+        response?: ResponseMetadata;
         error?: Error;
         attempt: number;
       }) => number | Promise<number>);
   when?: (ctx: {
-    request: Request;
-    response?: Response;
+    request: RequestMetadata;
+    response?: ResponseMetadata;
     error?: Error;
   }) => boolean | Promise<boolean>;
   recover?: (ctx: {
-    request: Request;
-    response?: Response;
+    request: RequestMetadata;
+    response?: ResponseMetadata;
     error?: Error;
     attempt: number;
     current: { headers: Headers };
   }) => { headers?: HeadersInit } | void | Promise<{ headers?: HeadersInit } | void>;
 };
 ```
+
+Decide from `status`, `headers` and `error`: the callbacks get metadata rather than the `Request` and
+`Response`, so a retry decision can never eat the body your parser is about to read (see
+[Reading the Body](./response-parsing.md#reading-the-body)). If you need the body to decide, the
+decision belongs in the parser or at the call site instead.
+
+`request.headers` is what that attempt was sent with, and is read-only in effect: each attempt builds
+its own request, so use `recover` to change the next one's headers.
 
 ## Basic Usage
 
@@ -136,8 +149,8 @@ The `when` and `delay` functions receive context about the request:
 ```typescript
 retry: {
   when: ({ request, response, error }) => {
-    // request: The Request object
-    // response: The Response if received, undefined if network error
+    // request: url, method and headers of the attempt that was sent
+    // response: status, ok, url and headers if one arrived, undefined if network error
     // error: NetworkError, TimeoutError, etc. if occurred
     return true
   },
@@ -186,7 +199,7 @@ The body serializer still owns `Content-Type`: it is re-applied after your heade
 
 ### Context
 
-`recover` receives the just-completed attempt's `request`, its `response`/`error`, the 1-indexed `attempt` count, and `current.headers`:
+`recover` receives the just-completed attempt's `request` and `response` metadata, its `error`, the 1-indexed `attempt` count, and `current.headers`:
 
 ```typescript
 recover: ({ response, attempt, current }) => {

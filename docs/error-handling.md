@@ -322,15 +322,20 @@ Roughly in the order a call runs through them:
 `context.request.timeout` carries the **normalized** `{ total?, attempt? }` the call actually ran
 under, never the bare number a caller may have passed.
 
-## Raw Response
+## Response Details
 
-When available, the raw `Response` object is accessible:
+A failed response's details are on the result itself, and on `context.response` for an error:
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
 
-if (!result.ok && !(result instanceof Error)) {
-  console.log(result.raw_response.status);
-  console.log(result.raw_response.headers);
+if (!(result instanceof Error) && !result.ok) {
+  console.log(result.status, result.url, result.method);
+  console.log(result.headers.get("x-request-id"));
 }
 ```
+
+`context.response.body` is filled in for the two failures where the body is the problem: the decoded
+payload a schema rejected, and the raw text that was not valid JSON. Every other error reports
+`status` and `headers` only. Reach for the body itself in your `parse` function, which is the one
+place it is available (see [Reading the Body](./response-parsing.md#reading-the-body)).

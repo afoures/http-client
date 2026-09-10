@@ -46,7 +46,7 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "devDependencies": {
-    "@afoures/auto-release": "^0.6.0",
+    "@afoures/auto-release": "^0.9.1",
     "@arktype/attest": "^0.56.3",
     "@types/node": "^24.13.3",
     "msw": "^2.15.0",

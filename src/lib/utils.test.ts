@@ -1,6 +1,14 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { default_retry_condition, merge_options, merge_headers, sleep } from "./utils.ts";
+import {
+  default_retry_condition,
+  discard_body,
+  merge_options,
+  merge_headers,
+  request_metadata,
+  response_metadata,
+  sleep,
+} from "./utils.ts";
 import { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors.ts";
 
 describe("merge_headers", () => {
@@ -306,8 +314,104 @@ describe("sleep", () => {
   });
 });
 
+/**
+ * A body that stays open after its chunk, so cancelling it actually reaches the underlying source.
+ * A closed stream ignores `cancel()`, which would make every assertion here vacuous.
+ */
+function open_body(content = "chunk") {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(content));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { body, was_cancelled: () => cancelled };
+}
+
+describe("discard_body", () => {
+  test("cancels a body nobody read", () => {
+    const { body, was_cancelled } = open_body();
+    discard_body(new Response(body));
+    assert.equal(was_cancelled(), true);
+  });
+
+  test("leaves an already read body alone", async () => {
+    const response = new Response("done");
+    assert.equal(await response.text(), "done");
+    discard_body(response);
+    assert.equal(response.bodyUsed, true);
+  });
+
+  test("leaves a locked but undisturbed body to its reader", async () => {
+    const { body, was_cancelled } = open_body("held");
+    const response = new Response(body);
+    const reader = response.body!.getReader();
+
+    // The case only `locked` catches: a parser holding a reader has not made the body `bodyUsed`,
+    // and cancelling under it would both throw and steal the stream it is about to read.
+    discard_body(response);
+
+    assert.equal(was_cancelled(), false);
+    const { value } = await reader.read();
+    assert.equal(new TextDecoder().decode(value), "held");
+  });
+
+  test("tolerates a missing response, a null body and a failing cancel", () => {
+    discard_body(undefined);
+    discard_body(new Response(null));
+    discard_body(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+          },
+          cancel() {
+            throw new Error("teardown blew up");
+          },
+        }),
+      ),
+    );
+    // Reaching here without an unhandled rejection is the assertion: a body torn down mid-flight is
+    // what this function is for, not something to report.
+  });
+});
+
+describe("response_metadata / request_metadata", () => {
+  test("carry everything but the body", () => {
+    const response = new Response("body", {
+      status: 201,
+      headers: { "x-trace": "abc" },
+    });
+    const metadata = response_metadata(response);
+
+    assert.deepEqual(Object.keys(metadata).sort(), ["headers", "ok", "status", "url"]);
+    assert.equal(metadata.status, 201);
+    assert.equal(metadata.ok, true);
+    assert.equal(metadata.headers.get("x-trace"), "abc");
+    assert.equal(response.bodyUsed, false);
+  });
+
+  test("request metadata keeps the sent headers", () => {
+    const metadata = request_metadata(
+      new Request("https://api.example.com/users", {
+        method: "POST",
+        body: "payload",
+        headers: { authorization: "Bearer token" },
+      }),
+    );
+
+    assert.deepEqual(Object.keys(metadata).sort(), ["headers", "method", "url"]);
+    assert.equal(metadata.method, "POST");
+    assert.equal(metadata.url, "https://api.example.com/users");
+    assert.equal(metadata.headers.get("authorization"), "Bearer token");
+  });
+});
+
 describe("default_retry_condition", () => {
-  const request = new Request("https://api.example.com/users");
+  const request = request_metadata(new Request("https://api.example.com/users"));
   const context = { operation: "fetch" } as const;
 
   const error_cases = [
@@ -327,7 +431,7 @@ describe("default_retry_condition", () => {
     assert.equal(
       default_retry_condition({
         request,
-        response: new Response(null, { status: 200 }),
+        response: response_metadata(new Response(null, { status: 200 })),
         error: new NetworkError("x", context),
       }),
       true,
@@ -352,7 +456,7 @@ describe("default_retry_condition", () => {
 
   for (const { status, retried } of status_cases) {
     test(`${status} is ${retried ? "" : "not "}retried`, () => {
-      const response = new Response(null, { status });
+      const response = response_metadata(new Response(null, { status }));
       assert.equal(default_retry_condition({ request, response, error: undefined }), retried);
     });
   }

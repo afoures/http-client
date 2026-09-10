@@ -172,6 +172,47 @@ client.get_user({
   retry: { recover: () => ({ headers: 123 }) },
 });
 
+// --- body ownership: the retry callbacks see metadata, never a Request or Response ---
+
+assert_type<Equal<RecoverContext["request"], HTTPFetch.RequestMetadata>>();
+assert_type<Equal<RecoverContext["response"], HTTPFetch.ResponseMetadata | undefined>>();
+assert_type<Equal<keyof HTTPFetch.RequestMetadata, "url" | "method" | "headers">>();
+assert_type<Equal<keyof HTTPFetch.ResponseMetadata, "status" | "ok" | "url" | "headers">>();
+
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  retry: {
+    // @ts-expect-error: the response is metadata, so its body is out of reach
+    when: ({ response }) => response?.json(),
+    // @ts-expect-error: and so is the request's
+    delay: ({ request }) => (request.body ? 0 : 1),
+  },
+});
+
+// a custom `parse` is the one place a body is handed out, with the metadata alongside it
+new Endpoint(
+  { method: "GET", pathname: "/blob" },
+  {
+    responses: {
+      200: {
+        schema: z.string(),
+        parse: async (body, metadata) => {
+          assert_type<Equal<typeof body, ReadableStream<Uint8Array<ArrayBuffer>> | null>>();
+          assert_type<Equal<typeof metadata, HTTPFetch.ResponseMetadata>>();
+          return metadata.headers.get("content-type") ?? new Response(body).text();
+        },
+      },
+    },
+  },
+);
+
+// a one-argument parse still compiles: the metadata argument is additive
+new Endpoint(
+  { method: "GET", pathname: "/blob" },
+  { responses: { 200: { schema: z.string(), parse: (body) => new Response(body).text() } } },
+);
+
 // --- fetch output: transport errors + narrowable response envelope ---
 
 type GetUserResult = Awaited<ReturnType<typeof client.get_user>>;
@@ -191,6 +232,13 @@ assert_type<
     { message: string; code: number }
   >
 >();
+
+// an envelope carries the response metadata and no `Response`, so it cannot re-read a spent body
+assert_type<
+  Equal<"raw_response" extends keyof Extract<GetUserResult, { ok: true }> ? true : false, false>
+>();
+assert_type<Equal<Extract<GetUserResult, { ok: true }>["url"], string>>();
+assert_type<Equal<Extract<GetUserResult, { ok: true }>["headers"], Headers>>();
 
 // --- fetch output narrowing with `2xx` / `4xx` / `5xx` wildcard statuses ---
 

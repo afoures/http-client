@@ -2,7 +2,7 @@ import { describe, test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
-import { default_retry_condition } from "./utils.ts";
+import { default_retry_condition, request_metadata, response_metadata } from "./utils.ts";
 import { default_retry_condition as entry_point_retry_condition } from "../index.ts";
 import {
   AbortedError,
@@ -1202,8 +1202,11 @@ describe("fetch_endpoint_factory", () => {
 
     const result = await fetch_endpoint({});
 
-    assert.ok(result instanceof UnexpectedError);
+    assert.ok(result instanceof ParseError);
     assert.equal(result.context.operation, "parse_response");
+    // The one read already happened, so the text `JSON.parse` choked on is reported from where it
+    // was read rather than by going back to the body for a second look.
+    assert.equal(result.context.response?.body, "invalid json {");
   });
 
   test("network error handling", async () => {
@@ -1880,13 +1883,121 @@ describe("fetch_endpoint_factory", () => {
       assert.equal(entry_point_retry_condition, default_retry_condition);
       assert.equal(
         entry_point_retry_condition({
-          request: new Request(`${API_BASE_URL}/users`),
-          response: new Response(null, { status: 503 }),
+          request: request_metadata(new Request(`${API_BASE_URL}/users`)),
+          response: response_metadata(new Response(null, { status: 503 })),
           error: undefined,
         }),
         true,
       );
     });
+  });
+});
+
+describe("response body ownership", () => {
+  /** A body that stays open after its chunk, so a `cancel()` reaches the underlying source. */
+  function open_body(content: string) {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(content));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { body, was_cancelled: () => cancelled };
+  }
+
+  const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
+
+  test("cancels the body of an attempt it retries away", async () => {
+    const first = open_body("first attempt, never read");
+    let attempts = 0;
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: () => {
+        attempts++;
+        return Promise.resolve(
+          attempts === 1
+            ? new Response(first.body, { status: 503 })
+            : new Response("ok", { status: 200 }),
+        );
+      },
+    });
+
+    const result = await fetch_endpoint({ retry: { attempts: 2 } });
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(attempts, 2);
+    assert.equal(first.was_cancelled(), true);
+  });
+
+  test("cancels the body of a response abandoned to an error", async () => {
+    const { body, was_cancelled } = open_body("never parsed");
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: () => Promise.resolve(new Response(body, { status: 500 })),
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        when: () => {
+          throw new Error("policy blew up");
+        },
+      },
+    });
+
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "retry_policy");
+    assert.equal(was_cancelled(), true);
+  });
+
+  test("hands the retry callbacks metadata, never the request or the response", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    let attempts = 0;
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: () => {
+        attempts++;
+        return Promise.resolve(new Response("body", { status: attempts === 1 ? 503 : 200 }));
+      },
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        attempts: 2,
+        when: ({ request, response }) => {
+          seen.push(request, response as Record<string, unknown>);
+          return true;
+        },
+        delay: ({ request, response }) => {
+          seen.push(request, response as Record<string, unknown>);
+          return 0;
+        },
+        recover: ({ request, response }) => {
+          seen.push(request, response as Record<string, unknown>);
+        },
+      },
+    });
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(attempts, 2);
+    // Plain objects: no `Request`, no `Response`, and so no way to reach a body from a callback.
+    for (const value of seen) {
+      assert.equal(value instanceof Request, false);
+      assert.equal(value instanceof Response, false);
+      assert.equal("body" in value, false);
+      assert.equal("json" in value, false);
+    }
+    // `when` twice, `delay` and `recover` once each (the second attempt exhausts the budget before
+    // they run), two values apiece.
+    assert.equal(seen.length, 8);
   });
 });
 

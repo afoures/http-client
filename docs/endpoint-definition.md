@@ -156,3 +156,6 @@ const result = await endpoint.parse_response(response);
 ```
 
 Returns typed result based on status code. See [Response Parsing](./response-parsing.md).
+
+The response you pass in is consumed: its body goes to the matching parser, so do not read it
+yourself afterwards. Pass a `clone()` if you also need the raw body.

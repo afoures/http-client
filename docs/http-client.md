@@ -160,6 +160,11 @@ const api = http_client(
 );
 ```
 
+Return the response with its body untouched. Reading it here (`await response.text()` in a log line,
+say) leaves nothing for the parser, and is the one way to break
+[body handling](./response-parsing.md#reading-the-body) from the outside. To inspect a body, log
+`await response.clone().text()` and return the original.
+
 For testing, use tools like [MSW](https://mswjs.io/) instead of custom fetch.
 
 ## Per-Request Options

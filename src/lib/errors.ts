@@ -12,8 +12,13 @@ type RequestContext = {
 
 type ResponseContext = {
   status: number;
-  statusText?: string;
   headers?: Headers;
+  /**
+   * The body, but only ever a value the client had already read as part of parsing (the decoded
+   * payload a schema rejected, or the raw text `JSON.parse` choked on). Never read for the sake of
+   * an error: a response body has one reader, and by the time a failure is being reported that
+   * reader has had it.
+   */
   body?: unknown;
 };
 
