@@ -1,4 +1,4 @@
-import { ParseError, SerializationError } from "./errors.ts";
+import { ParseError, SerializationError, UnexpectedError } from "./errors.ts";
 import {
   type ErrorMessage,
   type HTTPFetch,
@@ -101,42 +101,33 @@ const RESPONSE = {
   },
 };
 
-/** Type-carrying marker for an endpoint's out-of-band `context`, produced by {@link define_context}. Only `defaults` exists at runtime. */
-export interface ContextMarker<context_type = unknown, defaults = {}> {
-  readonly __context_type__: (context: context_type) => void;
-  readonly defaults: defaults;
-  /** Set endpoint-level default context values; defaulted keys become optional at the call site. */
-  with_defaults<const next_defaults extends Partial<context_type>>(
-    defaults: next_defaults,
-  ): ContextMarker<context_type, next_defaults>;
-}
+/** The first {@link Endpoint} argument: the route this endpoint addresses. */
+export type EndpointRoute<
+  http_method extends HTTPMethod.Any,
+  pathname extends Pathname.Relative,
+> = {
+  method: http_method;
+  pathname: Pathname.Validate<pathname>;
+};
 
 /**
- * Declare an endpoint's out-of-band `context` type. Context is passed per call, is never
- * serialized into the request, and is threaded into schema factories and custom
- * `serialize`/`parse` functions. Chain `.with_defaults(...)` for endpoint-level defaults.
+ * The second {@link Endpoint} argument: the params/query/body serializers and the per-status
+ * response parsers. Pass it as a plain object, or as a `(context) => definition` factory to build
+ * it from the per-call context (annotate the parameter: the annotation is what declares the
+ * endpoint's context type).
  *
- * @example
- * new Endpoint({
- *   method: "GET",
- *   pathname: "/users/:id",
- *   context: define_context<{ tz: string }>().with_defaults({ tz: "UTC" }),
- *   responses: { 200: { schema: (ctx) => schemaFor(ctx.tz), parse: "json" } },
- * });
+ * `body` sits in the unconditional base object, and the diagnostic for a method that cannot carry
+ * one is a sibling member contributing an optional {@link ErrorMessage} under the same key. An
+ * optional {@link ErrorMessage} already permits the key's absence, so the arm that spelled out
+ * `{ body?: never }` is not needed.
+ *
+ * Both conditionals here are keyed on the first argument (`http_method`, `pathname`), which is
+ * fixed before this argument is checked, so neither delays a slot's schema and neither costs a
+ * custom `serialize` its `data` type. That was not true of the previous layout, where the whole
+ * definition arrived in one object literal. Moving `body` behind its conditional therefore also
+ * types `data` correctly now, and was measured: it is 0.3% to 1% more instantiations on every
+ * endpoint bench, so the base-object form stays.
  */
-export function define_context<context_type = unknown>(): ContextMarker<context_type, {}> {
-  function make<defaults>(defaults: defaults): ContextMarker<context_type, defaults> {
-    return {
-      defaults,
-      with_defaults(next: unknown) {
-        return make(next);
-      },
-    } as unknown as ContextMarker<context_type, defaults>;
-  }
-  return make({});
-}
-
-/** The object accepted by the {@link Endpoint} constructor: HTTP method, pathname, optional context, and params/query/body serializers plus per-status response parsers. */
 export type EndpointDefinition<
   http_method extends HTTPMethod.Any,
   pathname extends Pathname.Relative,
@@ -144,40 +135,74 @@ export type EndpointDefinition<
   query_schema extends Schema._,
   body_schema extends Schema._,
   response_schemas extends Partial<Record<Parser.AllowedStatus, Schema._>>,
-  context_type = unknown,
-  context_defaults = {},
 > = {
-  method: http_method;
-  pathname: Pathname.Validate<pathname>;
-  context?: ContextMarker<context_type, context_defaults>;
-  query?: Serializer.QueryString<query_schema, context_type>;
-  responses?: Parser.ResponseBodyByStatus<response_schemas, context_type>;
+  query?: Serializer.QueryString<query_schema>;
+  body?: Serializer.Body<body_schema>;
+  responses?: Parser.ResponseBodyByStatus<response_schemas>;
 } & (pathname extends Pathname.WithParams
-  ? { params?: Serializer.Params<pathname, params_schema, context_type> }
+  ? { params?: Serializer.Params<pathname, params_schema> }
   : [params_schema] extends [never]
     ? { params?: never }
     : { params?: ErrorMessage<"this url does not have dynamic params"> }) &
   (http_method extends HTTPMethod.WithBody
-    ? { body?: Serializer.Body<body_schema, context_type> }
-    : [body_schema] extends [never]
-      ? { body?: never }
-      : { body?: ErrorMessage<"this http method does not support body"> });
+    ? {}
+    : { body?: ErrorMessage<"this http method does not support body"> });
+
+/**
+ * The third {@link Endpoint} argument: default request options for every call, plus `context`,
+ * the endpoint-level default context values. Defaulted context keys become optional at the call
+ * site.
+ *
+ * `context` is only meaningful once the definition factory's parameter declares a context type, so
+ * the sibling member below turns it into an {@link ErrorMessage} when nothing does. It sits in its
+ * own conditional member rather than in the base so the base stays an inference site for
+ * `context_defaults`.
+ */
+export type EndpointOptions<context_type, context_defaults> = HTTPFetch.OptionalRequestInit &
+  HTTPFetch.DefaultRequestInit & {
+    /** Endpoint-level default context, merged over any client-level context and under any per-call context. */
+    context?: context_defaults & Partial<NoInfer<context_type>>;
+  } & ([unknown] extends [context_type]
+    ? {
+        context?: ErrorMessage<"this endpoint declares no context; annotate the definition factory's parameter, e.g. `(context: MyContext) => ({ ... })`">;
+      }
+    : {});
+
+/** The serializers and parsers of one resolved definition, normalized with their default `serialize`. */
+export type ResolvedDefinition = {
+  serializers: Record<"params" | "query" | "body", Serializer.Any | null>;
+  parsers: Record<string, Parser.Any>;
+};
 
 type extract_outputs<map extends Partial<Record<string | number, Schema._>>> = {
   [key in keyof map]: map[key] extends Schema._ ? Schema.infer_output<map[key]> : never;
 };
 
 /**
- * A typed, reusable descriptor of a single HTTP endpoint: its method, pathname, and the
- * schemas that serialize the request and parse each response. Pass a tree of `Endpoint`
- * instances to {@link http_client} to get callable, typed fetch functions.
+ * A typed, reusable descriptor of a single HTTP endpoint: its route, and the schemas that serialize
+ * the request and parse each response. Pass a tree of `Endpoint` instances to {@link http_client}
+ * to get callable, typed fetch functions.
+ *
+ * The definition is a plain object, or a `(context) => definition` factory when it depends on the
+ * per-call context. Annotating the factory's parameter is what declares the endpoint's context
+ * type, and the context is then in scope by closure for every schema, `serialize` and `parse` the
+ * definition contains.
  *
  * @example
- * const get_user = new Endpoint({
- *   method: "GET",
- *   pathname: "/users/:id",
- *   responses: { 200: { schema: z.object({ id: z.string() }), parse: "json" } },
- * });
+ * const get_user = new Endpoint(
+ *   { method: "GET", pathname: "/users/:id" },
+ *   { responses: { 200: { schema: z.object({ id: z.string() }), parse: "json" } } },
+ * );
+ *
+ * @example
+ * // context-driven, with an endpoint-level default for `tz`
+ * const get_time = new Endpoint(
+ *   { method: "GET", pathname: "/time" },
+ *   (context: { tz: string }) => ({
+ *     responses: { 200: { schema: z.object({ tz: z.literal(context.tz) }), parse: "json" } },
+ *   }),
+ *   { context: { tz: "UTC" } },
+ * );
  */
 export class Endpoint<
   http_method extends HTTPMethod.Any,
@@ -187,53 +212,77 @@ export class Endpoint<
   body_schema extends Schema._ = never,
   response_schemas extends Partial<Record<Parser.AllowedStatus, Schema._>> = {},
   context_type = unknown,
-  context_defaults = {},
+  const context_defaults = {},
 > {
   #method: http_method;
   #pattern: CompiledPathname;
-  #serializers: {
-    params: Required<Serializer.Params<any, params_schema, context_type>> | null;
-    query: Required<Serializer.QueryString<query_schema, context_type>> | null;
-    body: Required<Serializer.Body<body_schema, context_type>> | null;
-  };
-  #parsers: Parser.ResponseBodyByStatus<response_schemas, context_type>;
+  #definition: definition_or_factory;
+  /** The resolved definition of a static (non-factory) definition, normalized once at construction. */
+  #static_definition: ResolvedDefinition | null;
   #options: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit;
   #context_default: context_defaults;
 
   constructor(
-    definition: EndpointDefinition<
-      http_method,
-      pathname,
-      params_schema,
-      query_schema,
-      body_schema,
-      response_schemas,
-      context_type,
-      context_defaults
-    >,
-    options?: HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
+    route: EndpointRoute<http_method, pathname>,
+    definition?:
+      | EndpointDefinition<
+          http_method,
+          pathname,
+          params_schema,
+          query_schema,
+          body_schema,
+          response_schemas
+        >
+      | ((
+          context: context_type,
+        ) => EndpointDefinition<
+          http_method,
+          pathname,
+          params_schema,
+          query_schema,
+          body_schema,
+          response_schemas
+        >),
+    options?: EndpointOptions<context_type, context_defaults>,
   ) {
-    this.#method = definition.method;
+    this.#method = route.method;
     // `Pathname.Validate` is a deferred conditional while `pathname` is generic, so it is not yet
     // known to be a string here even though every branch is one.
-    this.#pattern = compile_pathname(definition.pathname as string);
-    this.#serializers = {
-      params: as_serializer(definition.params),
-      query: as_serializer(definition.query, "urlencoded"),
-      body: as_serializer(definition.body, "json"),
-    };
-    this.#parsers = Object.fromEntries(
-      Object.entries(definition.responses ?? {}).map(([key, schema]) => [key, as_parser(schema)]),
-    ) as Parser.ResponseBodyByStatus<response_schemas, context_type>;
-    this.#options = options ?? {};
-    this.#context_default = (definition.context?.defaults ?? {}) as context_defaults;
+    this.#pattern = compile_pathname(route.pathname as string);
+    this.#definition = definition as definition_or_factory;
+    this.#static_definition =
+      typeof this.#definition === "function" ? null : normalize_definition(this.#definition);
+
+    // `context` carries the endpoint's default context values, so it is kept out of `#options`,
+    // which is merged into the request init of every call.
+    const { context, ...request_options } = (options ?? {}) as HTTPFetch.OptionalRequestInit &
+      HTTPFetch.DefaultRequestInit & { context?: context_defaults };
+    this.#options = request_options;
+    this.#context_default = (context ?? {}) as context_defaults;
   }
 
-  #get_parser_for(status: number): Required<Parser.Any> | undefined {
-    return (this.#parsers[status as Parser.AllowedStatus] ??
-      this.#parsers[`${Math.floor(status / 100)}xx` as Parser.AllowedStatus]) as
-      | Required<Parser.Any>
-      | undefined;
+  /**
+   * Build the serializers and parsers for one call, running a definition factory with `context`.
+   * Returns an {@link UnexpectedError} as a value when the factory throws.
+   *
+   * {@link http_client} calls this once per request and hands the result to `generate_url`,
+   * `serialize_body` and `parse_response`, which is what makes a definition factory run exactly
+   * once per request. Calling one of those three directly resolves the definition for that call.
+   */
+  resolve_definition(context?: context_type): ResolvedDefinition | UnexpectedError {
+    // Only a factory definition leaves `#static_definition` empty, so what is left is a factory.
+    if (this.#static_definition) return this.#static_definition;
+    const factory = this.#definition as (context: context_type) => EndpointDefinitionValue;
+
+    try {
+      return normalize_definition(factory(context as context_type));
+    } catch (cause) {
+      return new UnexpectedError("Definition resolution failed", {
+        cause,
+        operation: "resolve_definition",
+        request: { url: this.#pattern.source, method: this.#method },
+      });
+    }
   }
 
   /** The endpoint's HTTP method. */
@@ -251,31 +300,27 @@ export class Endpoint<
     return this.#context_default;
   }
 
-  /** Build the request URL from `base_url` plus typed params and query. `http_client` calls this internally; call it directly to produce a URL (e.g. for a link or prefetch) without sending a request. Returns a {@link SerializationError} as a value if validation or serialization fails. */
+  /** Build the request URL from `base_url` plus typed params and query. `http_client` calls this internally; call it directly to produce a URL (e.g. for a link or prefetch) without sending a request. Returns a {@link SerializationError} as a value if validation or serialization fails, or an {@link UnexpectedError} if a definition factory throws. */
   async generate_url(
     init: Pretty<
       { base_url: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
         HTTPFetch.TypedQueryInit<query_schema>
     >,
     context?: context_type,
-  ): Promise<URL | SerializationError> {
+    /** Definition already resolved for this call; omit it and the definition is resolved here. */
+    resolved?: ResolvedDefinition,
+  ): Promise<URL | SerializationError | UnexpectedError> {
+    const definition = resolved ?? this.resolve_definition(context);
+    if (definition instanceof Error) return definition;
+    const { params: params_serializer, query: query_serializer } = definition.serializers;
+
     // Values are left unstringified: `generate_pathname` stringifies them itself, and needs to see
     // `null`/`undefined` to drop an optional segment rather than emit `"null"`/`"undefined"`.
     let pathname_params: Record<string, string | number | null | undefined> = {};
 
     if ("params" in init && init.params !== undefined) {
-      if (this.#serializers.params) {
-        let schema: Schema.Any;
-        try {
-          schema = resolve_schema(this.#serializers.params.schema, context);
-        } catch (cause) {
-          return new SerializationError("Params serialization failed", {
-            operation: "generate_url",
-            cause,
-            input: { params: init.params },
-          });
-        }
-        const result = await schema["~standard"].validate(init.params);
+      if (params_serializer) {
+        const result = await params_serializer.schema["~standard"].validate(init.params);
 
         if (result.issues !== undefined) {
           return new SerializationError("Params serialization failed", {
@@ -287,12 +332,9 @@ export class Endpoint<
 
         const transformed_params = result.value;
 
-        if (this.#serializers.params.serialize) {
+        if (typeof params_serializer.serialize === "function") {
           try {
-            pathname_params = this.#serializers.params.serialize(
-              transformed_params as any,
-              context as context_type,
-            );
+            pathname_params = params_serializer.serialize(transformed_params);
           } catch (cause) {
             return new SerializationError("Params serialization failed", {
               operation: "generate_url",
@@ -312,18 +354,8 @@ export class Endpoint<
 
     let search_params = new URLSearchParams();
 
-    if ("query" in init && init.query !== undefined && this.#serializers.query) {
-      let schema: Schema.Any;
-      try {
-        schema = resolve_schema(this.#serializers.query.schema, context);
-      } catch (cause) {
-        return new SerializationError("Query serialization failed", {
-          cause,
-          operation: "generate_url",
-          input: { query: init.query },
-        });
-      }
-      const result = await schema["~standard"].validate(init.query);
+    if ("query" in init && init.query !== undefined && query_serializer) {
+      const result = await query_serializer.schema["~standard"].validate(init.query);
 
       if (result.issues !== undefined) {
         return new SerializationError("Query serialization failed", {
@@ -335,12 +367,9 @@ export class Endpoint<
 
       const transformed_query = result.value;
 
-      if (typeof this.#serializers.query.serialize === "function") {
+      if (typeof query_serializer.serialize === "function") {
         try {
-          search_params = this.#serializers.query.serialize(
-            transformed_query as any,
-            context as context_type,
-          );
+          search_params = query_serializer.serialize(transformed_query);
         } catch (cause) {
           return new SerializationError("Query serialization failed", {
             cause,
@@ -348,7 +377,7 @@ export class Endpoint<
             input: { query: init.query },
           });
         }
-      } else if (this.#serializers.query.serialize === "urlencoded") {
+      } else if (query_serializer.serialize === "urlencoded") {
         if (Array.isArray(transformed_query)) {
           for (const entry of transformed_query) {
             if (!Array.isArray(entry) || entry.length !== 2) {
@@ -385,36 +414,33 @@ export class Endpoint<
     return url;
   }
 
-  /** Validate and serialize the request body, returning the encoded body and its content type. Returns a {@link SerializationError} as a value on failure. */
+  /** Validate and serialize the request body, returning the encoded body and its content type. Returns a {@link SerializationError} as a value on failure, or an {@link UnexpectedError} if a definition factory throws. */
   async serialize_body(
     init: Pretty<HTTPFetch.TypedBodyInit<body_schema>>,
     context?: context_type,
+    /** Definition already resolved for this call; omit it and the definition is resolved here. */
+    resolved?: ResolvedDefinition,
   ): Promise<
     | {
         body: BodyInit | null;
         content_type?: string;
       }
     | SerializationError
+    | UnexpectedError
   > {
-    if (!this.#serializers.body) {
-      return { body: null, content_type: undefined };
-    }
-
     if (!("body" in init) || init.body == undefined) {
       return { body: null, content_type: undefined };
     }
 
-    let schema: Schema.Any;
-    try {
-      schema = resolve_schema(this.#serializers.body.schema, context);
-    } catch (cause) {
-      return new SerializationError("Body serialization failed", {
-        operation: "serialize_body",
-        cause,
-        input: { body: init.body },
-      });
+    const definition = resolved ?? this.resolve_definition(context);
+    if (definition instanceof Error) return definition;
+    const body_serializer = definition.serializers.body;
+
+    if (!body_serializer) {
+      return { body: null, content_type: undefined };
     }
-    const result = await schema["~standard"].validate(init.body);
+
+    const result = await body_serializer.schema["~standard"].validate(init.body);
 
     if (result.issues !== undefined) {
       return new SerializationError("Body serialization failed", {
@@ -426,12 +452,9 @@ export class Endpoint<
 
     const transformed_content = result.value;
 
-    if (typeof this.#serializers.body.serialize === "function") {
+    if (typeof body_serializer.serialize === "function") {
       try {
-        return this.#serializers.body.serialize(
-          transformed_content as any,
-          context as context_type,
-        );
+        return body_serializer.serialize(transformed_content);
       } catch (cause) {
         return new SerializationError("Body serialization failed", {
           operation: "serialize_body",
@@ -447,11 +470,15 @@ export class Endpoint<
     }
   }
 
-  /** Parse a raw `Response` into a typed response envelope, selecting the parser for its status (exact status, then `2xx`/`4xx`/`5xx` fallback). Returns a {@link ParseError} as a value on failure. */
+  /** Parse a raw `Response` into a typed response envelope, selecting the parser for its status (exact status, then `2xx`/`4xx`/`5xx` fallback). Returns a {@link ParseError} as a value on failure, or an {@link UnexpectedError} if a definition factory throws. */
   async parse_response(
     raw_response: Response,
     context?: context_type,
-  ): Promise<HTTPFetch.AnyResponse<extract_outputs<response_schemas>> | ParseError> {
+    /** Definition already resolved for this call; omit it and the definition is resolved here. */
+    resolved?: ResolvedDefinition,
+  ): Promise<
+    HTTPFetch.AnyResponse<extract_outputs<response_schemas>> | ParseError | UnexpectedError
+  > {
     const response = raw_response.clone();
     const status = raw_response.status;
 
@@ -461,9 +488,12 @@ export class Endpoint<
       >;
     }
 
-    const parser = this.#get_parser_for(status);
+    const definition = resolved ?? this.resolve_definition(context);
+    if (definition instanceof Error) return definition;
 
-    const parse_response = async (parser: Required<Parser.Any>): Promise<unknown | ParseError> => {
+    const parser = get_parser_for(definition.parsers, status);
+
+    const parse_response = async (parser: Parser.Any): Promise<unknown | ParseError> => {
       if (parser.parse == null) {
         return new ParseError("Response parsing failed", {
           cause: new Error("parser.parse is not defined"),
@@ -474,24 +504,10 @@ export class Endpoint<
           },
         });
       }
-      let schema: Schema.Any;
-      try {
-        schema = resolve_schema(parser.schema, context);
-      } catch (cause) {
-        return new ParseError("Response parsing failed", {
-          cause,
-          operation: "parse_response",
-          response: {
-            status,
-            headers: raw_response.headers,
-          },
-        });
-      }
-
       let parsed;
       if (typeof parser.parse === "function") {
         try {
-          parsed = await parser.parse(response.body, context as context_type);
+          parsed = await parser.parse(response.body);
         } catch (cause) {
           return new ParseError("Response parsing failed", {
             cause,
@@ -508,7 +524,7 @@ export class Endpoint<
         parsed = await response.text();
       }
 
-      const result = await schema["~standard"].validate(parsed);
+      const result = await parser.schema["~standard"].validate(parsed);
 
       if (result.issues !== undefined) {
         return new ParseError("Response parsing failed", {
@@ -568,11 +584,37 @@ export class Endpoint<
 /** Any {@link Endpoint}, regardless of its type parameters. Useful for constraints and endpoint-tree types. */
 export type AnyEndpoint = Endpoint<any, any, any, any, any, any, any, any>;
 
-function resolve_schema(
-  schema: Schema.Any | ((context: any) => Schema.Any),
-  context: unknown,
-): Schema.Any {
-  return typeof schema === "function" ? schema(context) : schema;
+/** The definition as the runtime sees it: every slot optional, no type parameters left. */
+type EndpointDefinitionValue = Partial<Record<"params" | "query" | "body", Serializer.Any>> & {
+  responses?: Record<string, Parser.Any>;
+};
+
+type definition_or_factory =
+  | EndpointDefinitionValue
+  | ((context: any) => EndpointDefinitionValue)
+  | undefined;
+
+function normalize_definition(definition: EndpointDefinitionValue | undefined): ResolvedDefinition {
+  return {
+    serializers: {
+      params: as_serializer(definition?.params),
+      query: as_serializer(definition?.query, "urlencoded"),
+      body: as_serializer(definition?.body, "json"),
+    },
+    parsers: Object.fromEntries(
+      Object.entries(definition?.responses ?? {}).flatMap(([status, parser]) => {
+        const resolved = as_parser(parser);
+        return resolved ? [[status, resolved] as const] : [];
+      }),
+    ),
+  };
+}
+
+function get_parser_for(
+  parsers: ResolvedDefinition["parsers"],
+  status: number,
+): Parser.Any | undefined {
+  return parsers[status] ?? parsers[`${Math.floor(status / 100)}xx`];
 }
 
 type urlencoded_leaf = string | number | boolean;
@@ -617,10 +659,10 @@ async function parse_as_json(response: Response): Promise<Json.Value | null> {
   }
 }
 
-function as_serializer<serializer extends Serializer.Any>(
-  serializer: any,
-  default_serialize?: serializer["serialize"] & string,
-): serializer | null {
+function as_serializer(
+  serializer: Serializer.Any | undefined,
+  default_serialize?: string,
+): Serializer.Any | null {
   if (!serializer || typeof serializer !== "object" || !("schema" in serializer)) return null;
 
   if (default_serialize === undefined) return serializer;
@@ -628,7 +670,7 @@ function as_serializer<serializer extends Serializer.Any>(
   return { ...serializer, serialize: serializer.serialize ?? default_serialize };
 }
 
-function as_parser<parser extends Parser.Any>(parser: any): parser | null {
+function as_parser(parser: Parser.Any | undefined): Parser.Any | null {
   if (!parser || typeof parser !== "object" || !("schema" in parser)) return null;
 
   return parser;

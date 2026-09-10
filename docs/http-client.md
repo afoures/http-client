@@ -10,11 +10,10 @@ import { z } from "zod";
 
 const api = http_client(
   {
-    users: new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
-    }),
+    users: new Endpoint(
+      { method: "GET", pathname: "/users" },
+      { responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } } },
+    ),
   },
   { base_url: "https://api.example.com" },
 );
@@ -102,7 +101,7 @@ take a client-level default.
 Context is merged in this order (later overrides earlier):
 
 1. `context` from `http_client`
-2. Endpoint-level defaults (`define_context<T>().with_defaults({ ... })`)
+2. Endpoint-level defaults (the `context` option of the endpoint's third argument)
 3. Per-request `context`
 
 ## Wrapping the Client
@@ -215,13 +214,15 @@ The two layers merge per key, so a client-level `{ attempt: 2000 }` survives a p
 Headers can be functions that receive the current value:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  headers: {
-    "X-Request-ID": (current) => current ?? crypto.randomUUID(),
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {},
+  {
+    headers: {
+      "X-Request-ID": (current) => current ?? crypto.randomUUID(),
+    },
   },
-});
+);
 ```
 
 ## Response Handling
@@ -297,27 +298,29 @@ client:
 import { $infer, http_client, Endpoint } from "@afoures/http-client";
 import { z } from "zod";
 
-const get_user = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  responses: {
-    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string() }), parse: "json" },
+const get_user = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 const api = http_client(
   {
     users: {
       get: get_user,
-      create: new Endpoint({
-        method: "POST",
-        pathname: "/users",
-        body: { schema: z.object({ name: z.string() }), serialize: "json" },
-        responses: {
-          201: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      create: new Endpoint(
+        { method: "POST", pathname: "/users" },
+        {
+          body: { schema: z.object({ name: z.string() }), serialize: "json" },
+          responses: {
+            201: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+          },
         },
-      }),
+      ),
     },
   },
   { base_url: "https://api.example.com" },

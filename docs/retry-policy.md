@@ -98,15 +98,17 @@ const result = await api.users.get({
 ## Retry on All GET Requests
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  retry: {
-    attempts: 3,
-    delay: 1000,
-    when: ({ request }) => request.method === "GET",
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {},
+  {
+    retry: {
+      attempts: 3,
+      delay: 1000,
+      when: ({ request }) => request.method === "GET",
+    },
   },
-});
+);
 ```
 
 ## Dynamic Attempts
@@ -247,14 +249,16 @@ retry: {
 Set default retry on the endpoint:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  retry: {
-    attempts: 3,
-    delay: 1000,
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {},
+  {
+    retry: {
+      attempts: 3,
+      delay: 1000,
+    },
   },
-});
+);
 ```
 
 Per-request retry overrides endpoint defaults.
@@ -329,19 +333,21 @@ const result = await api.users.get({
 ```typescript
 const api = http_client(
   {
-    users: new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      retry: {
-        attempts: 3,
-        delay: ({ attempt }) => Math.min(100 * Math.pow(2, attempt), 5000),
-        when: ({ response, error }) => {
-          if (error) return true;
-          if (!response) return false;
-          return response.status >= 500 || response.status === 429;
+    users: new Endpoint(
+      { method: "GET", pathname: "/users" },
+      {},
+      {
+        retry: {
+          attempts: 3,
+          delay: ({ attempt }) => Math.min(100 * Math.pow(2, attempt), 5000),
+          when: ({ response, error }) => {
+            if (error) return true;
+            if (!response) return false;
+            return response.status >= 500 || response.status === 429;
+          },
         },
       },
-    }),
+    ),
   },
   { base_url: "https://api.example.com" },
 );

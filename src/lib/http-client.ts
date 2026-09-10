@@ -294,6 +294,12 @@ export function fetch_endpoint_factory<
       timeout?.total !== undefined ? deadline_signal_for(timeout.total) : undefined;
     const call_signal = combine(merged_options.signal, deadline_signal);
 
+    // Resolved once here and handed to all three methods below, so a definition factory runs
+    // exactly once per request rather than once per method that needs it. It sits after the
+    // deadline signal so a slow factory counts against `timeout.total` like everything else.
+    const definition = endpoint.resolve_definition(context as any);
+    if (definition instanceof Error) return definition;
+
     const url = await endpoint
       .generate_url(
         {
@@ -302,6 +308,7 @@ export function fetch_endpoint_factory<
           query: args.query,
         } as any,
         context as any,
+        definition,
       )
       .catch(
         (error) =>
@@ -329,6 +336,7 @@ export function fetch_endpoint_factory<
           body: args.body,
         } as any,
         context as any,
+        definition,
       )
       .catch(
         (error) =>
@@ -615,19 +623,39 @@ export function fetch_endpoint_factory<
         timing: { startTime: start_time, attempt },
       });
     }
-    const result = await endpoint.parse_response(response, context as any).catch(async (error) => {
-      const response_body = await response
-        .clone()
-        .text()
-        .catch(() => undefined);
+    const result = await endpoint
+      .parse_response(response, context as any, definition)
+      .catch(async (error) => {
+        const response_body = await response
+          .clone()
+          .text()
+          .catch(() => undefined);
 
-      if (error instanceof Error && error.name === "AbortError") {
-        return new AbortedError(error.message, {
+        if (error instanceof Error && error.name === "AbortError") {
+          return new AbortedError(error.message, {
+            cause: error,
+            operation: "parse_response",
+            request: {
+              url: response.url,
+              method: request?.method,
+            },
+            response: {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+              body: response_body,
+            },
+            timing: { startTime: start_time, attempt },
+          });
+        }
+        return new UnexpectedError("Failed to parse response", {
           cause: error,
           operation: "parse_response",
           request: {
             url: response.url,
             method: request?.method,
+            timeout,
+            baseUrl: base_url,
           },
           response: {
             status: response.status,
@@ -637,25 +665,7 @@ export function fetch_endpoint_factory<
           },
           timing: { startTime: start_time, attempt },
         });
-      }
-      return new UnexpectedError("Failed to parse response", {
-        cause: error,
-        operation: "parse_response",
-        request: {
-          url: response.url,
-          method: request?.method,
-          timeout,
-          baseUrl: base_url,
-        },
-        response: {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-          body: response_body,
-        },
-        timing: { startTime: start_time, attempt },
       });
-    });
 
     return result;
   }

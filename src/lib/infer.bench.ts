@@ -5,77 +5,79 @@ import z from "zod";
 
 const client = http_client(
   {
-    getUser: new Endpoint({
-      method: "GET",
-      pathname: "/users/:id",
-      params: {
-        schema: z.object({ id: z.string() }),
-      },
-      query: {
-        schema: z.object({ include: z.string(), page: z.string() }),
-      },
-      responses: {
-        200: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: "json",
+    getUser: new Endpoint(
+      { method: "GET", pathname: "/users/:id" },
+      {
+        params: {
+          schema: z.object({ id: z.string() }),
         },
-        404: {
-          schema: z.object({ message: z.string(), code: z.number() }),
-          parse: "json",
+        query: {
+          schema: z.object({ include: z.string(), page: z.string() }),
         },
-      },
-    }),
-    createUser: new Endpoint({
-      method: "POST",
-      pathname: "/users",
-      body: {
-        schema: z.object({ name: z.string(), email: z.string() }),
-        serialize: "json",
-      },
-      responses: {
-        201: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: "json",
-        },
-        400: {
-          schema: z.object({ errors: z.array(z.string()) }),
-          parse: "json",
+        responses: {
+          200: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
+          404: {
+            schema: z.object({ message: z.string(), code: z.number() }),
+            parse: "json",
+          },
         },
       },
-    }),
+    ),
+    createUser: new Endpoint(
+      { method: "POST", pathname: "/users" },
+      {
+        body: {
+          schema: z.object({ name: z.string(), email: z.string() }),
+          serialize: "json",
+        },
+        responses: {
+          201: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
+          400: {
+            schema: z.object({ errors: z.array(z.string()) }),
+            parse: "json",
+          },
+        },
+      },
+    ),
   },
   { base_url: "https://api.example.com" },
 );
 
 bench("$infer.Query", () => {
   return {} as $infer.Query<typeof client.getUser>;
-}).types([2830, "instantiations"]);
+}).types([2904, "instantiations"]);
 
 bench("$infer.Params", () => {
   return {} as $infer.Params<typeof client.getUser>;
-}).types([2861, "instantiations"]);
+}).types([2935, "instantiations"]);
 
 bench("$infer.Body", () => {
   return {} as $infer.Body<typeof client.createUser>;
-}).types([2777, "instantiations"]);
+}).types([2850, "instantiations"]);
 
 bench("$infer.Data", () => {
   return {} as $infer.Data<typeof client.getUser>;
-}).types([5475, "instantiations"]);
+}).types([5489, "instantiations"]);
 
 bench("$infer.Error", () => {
   return {} as $infer.Error<typeof client.getUser>;
-}).types([5650, "instantiations"]);
+}).types([5661, "instantiations"]);
 
 // Baselines left empty intentionally; run `pnpm bench:infer` to populate them.
 bench("$infer.Input", () => {
   return {} as $infer.Input<typeof client.getUser>;
-}).types([2743, "instantiations"]);
+}).types([2817, "instantiations"]);
 
 bench("$infer.Result", () => {
   return {} as $infer.Result<typeof client.getUser>;
-}).types([4982, "instantiations"]);
+}).types([5012, "instantiations"]);
 
 bench("$infer.Response", () => {
   return {} as $infer.Response<typeof client.getUser>;
-}).types([5111, "instantiations"]);
+}).types([5136, "instantiations"]);

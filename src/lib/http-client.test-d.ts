@@ -15,52 +15,53 @@ declare function assignable<target>(value: target): void;
 
 // --- fixtures ---
 
-const get_user = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  params: { schema: z.object({ id: z.string() }) },
-  query: { schema: z.object({ include: z.string(), page: z.string() }) },
-  responses: {
-    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+const get_user = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    params: { schema: z.object({ id: z.string() }) },
+    query: { schema: z.object({ include: z.string(), page: z.string() }) },
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+    },
   },
-});
+);
 
-const create_required = new Endpoint({
-  method: "POST",
-  pathname: "/things",
-  body: { schema: z.object({ name: z.string() }), serialize: "json" },
-  responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
-});
+const create_required = new Endpoint(
+  { method: "POST", pathname: "/things" },
+  {
+    body: { schema: z.object({ name: z.string() }), serialize: "json" },
+    responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+  },
+);
 
 // several success codes with different schemas, the case `ok` cannot narrow on its own
-const create_user = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: { schema: z.object({ name: z.string() }), serialize: "json" },
-  responses: {
-    200: { schema: z.object({ id: z.string(), existing: z.literal(true) }), parse: "json" },
-    201: { schema: z.object({ id: z.string(), created_at: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string() }), parse: "json" },
+const create_user = new Endpoint(
+  { method: "POST", pathname: "/users" },
+  {
+    body: { schema: z.object({ name: z.string() }), serialize: "json" },
+    responses: {
+      200: { schema: z.object({ id: z.string(), existing: z.literal(true) }), parse: "json" },
+      201: { schema: z.object({ id: z.string(), created_at: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 // optional path param via the `(/:id)` group syntax (no schema)
-const get_user_optional = new Endpoint({
-  method: "GET",
-  pathname: "/users(/:id)",
-});
+const get_user_optional = new Endpoint({ method: "GET", pathname: "/users(/:id)" });
 
 // wildcard response statuses (`2xx` / `4xx` / `5xx`) acting as per-class defaults
-const wildcard = new Endpoint({
-  method: "GET",
-  pathname: "/wild",
-  responses: {
-    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
-    "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
-    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+const wildcard = new Endpoint(
+  { method: "GET", pathname: "/wild" },
+  {
+    responses: {
+      "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
+      "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
+      "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 const client = http_client(
   {
@@ -227,26 +228,31 @@ assert_type<Equal<Parameters<typeof any_client.any_endpoint>[0]["query"], any>>(
 const inline_client = http_client(
   {
     // paramless route, optional query → callable with `{}`, query stays typed
-    list: new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      query: { schema: z.object({ page: z.string() }).optional() },
-      responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
-    }),
+    list: new Endpoint(
+      { method: "GET", pathname: "/users" },
+      {
+        query: { schema: z.object({ page: z.string() }).optional() },
+        responses: { 200: { schema: z.array(z.object({ id: z.string() })), parse: "json" } },
+      },
+    ),
     // parameterized route → `params` required and typed from the schema
-    get: new Endpoint({
-      method: "GET",
-      pathname: "/users/:id",
-      params: { schema: z.object({ id: z.string() }) },
-      responses: { 200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" } },
-    }),
+    get: new Endpoint(
+      { method: "GET", pathname: "/users/:id" },
+      {
+        params: { schema: z.object({ id: z.string() }) },
+        responses: {
+          200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+        },
+      },
+    ),
     // body stays typed (not widened to `any`)
-    create: new Endpoint({
-      method: "POST",
-      pathname: "/things",
-      body: { schema: z.object({ name: z.string() }), serialize: "json" },
-      responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
-    }),
+    create: new Endpoint(
+      { method: "POST", pathname: "/things" },
+      {
+        body: { schema: z.object({ name: z.string() }), serialize: "json" },
+        responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+      },
+    ),
   },
   { base_url: "https://x" },
 );

@@ -14,48 +14,53 @@ declare function assignable<target>(value: target): void;
 
 // --- fixtures ---
 
-const get_user = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  params: { schema: z.object({ id: z.string() }) },
-  query: { schema: z.object({ include: z.string(), page: z.string() }) },
-  responses: {
-    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+const get_user = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    params: { schema: z.object({ id: z.string() }) },
+    query: { schema: z.object({ include: z.string(), page: z.string() }) },
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+    },
   },
-});
+);
 
 // wildcard response statuses (`2xx` / `4xx` / `5xx`) acting as per-class defaults
-const wildcard = new Endpoint({
-  method: "GET",
-  pathname: "/wild",
-  responses: {
-    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
-    "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
-    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+const wildcard = new Endpoint(
+  { method: "GET", pathname: "/wild" },
+  {
+    responses: {
+      "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
+      "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
+      "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
-const path_optional = new Endpoint({
-  method: "GET",
-  pathname: "/search(/:query)",
-  query: { schema: z.object({ q: z.string() }).optional() },
-  responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
-});
+const path_optional = new Endpoint(
+  { method: "GET", pathname: "/search(/:query)" },
+  {
+    query: { schema: z.object({ q: z.string() }).optional() },
+    responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
+  },
+);
 
-const search_optional = new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: { schema: z.object({ q: z.string() }).optional() },
-  responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
-});
+const search_optional = new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: { schema: z.object({ q: z.string() }).optional() },
+    responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
+  },
+);
 
-const create_optional = new Endpoint({
-  method: "POST",
-  pathname: "/things",
-  body: { schema: z.object({ name: z.string() }).optional(), serialize: "json" },
-  responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
-});
+const create_optional = new Endpoint(
+  { method: "POST", pathname: "/things" },
+  {
+    body: { schema: z.object({ name: z.string() }).optional(), serialize: "json" },
+    responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+  },
+);
 
 const client = http_client(
   { get_user, wildcard, path_optional, search_optional, create_optional },

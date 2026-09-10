@@ -10,9 +10,11 @@ export type {
 } from "./lib/types.ts";
 export {
   Endpoint,
-  define_context,
-  type EndpointDefinition,
   type AnyEndpoint,
+  type EndpointDefinition,
+  type EndpointOptions,
+  type EndpointRoute,
+  type ResolvedDefinition,
 } from "./lib/endpoint.ts";
 export {
   http_client,

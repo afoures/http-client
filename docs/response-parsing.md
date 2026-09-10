@@ -4,8 +4,9 @@ Endpoints parse HTTP responses into typed results based on status code. The
 result is a discriminated union you narrow on `kind`, `ok` or `status`; each
 status carries the body type declared for it in the endpoint's `responses` map.
 
-> A response `schema` may also be a `(context) => schema` factory, and each `parse` function
-> receives the per-call context as a second argument. See [Dynamic Context](./dynamic-context.md).
+> The whole definition may instead be a `(context) => definition` factory, in which case every
+> `schema` and `parse` below can be built from the per-call context. See
+> [Dynamic Context](./dynamic-context.md).
 
 ## Response Types
 
@@ -69,14 +70,15 @@ for successful (`2xx`) statuses and on `error` for error (`4xx`/`5xx`) statuses,
 typed per status:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  responses: {
-    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string() }), parse: "json" },
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 const result = await endpoint.parse_response(response);
 
@@ -97,22 +99,23 @@ required (there is no runtime default) and is narrowed by the schema:
 - A function: custom deserialization from the raw `Response["body"]` stream, allowed for any schema.
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/data",
-  responses: {
-    // text body
-    200: { schema: z.string(), parse: "text" },
-    // custom deserialization
-    "2xx": {
-      schema: z.object({ value: z.number() }),
-      parse: async (body) => {
-        const text = await new Response(body).text();
-        return JSON.parse(text);
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/data" },
+  {
+    responses: {
+      // text body
+      200: { schema: z.string(), parse: "text" },
+      // custom deserialization
+      "2xx": {
+        schema: z.object({ value: z.number() }),
+        parse: async (body) => {
+          const text = await new Response(body).text();
+          return JSON.parse(text);
+        },
       },
     },
   },
-});
+);
 ```
 
 ### Status Wildcards
@@ -121,17 +124,18 @@ Use `"2xx"`, `"4xx"`, or `"5xx"` as a class default that applies to every status
 in that class. A specific status always takes precedence over its wildcard:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  responses: {
-    200: { schema: z.object({ id: z.string() }), parse: "json" }, // exact 200
-    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" }, // any other 2xx
-    404: { schema: z.object({ code: z.literal("not_found") }), parse: "json" }, // exact 404
-    "4xx": { schema: z.object({ message: z.string() }), parse: "json" }, // any other 4xx
-    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" }, // any 5xx
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: "json" }, // exact 200
+      "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" }, // any other 2xx
+      404: { schema: z.object({ code: z.literal("not_found") }), parse: "json" }, // exact 404
+      "4xx": { schema: z.object({ message: z.string() }), parse: "json" }, // any other 4xx
+      "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" }, // any 5xx
+    },
   },
-});
+);
 ```
 
 Resolution order for an incoming status is: exact status, then the matching
@@ -148,10 +152,7 @@ lost:
 - **3xx redirects**: never schema'd; you get `redirect_to` instead (see above).
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "DELETE",
-  pathname: "/users/:id",
-});
+const endpoint = new Endpoint({ method: "DELETE", pathname: "/users/:id" });
 
 const result = await endpoint.parse_response(response);
 if (result.ok && result.status === 204) {
@@ -167,19 +168,20 @@ if (!result.ok && result.status >= 400) {
 Schemas can transform response data:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  responses: {
-    200: {
-      schema: z.object({
-        name: z.string().transform((s) => s.toUpperCase()),
-        createdAt: z.string().transform((s) => new Date(s)),
-      }),
-      parse: "json",
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    responses: {
+      200: {
+        schema: z.object({
+          name: z.string().transform((s) => s.toUpperCase()),
+          createdAt: z.string().transform((s) => new Date(s)),
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 
 const result = await endpoint.parse_response(response);
 if (result.ok) {

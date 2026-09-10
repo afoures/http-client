@@ -13,94 +13,89 @@ declare function assignable<target>(value: target): void;
 
 // --- fixtures ---
 
-const get_user = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  params: { schema: z.object({ id: z.string() }) },
-  query: { schema: z.object({ include: z.string(), page: z.string() }) },
-  responses: {
-    200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
-    404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+const get_user = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    params: { schema: z.object({ id: z.string() }) },
+    query: { schema: z.object({ include: z.string(), page: z.string() }) },
+    responses: {
+      200: { schema: z.object({ id: z.string(), name: z.string() }), parse: "json" },
+      404: { schema: z.object({ message: z.string(), code: z.number() }), parse: "json" },
+    },
   },
-});
+);
 
 // param route with no params schema → params fall back to the pathname-derived shape
-const get_user_no_schema = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-});
+const get_user_no_schema = new Endpoint({ method: "GET", pathname: "/users/:id" });
 
 // optional path param via the `(/:id)` group syntax (no schema)
-const get_user_optional = new Endpoint({
-  method: "GET",
-  pathname: "/users(/:id)",
-});
+const get_user_optional = new Endpoint({ method: "GET", pathname: "/users(/:id)" });
 
 // multiple path params, no schema
-const get_comment = new Endpoint({
-  method: "GET",
-  pathname: "/posts/:postId/comments/:commentId",
-});
+const get_comment = new Endpoint({ method: "GET", pathname: "/posts/:postId/comments/:commentId" });
 
-const search_optional = new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: { schema: z.object({ q: z.string() }).optional() },
-  responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
-});
+const search_optional = new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: { schema: z.object({ q: z.string() }).optional() },
+    responses: { 200: { schema: z.object({ hits: z.number() }), parse: "json" } },
+  },
+);
 
-const create_required = new Endpoint({
-  method: "POST",
-  pathname: "/things",
-  body: { schema: z.object({ name: z.string() }), serialize: "json" },
-  responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
-});
+const create_required = new Endpoint(
+  { method: "POST", pathname: "/things" },
+  {
+    body: { schema: z.object({ name: z.string() }), serialize: "json" },
+    responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+  },
+);
 
-const create_optional = new Endpoint({
-  method: "POST",
-  pathname: "/things",
-  body: { schema: z.object({ name: z.string() }).optional(), serialize: "json" },
-  responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
-});
+const create_optional = new Endpoint(
+  { method: "POST", pathname: "/things" },
+  {
+    body: { schema: z.object({ name: z.string() }).optional(), serialize: "json" },
+    responses: { 201: { schema: z.object({ id: z.string() }), parse: "json" } },
+  },
+);
 
 // wildcard response statuses (`2xx` / `4xx` / `5xx`) acting as per-class defaults
-const wildcard = new Endpoint({
-  method: "GET",
-  pathname: "/wild",
-  responses: {
-    "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
-    "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
-    "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+const wildcard = new Endpoint(
+  { method: "GET", pathname: "/wild" },
+  {
+    responses: {
+      "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
+      "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
+      "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 // specific status + wildcard fallback in the same class
-const mixed = new Endpoint({
-  method: "GET",
-  pathname: "/mixed",
-  responses: {
-    200: { schema: z.object({ id: z.string() }), parse: "json" },
-    "2xx": { schema: z.object({ generic: z.boolean() }), parse: "json" },
-    404: { schema: z.object({ nf: z.string() }), parse: "json" },
-    "4xx": { schema: z.object({ generic_err: z.string() }), parse: "json" },
+const mixed = new Endpoint(
+  { method: "GET", pathname: "/mixed" },
+  {
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: "json" },
+      "2xx": { schema: z.object({ generic: z.boolean() }), parse: "json" },
+      404: { schema: z.object({ nf: z.string() }), parse: "json" },
+      "4xx": { schema: z.object({ generic_err: z.string() }), parse: "json" },
+    },
   },
-});
+);
 
 // --- constructor / `EndpointDefinition` compile-time guards (negative cases) ---
 
-new Endpoint({
-  method: "GET",
-  pathname: "/no-params",
+new Endpoint(
+  { method: "GET", pathname: "/no-params" },
   // @ts-expect-error: params are not allowed on a route without dynamic segments
-  params: { schema: z.object({ id: z.string() }) },
-});
+  { params: { schema: z.object({ id: z.string() }) } },
+);
 
-new Endpoint({
-  method: "GET",
-  pathname: "/no-body",
+new Endpoint(
+  { method: "GET", pathname: "/no-body" },
   // @ts-expect-error: a GET request cannot declare a body
-  body: { schema: z.object({ name: z.string() }), serialize: "json" },
-});
+  { body: { schema: z.object({ name: z.string() }), serialize: "json" } },
+);
 
 // --- `generate_url` input ---
 
@@ -262,114 +257,140 @@ assert_type<Equal<typeof create_required.method, "POST">>();
 // --- schema-driven narrowing of `serialize` / `parse` (regression guards) ---
 
 // params: an output shape that matches the pathname params keeps `serialize` optional
-new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  params: { schema: z.object({ id: z.string() }) },
-});
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  { params: { schema: z.object({ id: z.string() }) } },
+);
 // params: an output shape that does NOT match the pathname params makes `serialize` required
-new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
   // @ts-expect-error: output `{ userId }` can't fill `:id`, so `serialize` is required
-  params: { schema: z.object({ userId: z.number() }) },
-});
+  { params: { schema: z.object({ userId: z.number() }) } },
+);
 // params: providing a `serialize` that maps to the pathname params compiles
-new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  params: {
-    schema: z.object({ userId: z.number() }),
-    serialize: (data) => ({ id: String(data.userId) }),
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    params: {
+      schema: z.object({ userId: z.number() }),
+      serialize: (data) => ({ id: String(data.userId) }),
+    },
   },
-});
+);
 
 // query: a urlencoded-compatible output keeps `serialize` optional (defaults to "urlencoded")
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: { schema: z.object({ q: z.string() }) },
-});
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  { query: { schema: z.object({ q: z.string() }) } },
+);
 // query: an `Array<[string, string]>` output is also urlencoded-compatible, so `serialize` is optional
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: { schema: z.array(z.tuple([z.string(), z.string()])) },
-});
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  { query: { schema: z.array(z.tuple([z.string(), z.string()])) } },
+);
 // query: array, number and boolean values are urlencoded-compatible, so `serialize` stays optional
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: {
-    schema: z.object({
-      tags: z.array(z.string()),
-      page: z.number(),
-      active: z.boolean(),
-      cursor: z.string().nullable().optional(),
-    }),
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: {
+      schema: z.object({
+        tags: z.array(z.string()),
+        page: z.number(),
+        active: z.boolean(),
+        cursor: z.string().nullable().optional(),
+      }),
+    },
   },
-});
+);
 // query: a loose `string[][]` output is NOT urlencoded-compatible (pairs aren't guaranteed)
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
+new Endpoint(
+  { method: "GET", pathname: "/search" },
   // @ts-expect-error: `string[][]` isn't `Array<[string, string]>`, so `serialize` is required
-  query: { schema: z.array(z.array(z.string())) },
-});
+  { query: { schema: z.array(z.array(z.string())) } },
+);
 // query: a nested-object output makes `serialize` required and rejects "urlencoded"
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
+new Endpoint(
+  { method: "GET", pathname: "/search" },
   // @ts-expect-error: nested output isn't urlencoded-compatible, so `serialize` is required
-  query: { schema: z.object({ filter: z.object({ min: z.number() }) }) },
-});
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: {
-    schema: z.object({ filter: z.object({ min: z.number() }) }),
-    // @ts-expect-error: "urlencoded" can't encode a nested object; a function is required
-    serialize: "urlencoded",
+  { query: { schema: z.object({ filter: z.object({ min: z.number() }) }) } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: {
+      schema: z.object({ filter: z.object({ min: z.number() }) }),
+      // @ts-expect-error: "urlencoded" can't encode a nested object; a function is required
+      serialize: "urlencoded",
+    },
   },
-});
+);
 // query: a URLSearchParams-returning function compiles for a nested-object output
-new Endpoint({
-  method: "GET",
-  pathname: "/search",
-  query: {
-    schema: z.object({ filter: z.object({ min: z.number() }) }),
-    serialize: (data) => new URLSearchParams({ min: String(data.filter.min) }),
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: {
+      schema: z.object({ filter: z.object({ min: z.number() }) }),
+      serialize: (data) => new URLSearchParams({ min: String(data.filter.min) }),
+    },
   },
-});
+);
 
 // body: `serialize` is required
-new Endpoint({
-  method: "POST",
-  pathname: "/things",
+new Endpoint(
+  { method: "POST", pathname: "/things" },
   // @ts-expect-error: `serialize` is required for a body
-  body: { schema: z.object({ name: z.string() }) },
-});
+  { body: { schema: z.object({ name: z.string() }) } },
+);
+
+// `data` in a custom `serialize` is the schema's validated output, in every slot
+new Endpoint(
+  { method: "POST", pathname: "/typed/:id" },
+  {
+    params: {
+      schema: z.object({ id: z.number() }),
+      serialize: (data) => {
+        assert_type<Equal<typeof data, { id: number }>>();
+        return { id: String(data.id) };
+      },
+    },
+    query: {
+      schema: z.object({ q: z.string() }),
+      serialize: (data) => {
+        assert_type<Equal<typeof data, { q: string }>>();
+        return new URLSearchParams({ q: data.q });
+      },
+    },
+    body: {
+      schema: z.object({ name: z.string() }),
+      serialize: (data) => {
+        assert_type<Equal<typeof data, { name: string }>>();
+        return { body: JSON.stringify(data), content_type: "application/json" };
+      },
+    },
+  },
+);
 
 // response: a string-input schema parses as "text", not "json"
-new Endpoint({
-  method: "GET",
-  pathname: "/text",
-  // @ts-expect-error: a string schema parses as "text", not "json"
-  responses: {
-    200: { schema: z.string(), parse: "json" },
+new Endpoint(
+  { method: "GET", pathname: "/text" },
+  {
+    // @ts-expect-error: a string schema parses as "text", not "json"
+    responses: {
+      200: { schema: z.string(), parse: "json" },
+    },
   },
-});
-new Endpoint({
-  method: "GET",
-  pathname: "/text",
-  responses: { 200: { schema: z.string(), parse: "text" } },
-});
+);
+new Endpoint(
+  { method: "GET", pathname: "/text" },
+  { responses: { 200: { schema: z.string(), parse: "text" } } },
+);
 // response: an object-input schema parses as "json", not "text"
-new Endpoint({
-  method: "GET",
-  pathname: "/obj",
-  // @ts-expect-error: an object schema parses as "json", not "text"
-  responses: {
-    200: { schema: z.object({ id: z.string() }), parse: "text" },
+new Endpoint(
+  { method: "GET", pathname: "/obj" },
+  {
+    // @ts-expect-error: an object schema parses as "json", not "text"
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: "text" },
+    },
   },
-});
+);

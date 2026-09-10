@@ -7,27 +7,28 @@
 ```typescript
 import { z } from "zod";
 
-const endpoint = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: {
-    schema: z.object({
-      name: z.string().min(1),
-      email: z.string().email(),
-    }),
-    serialize: "json",
-  },
-  responses: {
-    200: {
+const endpoint = new Endpoint(
+  { method: "POST", pathname: "/users" },
+  {
+    body: {
       schema: z.object({
-        id: z.string(),
-        name: z.string(),
-        createdAt: z.string().datetime(),
+        name: z.string().min(1),
+        email: z.string().email(),
       }),
-      parse: "json",
+      serialize: "json",
+    },
+    responses: {
+      200: {
+        schema: z.object({
+          id: z.string(),
+          name: z.string(),
+          createdAt: z.string().datetime(),
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 ```
 
 ### Transforms
@@ -35,23 +36,24 @@ const endpoint = new Endpoint({
 Zod transforms work for both input and output:
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  query: {
-    schema: z.object({
-      page: z.number().transform(String), // number input, string output
-    }),
-  },
-  responses: {
-    200: {
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {
+    query: {
       schema: z.object({
-        createdAt: z.string().transform((s) => new Date(s)), // parse ISO to Date
+        page: z.number().transform(String), // number input, string output
       }),
-      parse: "json",
+    },
+    responses: {
+      200: {
+        schema: z.object({
+          createdAt: z.string().transform((s) => new Date(s)), // parse ISO to Date
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 
 // Input: { page: 1 }
 // Query string: ?page=1
@@ -64,28 +66,29 @@ const endpoint = new Endpoint({
 ```typescript
 import { type } from "arktype";
 
-const endpoint = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: {
-    schema: type({
-      name: "string>0",
-      email: "string",
-      age: "number?",
-    }),
-    serialize: "json",
-  },
-  responses: {
-    200: {
+const endpoint = new Endpoint(
+  { method: "POST", pathname: "/users" },
+  {
+    body: {
       schema: type({
-        id: "string",
-        name: "string",
-        "email?": "string",
+        name: "string>0",
+        email: "string",
+        age: "number?",
       }),
-      parse: "json",
+      serialize: "json",
+    },
+    responses: {
+      200: {
+        schema: type({
+          id: "string",
+          name: "string",
+          "email?": "string",
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 ```
 
 ### Transforms
@@ -93,19 +96,20 @@ const endpoint = new Endpoint({
 ```typescript
 import { type } from "arktype";
 
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  responses: {
-    200: {
-      schema: type({
-        id: "string",
-        createdAt: "string.parse(v => new Date(v))",
-      }),
-      parse: "json",
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {
+    responses: {
+      200: {
+        schema: type({
+          id: "string",
+          createdAt: "string.parse(v => new Date(v))",
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 ```
 
 ## Valibot
@@ -113,26 +117,27 @@ const endpoint = new Endpoint({
 ```typescript
 import * as v from "valibot";
 
-const endpoint = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: {
-    schema: v.object({
-      name: v.pipe(v.string(), v.minLength(1)),
-      email: v.pipe(v.string(), v.email()),
-    }),
-    serialize: "json",
-  },
-  responses: {
-    200: {
+const endpoint = new Endpoint(
+  { method: "POST", pathname: "/users" },
+  {
+    body: {
       schema: v.object({
-        id: v.string(),
-        name: v.string(),
+        name: v.pipe(v.string(), v.minLength(1)),
+        email: v.pipe(v.string(), v.email()),
       }),
-      parse: "json",
+      serialize: "json",
+    },
+    responses: {
+      200: {
+        schema: v.object({
+          id: v.string(),
+          name: v.string(),
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 ```
 
 ### Transforms
@@ -140,22 +145,23 @@ const endpoint = new Endpoint({
 ```typescript
 import * as v from "valibot";
 
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-  responses: {
-    200: {
-      schema: v.object({
-        id: v.string(),
-        createdAt: v.pipe(
-          v.string(),
-          v.transform((s) => new Date(s)),
-        ),
-      }),
-      parse: "json",
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {
+    responses: {
+      200: {
+        schema: v.object({
+          id: v.string(),
+          createdAt: v.pipe(
+            v.string(),
+            v.transform((s) => new Date(s)),
+          ),
+        }),
+        parse: "json",
+      },
     },
   },
-});
+);
 ```
 
 ## Input vs Output Types
@@ -173,15 +179,16 @@ const schema = z.object({
 // Input: string
 // Output: number
 
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/items",
-  query: {
-    schema: z.object({
-      id: z.string().transform(parseInt),
-    }),
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/items" },
+  {
+    query: {
+      schema: z.object({
+        id: z.string().transform(parseInt),
+      }),
+    },
   },
-});
+);
 
 // You pass: { query: { id: '123' } }  (string)
 // URL becomes: /items?id=123
@@ -206,22 +213,21 @@ const CreateUserSchema = UserSchema.omit({ id: true });
 const api = http_client(
   {
     users: {
-      list: new Endpoint({
-        method: "GET",
-        pathname: "/users",
-        responses: { 200: { schema: z.array(UserSchema), parse: "json" } },
-      }),
-      get: new Endpoint({
-        method: "GET",
-        pathname: "/users/:id",
-        responses: { 200: { schema: UserSchema, parse: "json" } },
-      }),
-      create: new Endpoint({
-        method: "POST",
-        pathname: "/users",
-        body: { schema: CreateUserSchema, serialize: "json" },
-        responses: { 201: { schema: UserSchema, parse: "json" } },
-      }),
+      list: new Endpoint(
+        { method: "GET", pathname: "/users" },
+        { responses: { 200: { schema: z.array(UserSchema), parse: "json" } } },
+      ),
+      get: new Endpoint(
+        { method: "GET", pathname: "/users/:id" },
+        { responses: { 200: { schema: UserSchema, parse: "json" } } },
+      ),
+      create: new Endpoint(
+        { method: "POST", pathname: "/users" },
+        {
+          body: { schema: CreateUserSchema, serialize: "json" },
+          responses: { 201: { schema: UserSchema, parse: "json" } },
+        },
+      ),
     },
   },
   { base_url: "https://api.example.com" },

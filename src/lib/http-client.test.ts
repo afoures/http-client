@@ -36,16 +36,17 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("successful request with JSON response", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users/(:id)",
-      responses: {
-        200: {
-          schema: z.object({ id: z.string(), name: z.string() }),
-          parse: "json",
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users/(:id)" },
+      {
+        responses: {
+          200: {
+            schema: z.object({ id: z.string(), name: z.string() }),
+            parse: "json",
+          },
         },
       },
-    });
+    );
 
     server.use(
       http.get(`${API_BASE_URL}/users/:id`, ({ request, params }) => {
@@ -70,10 +71,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("request with pathname parameters", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users/(:id)",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users/(:id)" });
 
     server.use(
       http.get(`${API_BASE_URL}/users/:id`, ({ params }) => {
@@ -94,17 +92,18 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("request with query parameters", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      query: {
-        schema: z.object({
-          page: z.number().transform(String),
-          limit: z.number().transform(String),
-        }),
-        serialize: "urlencoded",
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users" },
+      {
+        query: {
+          schema: z.object({
+            page: z.number().transform(String),
+            limit: z.number().transform(String),
+          }),
+          serialize: "urlencoded",
+        },
       },
-    });
+    );
 
     server.use(
       http.get(`${API_BASE_URL}/users`, ({ request }) => {
@@ -129,14 +128,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("POST request with body serialize", async () => {
-    const endpoint = new Endpoint({
-      method: "POST",
-      pathname: "/users",
-      body: {
-        schema: z.object({ name: z.string(), email: z.string() }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/users" },
+      {
+        body: {
+          schema: z.object({ name: z.string(), email: z.string() }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.post(`${API_BASE_URL}/users`, async ({ request }) => {
@@ -163,10 +163,8 @@ describe("fetch_endpoint_factory", () => {
 
   test("custom headers merging", async () => {
     const endpoint = new Endpoint(
-      {
-        method: "GET",
-        pathname: "/users",
-      },
+      { method: "GET", pathname: "/users" },
+      {},
       {
         headers: { "X-Default": "default-value" },
       },
@@ -193,10 +191,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("timeout handling", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/slow",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/slow" });
 
     server.use(
       http.get(`${API_BASE_URL}/slow`, async () => {
@@ -248,7 +243,7 @@ describe("fetch_endpoint_factory", () => {
     ) {
       return fetch_endpoint_factory({
         base_url: API_BASE_URL,
-        endpoint: new Endpoint({ method: "GET", pathname: "/users" }, endpoint_options),
+        endpoint: new Endpoint({ method: "GET", pathname: "/users" }, {}, endpoint_options),
         custom_fetch: fetch,
         get_default_options: () => client_options ?? {},
       });
@@ -557,10 +552,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("AbortSignal handling - before request starts", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const controller = new AbortController();
     server.use(
@@ -583,10 +575,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("AbortSignal handling - during request", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const controller = new AbortController();
     server.use(
@@ -610,16 +599,17 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("AbortSignal handling - after request", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/posts/:id",
-      responses: {
-        200: {
-          schema: z.object({ id: z.number(), title: z.string() }),
-          parse: "json",
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/posts/:id" },
+      {
+        responses: {
+          200: {
+            schema: z.object({ id: z.number(), title: z.string() }),
+            parse: "json",
+          },
         },
       },
-    });
+    );
 
     const controller = new AbortController();
 
@@ -659,10 +649,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry on failure - success on retry", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
 
@@ -691,10 +678,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry exhaustion - returns error", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
 
@@ -720,10 +704,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry with custom condition", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
 
@@ -756,10 +737,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry delay function", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const delays: number[] = [];
     let attemptCount = 0;
@@ -795,10 +773,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - refreshes auth header before retry", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const seen_auth: Array<string | null> = [];
 
@@ -833,10 +808,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - returning nothing leaves headers unchanged", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const seen_auth: Array<string | null> = [];
 
@@ -871,10 +843,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - not called when no retry happens", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let recover_calls = 0;
 
@@ -907,10 +876,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - runs after the delay", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     const events: string[] = [];
     let attemptCount = 0;
@@ -950,10 +916,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - throwing surfaces as UnexpectedError", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
 
@@ -988,10 +951,8 @@ describe("fetch_endpoint_factory", () => {
 
   test("retry recover - replace drops headers not returned", async () => {
     const endpoint = new Endpoint(
-      {
-        method: "GET",
-        pathname: "/users",
-      },
+      { method: "GET", pathname: "/users" },
+      {},
       {
         headers: { "x-default": "default-value" },
       },
@@ -1029,10 +990,8 @@ describe("fetch_endpoint_factory", () => {
 
   test("retry recover - keeps other headers via current.headers copy", async () => {
     const endpoint = new Endpoint(
-      {
-        method: "GET",
-        pathname: "/users",
-      },
+      { method: "GET", pathname: "/users" },
+      {},
       {
         headers: { "x-default": "default-value" },
       },
@@ -1079,11 +1038,10 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry recover - preserves serializer Content-Type after replace", async () => {
-    const endpoint = new Endpoint({
-      method: "POST",
-      pathname: "/users",
-      body: { schema: z.object({ name: z.string() }), serialize: "json" },
-    });
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/users" },
+      { body: { schema: z.object({ name: z.string() }), serialize: "json" } },
+    );
 
     const seen_content_type: Array<string | null> = [];
 
@@ -1118,10 +1076,8 @@ describe("fetch_endpoint_factory", () => {
 
   test("retry recover - per-call recover replaces endpoint-level recover", async () => {
     const endpoint = new Endpoint(
-      {
-        method: "GET",
-        pathname: "/users",
-      },
+      { method: "GET", pathname: "/users" },
+      {},
       {
         retry: {
           attempts: 2,
@@ -1160,13 +1116,14 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("URL generation error handling", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users/(:id)",
-      params: {
-        schema: z.object({ id: z.string().min(1) }),
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users/(:id)" },
+      {
+        params: {
+          schema: z.object({ id: z.string().min(1) }),
+        },
       },
-    });
+    );
 
     server.use(
       http.get(`${API_BASE_URL}/users/:id`, () => {
@@ -1187,14 +1144,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("body serialize error handling", async () => {
-    const endpoint = new Endpoint({
-      method: "POST",
-      pathname: "/users",
-      body: {
-        schema: z.object({ name: z.string().min(1) }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/users" },
+      {
+        body: {
+          schema: z.object({ name: z.string().min(1) }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.post(`${API_BASE_URL}/users`, () => {
@@ -1215,16 +1173,17 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("response parsing error handling", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      responses: {
-        200: {
-          schema: z.object({ id: z.number() }),
-          parse: "json",
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users" },
+      {
+        responses: {
+          200: {
+            schema: z.object({ id: z.number() }),
+            parse: "json",
+          },
         },
       },
-    });
+    );
 
     server.use(
       http.get(`${API_BASE_URL}/users`, () => {
@@ -1248,10 +1207,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("network error handling", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     server.use(
       http.get(`${API_BASE_URL}/users`, () => {
@@ -1271,10 +1227,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("default options from get_default_options", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     server.use(
       http.get(`${API_BASE_URL}/users`, ({ request }) => {
@@ -1297,10 +1250,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("no retry on success", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
 
@@ -1325,14 +1275,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("request object creation", async () => {
-    const endpoint = new Endpoint({
-      method: "POST",
-      pathname: "/users",
-      body: {
-        schema: z.object({ name: z.string() }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/users" },
+      {
+        body: {
+          schema: z.object({ name: z.string() }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.post(`${API_BASE_URL}/users`, async ({ request }) => {
@@ -1363,10 +1314,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("async get_default_options", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     server.use(
       http.get(`${API_BASE_URL}/users`, ({ request }) => {
@@ -1392,14 +1340,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("PUT request with body", async () => {
-    const endpoint = new Endpoint({
-      method: "PUT",
-      pathname: "/users/(:id)",
-      body: {
-        schema: z.object({ name: z.string() }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "PUT", pathname: "/users/(:id)" },
+      {
+        body: {
+          schema: z.object({ name: z.string() }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.put(`${API_BASE_URL}/users/:id`, ({ request }) => {
@@ -1424,14 +1373,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("PATCH request with body", async () => {
-    const endpoint = new Endpoint({
-      method: "PATCH",
-      pathname: "/users/(:id)",
-      body: {
-        schema: z.object({ name: z.string() }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "PATCH", pathname: "/users/(:id)" },
+      {
+        body: {
+          schema: z.object({ name: z.string() }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.patch(`${API_BASE_URL}/users/:id`, ({ request }) => {
@@ -1456,14 +1406,15 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("DELETE request with body", async () => {
-    const endpoint = new Endpoint({
-      method: "DELETE",
-      pathname: "/users/(:id)",
-      body: {
-        schema: z.object({ reason: z.string() }),
-        serialize: "json",
+    const endpoint = new Endpoint(
+      { method: "DELETE", pathname: "/users/(:id)" },
+      {
+        body: {
+          schema: z.object({ reason: z.string() }),
+          serialize: "json",
+        },
       },
-    });
+    );
 
     server.use(
       http.delete(`${API_BASE_URL}/users/:id`, async ({ request }) => {
@@ -1491,10 +1442,8 @@ describe("fetch_endpoint_factory", () => {
 
   test("endpoint options merged with request options", async () => {
     const endpoint = new Endpoint(
-      {
-        method: "GET",
-        pathname: "/users",
-      },
+      { method: "GET", pathname: "/users" },
+      {},
       {
         headers: { "X-Endpoint": "endpoint-value" },
         timeout: 5000,
@@ -1524,10 +1473,7 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("retry with attempts as function", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-    });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
     let attemptCount = 0;
     const attemptsCalled: number[] = [];
@@ -1564,16 +1510,17 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("error response without retry", async () => {
-    const endpoint = new Endpoint({
-      method: "GET",
-      pathname: "/users",
-      responses: {
-        404: {
-          schema: z.object({ message: z.string() }),
-          parse: "json",
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users" },
+      {
+        responses: {
+          404: {
+            schema: z.object({ message: z.string() }),
+            parse: "json",
+          },
         },
       },
-    });
+    );
 
     let attemptCount = 0;
 
@@ -1610,6 +1557,7 @@ describe("fetch_endpoint_factory", () => {
 
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
+      {},
       { retry: { attempts: 3, delay: 5, when: (ctx) => !!ctx.error } },
     );
 
@@ -1666,7 +1614,7 @@ describe("fetch_endpoint_factory", () => {
       }),
     );
 
-    const endpoint = new Endpoint({ method: "GET", pathname: "/slow" }, { timeout: 10 });
+    const endpoint = new Endpoint({ method: "GET", pathname: "/slow" }, {}, { timeout: 10 });
 
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
@@ -1690,6 +1638,7 @@ describe("fetch_endpoint_factory", () => {
 
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
+      {},
       { signal: controller.signal },
     );
 
@@ -1746,17 +1695,18 @@ describe("fetch_endpoint_factory", () => {
   });
 
   test("Content-Type header override", async () => {
-    const endpoint = new Endpoint({
-      method: "POST",
-      pathname: "/upload",
-      body: {
-        schema: z.object({ data: z.string() }),
-        serialize: (data) => ({
-          body: data.data,
-          content_type: "text/plain",
-        }),
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/upload" },
+      {
+        body: {
+          schema: z.object({ data: z.string() }),
+          serialize: (data) => ({
+            body: data.data,
+            content_type: "text/plain",
+          }),
+        },
       },
-    });
+    );
 
     server.use(
       http.post(`${API_BASE_URL}/upload`, async ({ request }) => {

@@ -104,14 +104,14 @@ if (result instanceof ParseError) {
 
 ### `UnexpectedError`
 
-Unexpected failure during request:
+Unexpected failure during request, including a definition factory or a retry callback throwing:
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
 
 if (result instanceof UnexpectedError) {
   console.log(result.kind); // "UnexpectedError"
-  console.log(result.context.operation); // "create_request" | "parse_response" | etc.
+  console.log(result.context.operation); // "resolve_definition" | "create_request" | etc.
 }
 ```
 

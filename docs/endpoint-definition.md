@@ -1,18 +1,19 @@
 # Endpoint Definition
 
-The `Endpoint` class defines an HTTP endpoint with its method, path, serializers, and parsers.
-
-## Constructor
+The `Endpoint` class defines an HTTP endpoint with its route, serializers, and parsers. It takes
+three arguments: the route, the definition, and default options.
 
 ```typescript
-const endpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users/:id",
-  // ...options
-});
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {},
+  {
+    // params, query, body, responses
+  },
+);
 ```
 
-## Options
+## Route
 
 ### `method` (required)
 
@@ -48,6 +49,12 @@ A param inside an optional group may be `undefined` or `null`, which drops the w
 The pattern describes a pathname only. A `?` or `#` is rejected, both when the endpoint is defined
 and when the pattern is compiled - declare search params with [`query`](#query) instead.
 
+## Definition
+
+The second argument holds the serializers and parsers. Pass a plain object, or a
+`(context) => definition` factory when the definition depends on the per-call context (see
+[Dynamic Context](./dynamic-context.md)).
+
 ### `params`
 
 Serializer for path parameters. See [Serialization](./serialization.md#params).
@@ -74,43 +81,29 @@ responses: {
 }
 ```
 
-### `context`
+## Options
 
-Declares an out-of-band, per-call **context** used to build schemas dynamically. Created with
-`define_context<T>()`; any slot's `schema` (and its `serialize` / `parse`) may then be a function
-of it. See [Dynamic Context](./dynamic-context.md).
-
-## Constructor
-
-The `Endpoint` constructor takes a definition and optional default options:
+The third argument holds default request options, plus the endpoint's default context values:
 
 ```typescript
 const endpoint = new Endpoint(
+  { method: "GET", pathname: "/users" },
+  {},
   {
-    method: "GET",
-    pathname: "/users",
-    // Definition: method, pathname, params, query, body, responses
-  },
-  {
-    headers: {
-      "X-API-Version": "2",
-    },
-    timeout: 5000,
-    retry: {
-      attempts: 3,
-      delay: 1000,
-      when: ({ response }) => response?.status === 503,
-    },
+    // params, query, body, responses
   },
 );
 ```
 
-The second argument accepts:
+It accepts:
 
 - `headers`: Default headers for all requests
 - `timeout`: Request timeouts in milliseconds, as `{ total, attempt }` or a bare number (shorthand
   for `{ total }`)
 - `retry`: Default retry policy
+- `context`: Endpoint-level default context values, which make those keys optional at the call site.
+  Only accepted once the definition factory declares a context type. See
+  [Dynamic Context](./dynamic-context.md).
 
 These can be overridden per-request. `headers`, `timeout` and `retry` merge per key, so a default
 that a call does not mention survives.
@@ -121,9 +114,12 @@ See [Timeouts](./http-client.md#timeouts) and [Retry Policy](./retry-policy.md) 
 
 Most users should use `http_client` instead of calling these methods directly. The HTTP client handles URL generation, body serialization, and response parsing automatically.
 
-Each method takes an optional trailing `context` argument, forwarded to any schema factory and to
-custom `serialize` / `parse` functions. `http_client` supplies it automatically from the merged
-per-call context.
+Each method takes an optional `context` argument, used to resolve a definition factory for that
+call. `http_client` supplies it automatically from the merged per-call context, and resolves the
+definition once per request rather than once per method.
+
+Because a definition factory is user code, all three can also return an `UnexpectedError` when it
+throws.
 
 ### `generate_url(init, context?)`
 
@@ -137,7 +133,7 @@ const url = await endpoint.generate_url({
 });
 ```
 
-Returns `URL` on success or `SerializationError` on validation failure.
+Returns `URL` on success, or `SerializationError` on validation failure.
 
 ### `serialize_body(init, context?)`
 
@@ -149,7 +145,7 @@ const { body, content_type } = await endpoint.serialize_body({
 });
 ```
 
-Returns `{ body, content_type }` on success or `SerializationError` on validation failure.
+Returns `{ body, content_type }` on success, or `SerializationError` on validation failure.
 
 ### `parse_response(response, context?)`
 

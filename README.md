@@ -31,56 +31,59 @@ import { z } from "zod";
 const api = http_client(
   {
     users: {
-      list: new Endpoint({
-        method: "GET",
-        pathname: "/users",
-        query: {
-          schema: z.object({
-            page: z
-              .number()
-              .transform((n) => String(n))
-              .optional(),
-            limit: z
-              .number()
-              .transform((n) => String(n))
-              .optional(),
-          }),
-        },
-        responses: {
-          200: {
-            schema: z.array(z.object({ id: z.string(), name: z.string() })),
-            parse: "json",
+      list: new Endpoint(
+        { method: "GET", pathname: "/users" },
+        {
+          query: {
+            schema: z.object({
+              page: z
+                .number()
+                .transform((n) => String(n))
+                .optional(),
+              limit: z
+                .number()
+                .transform((n) => String(n))
+                .optional(),
+            }),
+          },
+          responses: {
+            200: {
+              schema: z.array(z.object({ id: z.string(), name: z.string() })),
+              parse: "json",
+            },
           },
         },
-      }),
-      get: new Endpoint({
-        method: "GET",
-        pathname: "/users/:id",
-        responses: {
-          200: {
-            schema: z.object({ id: z.string(), name: z.string() }),
-            parse: "json",
-          },
-          404: {
-            schema: z.object({ message: z.string() }),
-            parse: "json",
-          },
-        },
-      }),
-      create: new Endpoint({
-        method: "POST",
-        pathname: "/users",
-        body: {
-          schema: z.object({ name: z.string(), email: z.string().email() }),
-          serialize: "json",
-        },
-        responses: {
-          201: {
-            schema: z.object({ id: z.string(), name: z.string() }),
-            parse: "json",
+      ),
+      get: new Endpoint(
+        { method: "GET", pathname: "/users/:id" },
+        {
+          responses: {
+            200: {
+              schema: z.object({ id: z.string(), name: z.string() }),
+              parse: "json",
+            },
+            404: {
+              schema: z.object({ message: z.string() }),
+              parse: "json",
+            },
           },
         },
-      }),
+      ),
+      create: new Endpoint(
+        { method: "POST", pathname: "/users" },
+        {
+          body: {
+            schema: z.object({ name: z.string(), email: z.string().email() }),
+            serialize: "json",
+          },
+          responses: {
+            201: {
+              schema: z.object({ id: z.string(), name: z.string() }),
+              parse: "json",
+            },
+          },
+        },
+      ),
     },
   },
   { base_url: "https://api.example.com" },

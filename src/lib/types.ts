@@ -435,8 +435,6 @@ export namespace Schema {
       : StandardSchemaV1.InferOutput<schema>;
 }
 
-type SchemaOrFactory<schema, context_type> = schema | ((context: NoInfer<context_type>) => schema);
-
 export namespace Json {
   export type Object = { [Key in string]: Json.Value };
 
@@ -447,34 +445,46 @@ export namespace Json {
   export type Value = Json.Primitive | Json.Object | Json.Array;
 }
 
-/** Config for validating and encoding the outgoing request. Each `schema` may be a schema or a `(context) => schema` factory. */
+/** Config for validating and encoding the outgoing request. */
 export namespace Serializer {
   /** Any serializer config. */
   export type Any = {
-    schema: SchemaOrFactory<Schema.Any, any>;
-    serialize?: string | ((data: any, context: any) => any);
+    schema: Schema.Any;
+    serialize?: string | ((data: any) => any);
   };
 
   /**
    * Path-params serializer. `serialize` maps validated data to the pathname's params. It is
    * optional when the schema output already matches those params, and required otherwise.
    *
+   * The check is wrapped in a tuple to keep it non-distributive. This conditional decides the
+   * *shape* of the type that gives `schema` its contextual type, so it has to resolve while
+   * `schema` may still read as `never`: unresolved during inference, and genuinely `never` for a
+   * slot the definition omits, which instantiates this type anyway. Distributed over `never` the
+   * conditional yields `never`, collapsing the whole intersection to `never` and leaving nothing to
+   * infer or check against. Non-distributive, `never` takes the false branch, the intersection
+   * stays an object type, and the conditional is re-evaluated against the real schema in the final
+   * assignability check. It also keeps a union `schema` judged as a whole, rather than yielding a
+   * union of the two slot shapes.
+   *
+   * Spelling the two cases out as a union of object types instead removes the conditional
+   * altogether. It is not worth it: putting the requirement in an inference position
+   * (`schema & Schema._<any, ...>`) made the endpoint instantiation benches 37x to 85x worse.
+   *
    * @example
    * { schema: z.object({ id: z.number() }), serialize: (data) => ({ id: String(data.id) }) }
    */
-  export type Params<pathname extends Pathname.Relative, schema, context_type = unknown> = {
-    schema: SchemaOrFactory<schema, context_type>;
-  } & (schema extends Schema._<any, Pathname.Params<pathname>>
+  export type Params<pathname extends Pathname.Relative, schema> = {
+    schema: schema;
+  } & ([schema] extends [Schema._<any, Pathname.Params<pathname>>]
     ? {
         serialize?: (
-          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-          context: NoInfer<context_type>,
+          data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
         ) => Pathname.Params<pathname>;
       }
     : {
         serialize: (
-          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-          context: NoInfer<context_type>,
+          data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
         ) => Pathname.Params<pathname>;
       });
 
@@ -496,24 +506,24 @@ export namespace Serializer {
    * `URLSearchParams`. A function is required when the schema output isn't
    * {@link UrlencodedCompatible}.
    *
+   * The check is non-distributive for the same reason as {@link Params}: it gates the shape that
+   * gives `schema` its contextual type, so distributing it over a `schema` that reads as `never`
+   * would collapse the intersection to `never`.
+   *
    * @example
    * { schema: z.object({ q: z.string() }), serialize: "urlencoded" }
    */
-  export type QueryString<schema, context_type = unknown> = {
-    schema: SchemaOrFactory<schema, context_type>;
-  } & (schema extends Schema._<any, UrlencodedCompatible>
+  export type QueryString<schema> = {
+    schema: schema;
+  } & ([schema] extends [Schema._<any, UrlencodedCompatible>]
     ? {
         serialize?:
           | "urlencoded"
-          | ((
-              data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-              context: NoInfer<context_type>,
-            ) => URLSearchParams);
+          | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) => URLSearchParams);
       }
     : {
         serialize: (
-          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-          context: NoInfer<context_type>,
+          data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
         ) => URLSearchParams;
       });
 
@@ -523,26 +533,23 @@ export namespace Serializer {
    * @example
    * { schema: z.object({ name: z.string() }), serialize: "json" }
    */
-  export type Body<schema, context_type = unknown> = {
-    schema: SchemaOrFactory<schema, context_type>;
+  export type Body<schema> = {
+    schema: schema;
     serialize:
       | "json"
-      | ((
-          data: Schema.infer_output<NoInfer<schema & Schema._>, any>,
-          context: NoInfer<context_type>,
-        ) => {
+      | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) => {
           body: BodyInit | null;
           content_type: string;
         });
   };
 }
 
-/** Config for parsing and validating responses. Each `schema` may be a schema or a `(context) => schema` factory. */
+/** Config for parsing and validating responses. */
 export namespace Parser {
   /** Any parser config. */
   export type Any = {
-    schema: SchemaOrFactory<Schema.Any, any>;
-    parse: string | ((data: any, context: any) => any);
+    schema: Schema.Any;
+    parse: string | ((data: any) => any);
   };
 
   /**
@@ -551,18 +558,15 @@ export namespace Parser {
    * @example
    * { schema: z.object({ id: z.string() }), parse: "json" }
    */
-  export type ResponseBody<schema, context_type = unknown> = {
-    schema: SchemaOrFactory<schema, context_type>;
+  export type ResponseBody<schema> = {
+    schema: schema;
     parse:
       | ([schema] extends [never]
           ? "json" | "text"
           : [schema] extends [Schema._<string, any>]
             ? "text"
             : "json")
-      | ((
-          body: Response["body"],
-          context: NoInfer<context_type>,
-        ) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
+      | ((body: Response["body"]) => Promise<Schema.infer_input<NoInfer<schema & Schema._>, any>>);
   };
 
   /** Status keys a parser map may use: exact codes plus the `2xx`/`4xx`/`5xx` wildcards (excluding `204`). */
@@ -575,10 +579,7 @@ export namespace Parser {
     | HTTPStatus.ServerErrorResponse;
 
   /** A map from status (or status class) to its {@link ResponseBody} parser, as passed to `responses`. */
-  export type ResponseBodyByStatus<
-    map extends Partial<Record<Parser.AllowedStatus, Schema._>>,
-    context_type = unknown,
-  > = {
-    [status in keyof map]: Parser.ResponseBody<map[status], context_type>;
+  export type ResponseBodyByStatus<map extends Partial<Record<Parser.AllowedStatus, Schema._>>> = {
+    [status in keyof map]: Parser.ResponseBody<map[status]>;
   };
 }

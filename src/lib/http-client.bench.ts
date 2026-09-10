@@ -3,25 +3,23 @@ import { http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import z from "zod";
 
-const basicEndpoint = new Endpoint({
-  method: "GET",
-  pathname: "/users",
-});
+const basicEndpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
-const endpointWithSchema = new Endpoint({
-  method: "POST",
-  pathname: "/users",
-  body: {
-    schema: z.object({ name: z.string(), email: z.string() }),
-    serialize: "json",
-  },
-  responses: {
-    200: {
-      schema: z.object({ id: z.string(), name: z.string() }),
-      parse: "json",
+const endpointWithSchema = new Endpoint(
+  { method: "POST", pathname: "/users" },
+  {
+    body: {
+      schema: z.object({ name: z.string(), email: z.string() }),
+      serialize: "json",
+    },
+    responses: {
+      200: {
+        schema: z.object({ id: z.string(), name: z.string() }),
+        parse: "json",
+      },
     },
   },
-});
+);
 
 bench("http_client - single endpoint", () => {
   const client = http_client(
@@ -31,7 +29,7 @@ bench("http_client - single endpoint", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([6897, "instantiations"]);
+}).types([4903, "instantiations"]);
 
 bench("http_client - two endpoints", () => {
   const client = http_client(
@@ -42,7 +40,7 @@ bench("http_client - two endpoints", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7013, "instantiations"]);
+}).types([5001, "instantiations"]);
 
 bench("http_client - three endpoints", () => {
   const client = http_client(
@@ -54,7 +52,7 @@ bench("http_client - three endpoints", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7128, "instantiations"]);
+}).types([5098, "instantiations"]);
 
 bench("http_client - five endpoints", () => {
   const client = http_client(
@@ -68,7 +66,7 @@ bench("http_client - five endpoints", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7358, "instantiations"]);
+}).types([5292, "instantiations"]);
 
 bench("http_client - ten endpoints", () => {
   const client = http_client(
@@ -87,7 +85,7 @@ bench("http_client - ten endpoints", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7933, "instantiations"]);
+}).types([5777, "instantiations"]);
 
 bench("http_client - nested structure (2 levels)", () => {
   const client = http_client(
@@ -102,7 +100,7 @@ bench("http_client - nested structure (2 levels)", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7239, "instantiations"]);
+}).types([5229, "instantiations"]);
 
 bench("http_client - nested structure (3 levels)", () => {
   const client = http_client(
@@ -119,7 +117,7 @@ bench("http_client - nested structure (3 levels)", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7355, "instantiations"]);
+}).types([5345, "instantiations"]);
 
 bench("http_client - with options callback", () => {
   const client = http_client(
@@ -134,31 +132,32 @@ bench("http_client - with options callback", () => {
     },
   );
   return {} as typeof client;
-}).types([6965, "instantiations"]);
+}).types([4971, "instantiations"]);
 
 bench("http_client - with complex endpoints", () => {
   const client = http_client(
     {
       users: endpointWithSchema,
-      posts: new Endpoint({
-        method: "POST",
-        pathname: "/posts",
-        body: {
-          schema: z.object({ title: z.string(), content: z.string() }),
-          serialize: "json",
-        },
-        responses: {
-          200: {
-            schema: z.object({ id: z.string(), title: z.string() }),
-            parse: "json",
+      posts: new Endpoint(
+        { method: "POST", pathname: "/posts" },
+        {
+          body: {
+            schema: z.object({ title: z.string(), content: z.string() }),
+            serialize: "json",
+          },
+          responses: {
+            200: {
+              schema: z.object({ id: z.string(), title: z.string() }),
+              parse: "json",
+            },
           },
         },
-      }),
+      ),
     },
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([8846, "instantiations"]);
+}).types([6463, "instantiations"]);
 
 bench("http_client - mixed nesting levels", () => {
   const client = http_client(
@@ -176,4 +175,4 @@ bench("http_client - mixed nesting levels", () => {
     { base_url: "https://api.example.com" },
   );
   return {} as typeof client;
-}).types([7586, "instantiations"]);
+}).types([5522, "instantiations"]);
