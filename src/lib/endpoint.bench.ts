@@ -232,7 +232,7 @@ bench("Endpoint - with custom parse", () => {
     },
   );
   return {} as typeof endpoint;
-}).types([1829, "instantiations"]);
+}).types([1832, "instantiations"]);
 
 bench("Endpoint - union types in schema", () => {
   const endpoint = new Endpoint(
@@ -240,9 +240,16 @@ bench("Endpoint - union types in schema", () => {
     {
       body: {
         schema: z.object({
-          role: z.union([z.literal("admin"), z.literal("user"), z.literal("guest")]),
+          role: z.union([
+            z.literal("admin"),
+            z.literal("user"),
+            z.literal("guest"),
+          ]),
           status: z.enum(["active", "inactive", "pending"]),
-          metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+          metadata: z.record(
+            z.string(),
+            z.union([z.string(), z.number(), z.boolean()]),
+          ),
         }),
         serialize: "json",
       },

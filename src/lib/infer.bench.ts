@@ -51,33 +51,33 @@ const client = http_client(
 
 bench("$infer.Query", () => {
   return {} as $infer.Query<typeof client.getUser>;
-}).types([2904, "instantiations"]);
+}).types([2531, "instantiations"]);
 
 bench("$infer.Params", () => {
   return {} as $infer.Params<typeof client.getUser>;
-}).types([2935, "instantiations"]);
+}).types([2562, "instantiations"]);
 
 bench("$infer.Body", () => {
   return {} as $infer.Body<typeof client.createUser>;
-}).types([2850, "instantiations"]);
+}).types([2477, "instantiations"]);
 
 bench("$infer.Data", () => {
   return {} as $infer.Data<typeof client.getUser>;
-}).types([5489, "instantiations"]);
+}).types([5116, "instantiations"]);
 
 bench("$infer.Error", () => {
   return {} as $infer.Error<typeof client.getUser>;
-}).types([5661, "instantiations"]);
+}).types([5288, "instantiations"]);
 
 // Baselines left empty intentionally; run `pnpm bench:infer` to populate them.
 bench("$infer.Input", () => {
   return {} as $infer.Input<typeof client.getUser>;
-}).types([2817, "instantiations"]);
+}).types([2444, "instantiations"]);
 
 bench("$infer.Result", () => {
   return {} as $infer.Result<typeof client.getUser>;
-}).types([5012, "instantiations"]);
+}).types([4639, "instantiations"]);
 
 bench("$infer.Response", () => {
   return {} as $infer.Response<typeof client.getUser>;
-}).types([5136, "instantiations"]);
+}).types([4763, "instantiations"]);

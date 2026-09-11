@@ -411,6 +411,22 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.pathname, "/api/users/123");
     assert.equal(url.search, "");
   });
+
+  test("a throwing definition factory returns UnexpectedError", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      (_context: { key: string }) => {
+        throw new Error("boom");
+      },
+    );
+    const result = await endpoint.generate_url(
+      { base_url: "https://api.example.com" },
+      { key: "value" },
+    );
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "resolve_definition");
+    assert.equal((result.cause as Error)?.message, "boom");
+  });
 });
 
 describe("Endpoint.serialize_body", () => {
@@ -736,6 +752,19 @@ describe("Endpoint.serialize_body", () => {
     });
     assert.ok(result instanceof SerializationError);
     assert.equal(result.context.operation, "serialize_body");
+  });
+
+  test("a throwing definition factory returns UnexpectedError", async () => {
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/x" },
+      (_context: { key: string }) => {
+        throw new Error("boom");
+      },
+    );
+    const result = await endpoint.serialize_body({ body: { name: "John" } }, { key: "value" });
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "resolve_definition");
+    assert.equal((result.cause as Error)?.message, "boom");
   });
 });
 
@@ -1494,6 +1523,22 @@ describe("Endpoint.parse_response", () => {
     assert.ok(!(b instanceof Error));
     assert.equal(b.status, 204);
     assert.equal(b.data, null);
+  });
+
+  test("a throwing definition factory returns UnexpectedError", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      (_context: { key: string }) => {
+        throw new Error("boom");
+      },
+    );
+    const result = await endpoint.parse_response(
+      new Response(JSON.stringify({ id: 1 }), { status: 200 }),
+      { key: "value" },
+    );
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "resolve_definition");
+    assert.equal((result.cause as Error)?.message, "boom");
   });
 });
 

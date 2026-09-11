@@ -2062,3 +2062,308 @@ describe("http_client base_url validation", () => {
     assert.equal(typeof api.users.list, "function");
   });
 });
+
+describe("dynamic (context-driven) schemas", () => {
+  before(() => server.listen({ onUnhandledRequest: "bypass" }));
+  after(() => server.close());
+  afterEach(() => server.resetHandlers());
+
+  test("response schema factory receives the per-call context", async () => {
+    const api = http_client(
+      {
+        get: new Endpoint(
+          { method: "GET", pathname: "/user" },
+          (context: { expected_name: string }) => ({
+            responses: {
+              200: {
+                schema: z.object({ id: z.string(), name: z.literal(context.expected_name) }),
+                parse: "json",
+              },
+            },
+          }),
+        ),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(
+      http.get(`${API_BASE_URL}/user`, () => HttpResponse.json({ id: "1", name: "John" })),
+    );
+
+    const ok = await api.get({ context: { expected_name: "John" } });
+    assert.ok(!(ok instanceof Error));
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.data, { id: "1", name: "John" });
+
+    const bad = await api.get({ context: { expected_name: "Jane" } });
+    assert.ok(bad instanceof ParseError);
+  });
+
+  test("body serialize + response parse round-trip through context (out-of-band key)", async () => {
+    const api = http_client(
+      {
+        put: new Endpoint({ method: "PUT", pathname: "/blob" }, (context: { key: string }) => ({
+          body: {
+            schema: z.object({ value: z.string() }),
+            serialize: (value) => ({
+              body: JSON.stringify({ value: value.value, key: context.key }),
+              content_type: "application/json",
+            }),
+          },
+          responses: {
+            200: {
+              schema: z.object({ value: z.string() }),
+              parse: async (body) => {
+                const text = await new Response(body).text();
+                const parsed = JSON.parse(text) as { value: string; key: string };
+                if (parsed.key !== context.key) throw new Error("key mismatch");
+                return { value: parsed.value };
+              },
+            },
+          },
+        })),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(
+      http.put(`${API_BASE_URL}/blob`, async ({ request }) => {
+        const sent = (await request.json()) as { value: string; key: string };
+        assert.equal(sent.key, "s3cr3t");
+        return HttpResponse.json(sent);
+      }),
+    );
+
+    const ok = await api.put({ body: { value: "hi" }, context: { key: "s3cr3t" } });
+    assert.ok(!(ok instanceof Error));
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.data, { value: "hi" });
+  });
+
+  test("params and query schema factories receive the per-call context", async () => {
+    const api = http_client(
+      {
+        get: new Endpoint(
+          { method: "GET", pathname: "/tenants/:tenant/items" },
+          (context: { tenant: string; locale: string }) => ({
+            params: { schema: z.object({ tenant: z.literal(context.tenant) }) },
+            query: { schema: z.object({ locale: z.literal(context.locale) }) },
+            responses: { 200: { schema: z.object({ ok: z.boolean() }), parse: "json" } },
+          }),
+        ),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(
+      http.get(`${API_BASE_URL}/tenants/acme/items`, () => HttpResponse.json({ ok: true })),
+    );
+
+    const ok = await api.get({
+      params: { tenant: "acme" },
+      query: { locale: "fr" },
+      context: { tenant: "acme", locale: "fr" },
+    });
+    assert.ok(!(ok instanceof Error));
+    assert.equal(ok.ok, true);
+
+    // the context-built params schema rejects a value the context disagrees with
+    const bad_params = await api.get({
+      params: { tenant: "acme" },
+      query: { locale: "fr" },
+      context: { tenant: "other", locale: "fr" },
+    });
+    assert.ok(bad_params instanceof SerializationError);
+    assert.equal(bad_params.context.operation, "generate_url");
+
+    // and so does the context-built query schema
+    const bad_query = await api.get({
+      params: { tenant: "acme" },
+      query: { locale: "fr" },
+      context: { tenant: "acme", locale: "en" },
+    });
+    assert.ok(bad_query instanceof SerializationError);
+    assert.equal(bad_query.context.operation, "generate_url");
+  });
+
+  test("a params/query serialize function receives the validated data and the context", async () => {
+    let seen_url = "";
+    const api = http_client(
+      {
+        get: new Endpoint(
+          { method: "GET", pathname: "/tenants/:tenant/items" },
+          (context: { tenant: string; page_size: number }) => ({
+            params: {
+              schema: z.object({ tenant: z.literal(context.tenant) }),
+              serialize: (data) => ({ tenant: `${data.tenant}-${context.tenant}` }),
+            },
+            query: {
+              schema: z.object({ q: z.string() }),
+              serialize: (data) =>
+                new URLSearchParams({ q: data.q, size: String(context.page_size) }),
+            },
+            responses: { 200: { schema: z.object({ ok: z.boolean() }), parse: "json" } },
+          }),
+        ),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(
+      http.get(`${API_BASE_URL}/tenants/acme-acme/items`, ({ request }) => {
+        seen_url = request.url;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    const ok = await api.get({
+      params: { tenant: "acme" },
+      query: { q: "socks" },
+      context: { tenant: "acme", page_size: 25 },
+    });
+    assert.ok(!(ok instanceof Error));
+    assert.equal(ok.ok, true);
+
+    const url = new URL(seen_url);
+    assert.equal(url.pathname, "/tenants/acme-acme/items");
+    assert.equal(url.searchParams.get("q"), "socks");
+    assert.equal(url.searchParams.get("size"), "25");
+  });
+
+  test("endpoint-level default context fills a key the call omits", async () => {
+    const api = http_client(
+      {
+        get: new Endpoint(
+          { method: "GET", pathname: "/user" },
+          (context: { expected_name: string }) => ({
+            responses: {
+              200: {
+                schema: z.object({ name: z.literal(context.expected_name) }),
+                parse: "json",
+              },
+            },
+          }),
+          {
+            context: {
+              expected_name: "John",
+            },
+          },
+        ),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(http.get(`${API_BASE_URL}/user`, () => HttpResponse.json({ name: "John" })));
+
+    const ok = await api.get({});
+    assert.ok(!(ok instanceof Error));
+    assert.equal(ok.ok, true);
+  });
+
+  test("client-level default context applies, endpoint and per-call override it", async () => {
+    const make = (per_call?: { tenant?: string }) =>
+      http_client(
+        {
+          get: new Endpoint(
+            { method: "GET", pathname: "/echo" },
+            (context: { tenant: string }) => ({
+              responses: {
+                200: {
+                  schema: z.object({ tenant: z.literal(context.tenant) }),
+                  parse: "json",
+                },
+              },
+            }),
+          ),
+        },
+        { base_url: API_BASE_URL, context: { tenant: "client" } },
+      ).get(per_call ? { context: per_call } : {});
+
+    server.use(
+      http.get(`${API_BASE_URL}/echo`, ({ request }) => {
+        return HttpResponse.json({
+          tenant: new URL(request.url).searchParams.get("t") ?? "client",
+        });
+      }),
+    );
+
+    const from_client = await make();
+    assert.ok(!(from_client instanceof Error) && from_client.ok);
+
+    const from_call = await make({ tenant: "other" });
+    assert.ok(from_call instanceof ParseError);
+  });
+
+  test("context is never serialized into the outgoing request", async () => {
+    let seen_url = "";
+    let seen_body: string | null = null;
+    const api = http_client(
+      {
+        post: new Endpoint(
+          { method: "POST", pathname: "/things" },
+          (_context: { secret: string }) => ({
+            body: { schema: z.object({ name: z.string() }), serialize: "json" },
+            responses: { 200: { schema: z.object({ ok: z.boolean() }), parse: "json" } },
+          }),
+        ),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(
+      http.post(`${API_BASE_URL}/things`, async ({ request }) => {
+        seen_url = request.url;
+        seen_body = await request.text();
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    await api.post({ body: { name: "widget" }, context: { secret: "do-not-leak" } });
+    assert.ok(!seen_url.includes("do-not-leak"), "context must not appear in the URL");
+    assert.ok(!(seen_body ?? "").includes("do-not-leak"), "context must not appear in the body");
+    assert.deepEqual(JSON.parse(seen_body ?? "{}"), { name: "widget" });
+  });
+
+  test("a throwing definition factory surfaces as UnexpectedError through the client", async () => {
+    const api = http_client(
+      {
+        get: new Endpoint({ method: "GET", pathname: "/x" }, (_context: { key: string }) => {
+          throw new Error("boom");
+        }),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    const result = await api.get({ context: { key: "value" } });
+    assert.ok(result instanceof UnexpectedError);
+    assert.equal(result.context.operation, "resolve_definition");
+    assert.equal((result.cause as Error)?.message, "boom");
+  });
+
+  test("the definition factory runs once per request", async () => {
+    let calls = 0;
+    const api = http_client(
+      {
+        post: new Endpoint({ method: "POST", pathname: "/things" }, (context: { tag: string }) => {
+          calls++;
+          return {
+            query: { schema: z.object({ tag: z.literal(context.tag) }) },
+            body: { schema: z.object({ name: z.string() }), serialize: "json" as const },
+            responses: { 200: { schema: z.object({ ok: z.boolean() }), parse: "json" as const } },
+          };
+        }),
+      },
+      { base_url: API_BASE_URL },
+    );
+
+    server.use(http.post(`${API_BASE_URL}/things`, () => HttpResponse.json({ ok: true })));
+
+    const ok = await api.post({
+      query: { tag: "a" },
+      body: { name: "widget" },
+      context: { tag: "a" },
+    });
+    assert.ok(!(ok instanceof Error));
+    assert.equal(calls, 1);
+  });
+});
