@@ -394,3 +394,108 @@ new Endpoint(
     },
   },
 );
+
+// --- a schema that accepts anything needs a `parse` function (any / unknown / void / never) ---
+
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  // @ts-expect-error: z.any() says nothing about the encoding, so "json" is rejected
+  { responses: { 200: { schema: z.any(), parse: "json" } } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  // @ts-expect-error: and so is "text"
+  { responses: { 200: { schema: z.any(), parse: "text" } } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  // @ts-expect-error: z.unknown() likewise
+  { responses: { 200: { schema: z.unknown(), parse: "json" } } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  // @ts-expect-error: z.void()
+  { responses: { 200: { schema: z.void(), parse: "json" } } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  // @ts-expect-error: z.never()
+  { responses: { 200: { schema: z.never(), parse: "text" } } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/anything" },
+  {
+    responses: {
+      200: { schema: z.any(), parse: async (body) => new Response(body).json() },
+      201: { schema: z.unknown(), parse: async (body) => new Response(body).json() },
+      202: { schema: z.void(), parse: async () => undefined },
+    },
+  },
+);
+// a concrete non-string schema still parses as "json", and an object with unknown values too
+new Endpoint(
+  { method: "GET", pathname: "/record" },
+  { responses: { 200: { schema: z.record(z.string(), z.unknown()), parse: "json" } } },
+);
+
+// --- custom body serializer return shapes ---
+
+new Endpoint(
+  { method: "POST", pathname: "/form" },
+  {
+    body: {
+      schema: z.object({ name: z.string() }),
+      // @ts-expect-error: FormData derives its own content type (boundary included)
+      serialize: (data) => {
+        const form = new FormData();
+        form.append("name", data.name);
+        return { body: form, content_type: "multipart/form-data" };
+      },
+    },
+  },
+);
+new Endpoint(
+  { method: "POST", pathname: "/form" },
+  {
+    body: {
+      schema: z.object({ name: z.string() }),
+      serialize: (data) => {
+        const form = new FormData();
+        form.append("name", data.name);
+        return { body: form };
+      },
+    },
+  },
+);
+new Endpoint(
+  { method: "POST", pathname: "/stream" },
+  {
+    body: {
+      schema: z.object({ name: z.string() }),
+      // @ts-expect-error: raw bytes carry no type, so a stream requires a content_type
+      serialize: (data) => ({ body: new Blob([JSON.stringify(data)]).stream() }),
+    },
+  },
+);
+new Endpoint(
+  { method: "POST", pathname: "/stream" },
+  {
+    body: {
+      schema: z.object({ name: z.string() }),
+      serialize: (data) => ({
+        body: new Blob([JSON.stringify(data)]).stream(),
+        content_type: "application/json",
+      }),
+    },
+  },
+);
+new Endpoint(
+  { method: "POST", pathname: "/text" },
+  {
+    body: {
+      schema: z.object({ name: z.string() }),
+      // a string may or may not name its type
+      serialize: (data) => ({ body: data.name }),
+    },
+  },
+);

@@ -98,11 +98,15 @@ if (result.ok && result.status === 200) {
 Each parser's `parse` controls how the raw body is read before validation. `parse` is always
 required (there is no runtime default) and is narrowed by the schema:
 
-- `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema.
+- `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema. An empty body decodes to `null`, which is then validated like any other value.
 - `"text"`: read the body as text. Required/allowed for string-input schemas; the compiler rejects `"text"` on an object schema.
 - A function: custom deserialization, allowed for any schema. It receives the raw
   `Response["body"]` stream, plus the response's `status`, `ok`, `url` and `headers` as a second
   argument, which is what a wildcard parser needs to tell its statuses apart.
+
+A schema whose input is `any`, `unknown`, `void` or `never` says
+nothing about how the body is encoded, so neither string mode is allowed for it: `parse` must be a
+function, and decoding is yours.
 
 ```typescript
 const endpoint = new Endpoint(

@@ -23,6 +23,7 @@ export {
   type $infer,
 } from "./lib/http-client.ts";
 export { default_retry_condition } from "./lib/utils.ts";
+export { PathnameError, MissingParamsError } from "./lib/pathname.ts";
 export {
   HttpClientError,
   TimeoutError,

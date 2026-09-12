@@ -133,14 +133,22 @@ export type HeadersInitWithReducer =
 
 /** Types for the per-request `retry` option. */
 export namespace RetryPolicy {
-  /** Decides whether a completed attempt should be retried; defaults to `default_retry_condition`. */
+  /**
+   * Decides whether a completed attempt should be retried; defaults to `default_retry_condition`.
+   * `response` is set when one arrived and `error` when the attempt failed. Both are set in one
+   * case: the response arrived but the `attempt` bound cut its body read, in which case `response`
+   * is the metadata of the response that was lost and `error` the `TimeoutError`.
+   */
   export type Condition = (context: {
     request: HTTPFetch.RequestMetadata;
     response: HTTPFetch.ResponseMetadata | undefined;
     error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
   }) => MaybePromise<boolean>;
 
-  /** Maximum number of attempts, as a number or a function of the request. */
+  /**
+   * Number of retries allowed after the first request, as a number or a function of the request.
+   * `attempts: 1` is at most two requests; `0` is a single one.
+   */
   export type Attempts =
     | number
     | ((context: { request: HTTPFetch.RequestMetadata }) => MaybePromise<number>);
@@ -179,7 +187,7 @@ export namespace RetryPolicy {
 
   /** Retry configuration passed as the `retry` request option. */
   export type Configuration = {
-    /** Maximum number of attempts before giving up. */
+    /** Retries allowed after the first request. Defaults to `0`, so `when` alone never retries. */
     attempts?: Attempts;
     /** Delay before retrying. */
     delay?: Delay;
@@ -421,9 +429,9 @@ export namespace HTTPFetch {
    * "already expired", not "disabled": only omitting a key leaves that bound off.
    */
   export type TimeoutConfig = {
-    /** Bounds the whole call: every attempt, every inter-attempt delay, and response parsing. Terminal, so an expiry is never offered to the retry condition. */
+    /** Bounds the whole call: the client-level `options()` factory, every attempt, every inter-attempt delay, and response parsing. Terminal, so an expiry is never offered to the retry condition. */
     total?: number;
-    /** Bounds a single attempt. No default; use it to cut a hung connection loose and retry. Retryable, so an expiry goes through the retry condition like any other failure. */
+    /** Bounds a single attempt, headers and body alike. No default; use it to cut a hung connection loose and retry. Retryable, so an expiry goes through the retry condition like any other failure, including one that lands while the body is being read. */
     attempt?: number;
   };
 
@@ -455,6 +463,23 @@ export namespace Schema {
     : [schema] extends [never]
       ? default_value
       : StandardSchemaV1.InferInput<schema>;
+
+  /**
+   * The input type of a schema, read by inference rather than by indexing, so it works on a type
+   * parameter that is not constrained to {@link Schema.Any}. Anything that is not a schema, an
+   * unresolved slot included, yields `never`.
+   */
+  export type input_of<schema> = schema extends Schema._<infer input, any> ? input : never;
+
+  /**
+   * `true` when a value of type `value` is an acceptable input for `schema`, `false` otherwise.
+   * Non-distributive on both sides, so a union `value` is judged as a whole.
+   *
+   * @example
+   * Schema.accepts<typeof z.unknown(), void> // true
+   * Schema.accepts<typeof z.string(), void>  // false
+   */
+  export type accepts<schema, value> = [value] extends [Schema.input_of<schema>] ? true : false;
 
   /** The output type of a schema, or `default_value` when the schema is `never`. */
   export type infer_output<schema extends Schema.Any, default_value extends unknown = never> = [
@@ -559,19 +584,37 @@ export namespace Serializer {
       });
 
   /**
-   * Request-body serializer. `serialize` is `"json"` or a function returning the encoded body and its content type.
+   * Request-body serializer. `serialize` is `"json"` or a function returning the encoded body and
+   * its content type. The serializer owns `Content-Type`: a header-level value is dropped in favor
+   * of what it returns, so a custom media type is expressed here, not in `headers`.
+   *
+   * The returned shape is keyed on the body type. `FormData` and `URLSearchParams` take no
+   * `content_type`, since the runtime derives it (with the multipart boundary) from the body itself
+   * and a hand-written one would break it. `BufferSource` and `ReadableStream` require one, as raw
+   * bytes carry no type. `Blob`, `string` and `null` may set one. A stream is consumed by the first
+   * attempt, so it cannot be re-sent by a retry.
    *
    * @example
    * { schema: z.object({ name: z.string() }), serialize: "json" }
+   *
+   * @example
+   * // the JSON serializer under a vendor media type
+   * {
+   *   schema: z.object({ name: z.string() }),
+   *   serialize: (data) => ({ body: JSON.stringify(data), content_type: "application/vnd.api+json" }),
+   * }
    */
   export type Body<schema> = {
     schema: schema;
     serialize:
       | "json"
-      | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) => {
-          body: BodyInit | null;
-          content_type: string;
-        });
+      | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) =>
+          | { body: FormData | URLSearchParams; content_type?: never }
+          | { body: BufferSource | ReadableStream<any>; content_type: string }
+          | {
+              body: Blob | string | null;
+              content_type?: string;
+            });
   };
 }
 
@@ -584,8 +627,10 @@ export namespace Parser {
   };
 
   /**
-   * Response-body parser. `parse` is `"text"` for string schemas, `"json"` otherwise, or a function
-   * reading the raw body stream.
+   * Response-body parser. `parse` is `"text"` for string schemas, `"json"` for every other concrete
+   * schema, or a function reading the raw body stream. A schema whose input is `any`, `unknown`,
+   * `void` or `never` accepts whatever the body decodes to, so the client cannot know how to decode
+   * it: `parse` must then be a function.
    *
    * A `parse` function owns the body: it is the only place the client hands one out, and the client
    * never reads it itself. Read it once, or forward the stream as the parsed value and let the
@@ -611,9 +656,17 @@ export namespace Parser {
     parse:
       | ([schema] extends [never]
           ? "json" | "text"
-          : [schema] extends [Schema._<string, any>]
-            ? "text"
-            : "json")
+          : // a schema that accepts anything (`void`, so also `unknown` and `any`) or nothing
+            // (`never`) says nothing about the body's encoding: decoding is the consumer's job.
+            // Checked before the string test, because `Schema._<any, any>` also satisfies
+            // `Schema._<string, any>` and would otherwise be forced to `"text"`.
+            [Schema.input_of<schema>] extends [never]
+            ? never
+            : Schema.accepts<schema, void> extends true
+              ? never
+              : [schema] extends [Schema._<string, any>]
+                ? "text"
+                : "json")
       | ((
           body: Response["body"],
           metadata: HTTPFetch.ResponseMetadata,

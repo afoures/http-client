@@ -56,5 +56,8 @@
     "typescript": "^5.9.3",
     "zod": "^4.4.3"
   },
+  "engines": {
+    "node": ">=20.3.0"
+  },
   "packageManager": "pnpm@10.10.0"
 }

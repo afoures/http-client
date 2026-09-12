@@ -133,7 +133,8 @@ const url = await endpoint.generate_url({
 });
 ```
 
-Returns `URL` on success, or `SerializationError` on validation failure.
+Returns `URL` on success, or `SerializationError` when `params` or `query` fail validation or
+serialization, or when a param is missing, empty, `"."` or `".."`.
 
 ### `serialize_body(init, context?)`
 

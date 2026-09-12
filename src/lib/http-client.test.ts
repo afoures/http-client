@@ -1,9 +1,16 @@
-import { describe, test, before, after, afterEach } from "node:test";
+import { describe, test, before, after, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
+import { MissingParamsError, PathnameError } from "./pathname.ts";
 import { default_retry_condition, request_metadata, response_metadata } from "./utils.ts";
-import { default_retry_condition as entry_point_retry_condition } from "../index.ts";
+import {
+  default_retry_condition as entry_point_retry_condition,
+  MissingParamsError as entry_point_missing_params_error,
+  PathnameError as entry_point_pathname_error,
+} from "../index.ts";
 import {
   AbortedError,
   HttpClientError,
@@ -280,7 +287,7 @@ describe("fetch_endpoint_factory", () => {
         });
 
         assert.ok(result instanceof TimeoutError);
-        assert.equal(attempts(), 3);
+        assert.equal(attempts(), 4, "the first request plus three retries");
       });
 
       test("`total` and `attempt` together: attempts are cut, the call ends on the deadline", async () => {
@@ -326,10 +333,10 @@ describe("fetch_endpoint_factory", () => {
 
         assert.ok(
           !(result instanceof Error),
-          `expected the third response, got ${result instanceof Error ? `${result.name}: ${result.message}` : "success"}`,
+          `expected the fourth response, got ${result instanceof Error ? `${result.name}: ${result.message}` : "success"}`,
         );
         assert.equal(result.status, 503);
-        assert.equal(attempts(), 3);
+        assert.equal(attempts(), 4);
       });
     });
 
@@ -371,8 +378,8 @@ describe("fetch_endpoint_factory", () => {
           },
         });
 
-        assert.deepEqual(seen, ["TimeoutError", "TimeoutError", "TimeoutError"]);
-        assert.equal(attempts(), 3);
+        assert.deepEqual(seen, ["TimeoutError", "TimeoutError", "TimeoutError", "TimeoutError"]);
+        assert.equal(attempts(), 4);
       });
 
       test("the two expiries are distinguishable by message", async () => {
@@ -700,7 +707,7 @@ describe("fetch_endpoint_factory", () => {
     });
 
     assert.ok(result instanceof NetworkError);
-    assert.equal(attemptCount, 2);
+    assert.equal(attemptCount, 3, "the first request plus two retries");
   });
 
   test("retry with custom condition", async () => {
@@ -1761,7 +1768,7 @@ describe("fetch_endpoint_factory", () => {
         result instanceof NetworkError,
         `expected NetworkError, got ${result instanceof Error ? result.name : "success"}`,
       );
-      assert.equal(attempts(), 3);
+      assert.equal(attempts(), 4);
     });
 
     test("an attempt timeout is retried", async () => {
@@ -1779,7 +1786,7 @@ describe("fetch_endpoint_factory", () => {
         result instanceof TimeoutError,
         `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
       );
-      assert.equal(attempts(), 3);
+      assert.equal(attempts(), 4);
     });
 
     test("an aborted request is not retried", async () => {
@@ -1812,7 +1819,7 @@ describe("fetch_endpoint_factory", () => {
 
         assert.ok(!(result instanceof Error));
         assert.equal(result.status, status);
-        assert.equal(attempts(), 3);
+        assert.equal(attempts(), 4);
       });
     }
 
@@ -1854,7 +1861,7 @@ describe("fetch_endpoint_factory", () => {
       });
 
       assert.ok(!(result instanceof Error));
-      assert.equal(attempts(), 3);
+      assert.equal(attempts(), 4);
     });
 
     test("a success is not retried", async () => {
@@ -1971,7 +1978,7 @@ describe("response body ownership", () => {
 
     const result = await fetch_endpoint({
       retry: {
-        attempts: 2,
+        attempts: 1,
         when: ({ request, response }) => {
           seen.push(request, response as Record<string, unknown>);
           return true;
@@ -1995,9 +2002,349 @@ describe("response body ownership", () => {
       assert.equal("body" in value, false);
       assert.equal("json" in value, false);
     }
-    // `when` twice, `delay` and `recover` once each (the second attempt exhausts the budget before
-    // they run), two values apiece.
+    // `when` twice, `delay` and `recover` once each (the single retry allowed is spent before they
+    // run again), two values apiece.
     assert.equal(seen.length, 8);
+  });
+});
+
+describe("audit follow-ups", () => {
+  const endpoint = new Endpoint({ method: "GET", pathname: "/x" });
+
+  function client_for(
+    custom_fetch: (request: Request) => Promise<Response>,
+    get_default_options?: () => Promise<HTTPFetch.OptionalRequestInit>,
+  ) {
+    return fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch,
+      get_default_options,
+    });
+  }
+
+  /** A fetch that honors its signal and otherwise answers `204` after `ms`. */
+  function slow_fetch(ms: number) {
+    return (request: Request) =>
+      new Promise<Response>((resolve, reject) => {
+        const token = setTimeout(() => resolve(new Response(null, { status: 204 })), ms);
+        request.signal.addEventListener("abort", () => {
+          clearTimeout(token);
+          reject(request.signal.reason);
+        });
+      });
+  }
+
+  describe("a timeout during the body read", () => {
+    /**
+     * The first request gets its headers and half a JSON body, then the connection is held open;
+     * every later request completes. `msw` cannot stall mid-body, hence a real server.
+     */
+    let server: Server;
+    let base_url: string;
+    let requests = 0;
+
+    before(async () => {
+      server = createServer((_, response) => {
+        requests++;
+        response.writeHead(200, { "content-type": "application/json" });
+        if (requests === 1) response.write('{"a":');
+        else response.end('{"a":1}');
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      base_url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    });
+
+    after(() => {
+      server.closeAllConnections();
+      server.close();
+    });
+
+    beforeEach(() => {
+      requests = 0;
+    });
+
+    const json_endpoint = new Endpoint(
+      { method: "GET", pathname: "/slow" },
+      { responses: { 200: { schema: z.record(z.string(), z.unknown()), parse: "json" } } },
+    );
+
+    function stalled_client() {
+      return fetch_endpoint_factory({ base_url, endpoint: json_endpoint, custom_fetch: fetch });
+    }
+
+    test("a `total` expiry is a terminal TimeoutError naming the deadline", async () => {
+      const seen: Array<string | undefined> = [];
+      const result = await stalled_client()({
+        timeout: { total: 50 },
+        retry: {
+          attempts: 3,
+          when: ({ error }) => {
+            seen.push(error?.kind);
+            return error !== undefined;
+          },
+        },
+      });
+
+      assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+      assert.match(result.message, /Call deadline of 50ms exceeded/);
+      assert.equal(result.context.operation, "parse_response");
+      assert.equal(result.context.response?.status, 200);
+      // `when` saw the 200 before its body was read, and never the blown deadline
+      assert.deepEqual(seen, [undefined]);
+      assert.equal(requests, 1);
+    });
+
+    test("an `attempt` expiry is offered to `when` with the response metadata, and retried", async () => {
+      const seen: Array<{ status: number | undefined; error: string | undefined }> = [];
+      const result = await stalled_client()({
+        timeout: { attempt: 50 },
+        retry: {
+          attempts: 2,
+          when: (ctx) => {
+            seen.push({ status: ctx.response?.status, error: ctx.error?.kind });
+            return default_retry_condition(ctx);
+          },
+        },
+      });
+
+      assert.ok(!(result instanceof Error), `got ${String(result)}`);
+      assert.ok(result.ok);
+      assert.deepEqual(result.data, { a: 1 });
+      assert.equal(requests, 2);
+      // `when` runs on the 200's metadata before the body is read (so a retried response is never
+      // read), then again once the body read timed out, with the lost response alongside the
+      // error, then on the completed 200
+      assert.deepEqual(seen, [
+        { status: 200, error: undefined },
+        { status: 200, error: "TimeoutError" },
+        { status: 200, error: undefined },
+      ]);
+    });
+
+    test("an `attempt` expiry with no retries left is a TimeoutError with `parse_response`", async () => {
+      const result = await stalled_client()({ timeout: { attempt: 50 } });
+
+      assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+      assert.doesNotMatch(result.message, /Call deadline/);
+      assert.equal(result.context.operation, "parse_response");
+      assert.equal(result.context.response?.status, 200);
+      assert.equal(requests, 1);
+    });
+
+    test("a caller abort mid-body is an AbortedError", async () => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 50);
+      const result = await stalled_client()({ signal: controller.signal, retry: { attempts: 2 } });
+
+      assert.ok(result instanceof AbortedError, `got ${String(result)}`);
+      assert.equal(result.context.operation, "parse_response");
+      assert.equal(requests, 1);
+    });
+  });
+
+  test("a schema ParseError is never offered to `when`", async () => {
+    let calls = 0;
+    let when_calls = 0;
+    const typed = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      { responses: { 200: { schema: z.object({ a: z.number() }), parse: "json" } } },
+    );
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint: typed,
+      custom_fetch: async () => {
+        calls++;
+        return Response.json({ a: "not a number" });
+      },
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        attempts: 2,
+        when: ({ error }) => {
+          when_calls++;
+          return error !== undefined;
+        },
+      },
+    });
+
+    assert.ok(result instanceof ParseError);
+    assert.equal(calls, 1);
+    assert.equal(when_calls, 1, "`when` runs once, on the response, before parsing");
+  });
+
+  test("`attempt: 0` is already expired, even for a fetch that ignores its signal", async () => {
+    let calls = 0;
+    const seen: Array<string | undefined> = [];
+    const fetch_endpoint = client_for(async () => {
+      calls++;
+      return new Response(null, { status: 204 });
+    });
+
+    const result = await fetch_endpoint({
+      timeout: { attempt: 0 },
+      retry: {
+        attempts: 2,
+        when: (ctx) => {
+          seen.push(ctx.error?.kind);
+          return default_retry_condition(ctx);
+        },
+      },
+    });
+
+    assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+    assert.doesNotMatch(result.message, /Call deadline/);
+    assert.equal(result.context.operation, "fetch");
+    assert.equal(calls, 0, "an expired attempt must not reach fetch");
+    assert.deepEqual(seen, ["TimeoutError", "TimeoutError", "TimeoutError"]);
+  });
+
+  test("an async `options()` factory counts against `total`", async () => {
+    let calls = 0;
+    const fetch_endpoint = client_for(
+      async () => {
+        calls++;
+        return new Response(null, { status: 204 });
+      },
+      () => new Promise((resolve) => setTimeout(() => resolve({}), 60)),
+    );
+    const started = Date.now();
+
+    const result = await fetch_endpoint({ timeout: 10 });
+
+    assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+    assert.match(result.message, /Call deadline of 10ms exceeded/);
+    assert.equal(calls, 0);
+    assert.ok(Date.now() - started < 200);
+  });
+
+  test("the deadline is measured from before the `options()` factory ran", async () => {
+    const fetch_endpoint = client_for(
+      slow_fetch(200),
+      () => new Promise((resolve) => setTimeout(() => resolve({}), 40)),
+    );
+    const started = Date.now();
+
+    const result = await fetch_endpoint({ timeout: { total: 100 } });
+    const elapsed = Date.now() - started;
+
+    assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+    assert.ok(elapsed < 190, `expected the call to end near 100ms, took ${elapsed}ms`);
+  });
+
+  test("`attempts` counts retries after the first request", async () => {
+    let calls = 0;
+    const fetch_endpoint = client_for(async () => {
+      calls++;
+      return new Response("", { status: 500 });
+    });
+
+    calls = 0;
+    await fetch_endpoint({ retry: { attempts: 0 } });
+    assert.equal(calls, 1, "attempts: 0 is a single request");
+
+    calls = 0;
+    await fetch_endpoint({ retry: { attempts: 1 } });
+    assert.equal(calls, 2, "attempts: 1 is the request plus one retry");
+
+    calls = 0;
+    await fetch_endpoint({ retry: { when: () => true } });
+    assert.equal(calls, 1, "`when` alone never retries, since attempts defaults to 0");
+  });
+
+  test("`recover` returning `{ headers: undefined }` keeps the current headers", async () => {
+    const authorization_per_attempt: Array<string | null> = [];
+    const fetch_endpoint = client_for(async (request) => {
+      authorization_per_attempt.push(request.headers.get("authorization"));
+      return new Response("", { status: authorization_per_attempt.length === 1 ? 500 : 200 });
+    });
+
+    await fetch_endpoint({
+      headers: { authorization: "Bearer token" },
+      retry: { attempts: 1, recover: () => ({ headers: undefined }) },
+    });
+
+    assert.deepEqual(authorization_per_attempt, ["Bearer token", "Bearer token"]);
+  });
+
+  describe("a ReadableStream body", () => {
+    const upload = new Endpoint(
+      { method: "POST", pathname: "/x" },
+      {
+        body: {
+          schema: z.object({ a: z.number() }),
+          serialize: (data) => ({
+            body: new Blob([JSON.stringify(data)]).stream(),
+            content_type: "application/json",
+          }),
+        },
+      },
+    );
+
+    test("is sent", async () => {
+      let received: string | undefined;
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: upload,
+        custom_fetch: async (request) => {
+          received = await request.text();
+          return new Response(null, { status: 204 });
+        },
+      });
+
+      const result = await fetch_endpoint({ body: { a: 1 } });
+
+      assert.ok(!(result instanceof Error), `got ${String(result)}`);
+      assert.equal(received, '{"a":1}');
+    });
+
+    test("cannot be retried: the stream is spent by the first attempt", async () => {
+      let calls = 0;
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: upload,
+        custom_fetch: async (request) => {
+          calls++;
+          await request.text();
+          return new Response("", { status: 500 });
+        },
+      });
+
+      const result = await fetch_endpoint({ body: { a: 1 }, retry: { attempts: 1 } });
+
+      assert.ok(result instanceof UnexpectedError, `got ${String(result)}`);
+      assert.equal(result.context.operation, "create_request");
+      assert.equal(calls, 1);
+    });
+  });
+
+  test("a missing or empty param is a SerializationError, not an UnexpectedError", async () => {
+    const with_param = new Endpoint({ method: "GET", pathname: "/users/:id" });
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint: with_param,
+      custom_fetch: async () => new Response(null, { status: 204 }),
+    });
+
+    const empty = await fetch_endpoint({ params: { id: "" } });
+    assert.ok(empty instanceof SerializationError, `got ${String(empty)}`);
+    assert.equal(empty.context.operation, "generate_url");
+    assert.ok(empty.cause instanceof PathnameError);
+
+    const missing = await fetch_endpoint({ params: { id: undefined as unknown as string } });
+    assert.ok(missing instanceof SerializationError, `got ${String(missing)}`);
+    assert.ok(missing.cause instanceof MissingParamsError);
+    assert.deepEqual(missing.cause.missing_params, ["id"]);
+
+    const dotted = await fetch_endpoint({ params: { id: ".." } });
+    assert.ok(dotted instanceof SerializationError, `got ${String(dotted)}`);
+    assert.ok(dotted.cause instanceof PathnameError);
+  });
+
+  test("PathnameError and MissingParamsError are exported from the package entry point", () => {
+    assert.equal(entry_point_pathname_error, PathnameError);
+    assert.equal(entry_point_missing_params_error, MissingParamsError);
   });
 });
 

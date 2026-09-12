@@ -51,11 +51,14 @@ its own request, so use `recover` to change the next one's headers.
 const result = await api.users.get({
   params: { id: "123" },
   retry: {
-    attempts: 3,
+    attempts: 3, // up to three retries after the first request, so four requests at most
     delay: 1000, // 1 second
   },
 });
 ```
+
+`attempts` counts retries, not requests: `attempts: 1` allows a second request, and `attempts: 0`
+(the default) means the first request is the only one.
 
 ### Conditional Retry
 
@@ -229,7 +232,8 @@ const default_retry_condition: RetryPolicy.Condition = ({ response, error }) => 
 
 So `408`, `429` and every `5xx` are retried, as are `NetworkError` and `TimeoutError`. Nothing else is: a `4xx` other than those two is a permanent client error, a `3xx` read under `redirect: "manual"` is a normal outcome, an `AbortedError` means the caller asked to stop, and an `UnexpectedError` comes from your own callback throwing (retrying just re-throws).
 
-`attempts` defaults to `0`, so none of this happens until you ask for a retry.
+`attempts` counts retries after the first request and defaults to `0`, so none of this happens
+until you ask for a retry: a `when` condition on its own never retries anything.
 
 The condition is exported from the package entry point, so you can compose with it instead of reimplementing it:
 
@@ -306,7 +310,7 @@ const result = await api.users.get({
   timeout: { attempt: 2000 },
   retry: { attempts: 3, delay: 1000 },
 });
-// three tries, each cut at 2 seconds, with a second of delay between them
+// up to four tries (the request plus three retries), each cut at 2 seconds, with a second of delay between them
 ```
 
 Combine them to bound both:

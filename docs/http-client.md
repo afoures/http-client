@@ -192,12 +192,12 @@ await api.users.get({ params, timeout: { attempt: 2000 } }); // each try gets 2s
 await api.users.get({ params, timeout: { total: 5000, attempt: 2000 } }); // both
 ```
 
-- `total` is the **call deadline**. It covers every attempt, every inter-attempt retry delay, and
-  response parsing. When it expires the call is over: the retry condition is never consulted, and
-  the error reads `Call deadline of 5000ms exceeded`.
-- `attempt` bounds **one try**. It has no default. Use it to cut a hung connection loose so the
-  retry policy can start a fresh one; an expiry goes through `when` like any other failure and is
-  retried by the default condition.
+- `total` is the **call deadline**. It covers initial setup, every attempt, every inter-attempt retry delay, and response parsing. When
+  it expires the call is over: the retry condition is never consulted, and the error reads
+  `Call deadline of 5000ms exceeded`.
+- `attempt` bounds **one try**. It has no default. Use it to cut a hung connection loose so the retry policy
+  can start a fresh one; an expiry goes through `when` like any other failure and is retried by the
+  default condition.
 
 Both are floored and clamped to `0`, and `0` means "already expired", not "disabled": only omitting
 a key leaves that bound off. So a computed budget that runs out fails fast:

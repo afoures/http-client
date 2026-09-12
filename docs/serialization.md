@@ -185,7 +185,8 @@ const endpoint = new Endpoint(
         const formData = new FormData();
         formData.append("file", data.file);
         formData.append("name", data.name);
-        return { body: formData, content_type: "multipart/form-data" };
+        // no content_type: fetch derives it automatically from the body, boundary included
+        return { body: formData };
       },
     },
   },
@@ -207,7 +208,8 @@ const endpoint = new Endpoint(
         const params = new URLSearchParams();
         params.set("username", data.username);
         params.set("password", data.password);
-        return { body: params, content_type: "application/x-www-form-urlencoded" };
+        // no content_type: fetch derives it automatically from the body
+        return { body: params };
       },
     },
   },
@@ -230,6 +232,65 @@ const endpoint = new Endpoint(
   },
 );
 ```
+
+### Content-Type
+
+The serializer owns the `Content-Type` header. What `serialize` returns is what the request carries,
+and a `Content-Type` set through `headers` (at the client, endpoint or call level) is dropped: a
+request without a body sends none, a request with one sends the serializer's. The `recover` retry
+hook cannot change it either. This keeps one source of truth for the header and its body, which is
+what a `FormData` boundary or a charset parameter needs.
+
+Some data structures does not need an explicit `Content-Type`: `FormData` and `URLSearchParams` for example. In this case, the lib uses default runtime behavior.
+
+When you want to change the default behavior, you can write a custom serializer for your endpoint.
+
+Here is a JSON serializer that returns HSON with vendor media type (JSON:API, `merge-patch+json`, GitHub's `vnd.github+json`) :
+
+```typescript
+const endpoint = new Endpoint(
+  { method: "PATCH", pathname: "/users/:id" },
+  {
+    body: {
+      schema: z.object({ name: z.string().optional(), email: z.string().optional() }),
+      serialize: (data) => ({
+        body: JSON.stringify(data),
+        content_type: "application/merge-patch+json",
+      }),
+    },
+  },
+);
+```
+
+### Stream Bodies
+
+A `ReadableStream` body is sent with `duplex: "half"`, as `fetch` requires. A stream can only be
+read once, so it is consumed by the first attempt: a retry cannot re-send it and fails with an
+`UnexpectedError` (`context.operation === "create_request"`). Leave `retry.attempts` at `0` for a
+stream body, or buffer it into a `Blob` first when retries matter.
+
+## Omitted Input
+
+A declared `params`, `query` or `body` serializer always runs its schema, including when the slot
+is omitted at the call site. The type only allows the omission when the schema's input accepts
+`undefined`, so that is exactly what the schema sees, and defaults/transforms apply:
+
+```typescript
+const endpoint = new Endpoint(
+  { method: "GET", pathname: "/items" },
+  {
+    query: {
+      schema: z.preprocess((value) => value ?? {}, z.object({ page: z.number().default(1) })),
+    },
+  },
+);
+
+await endpoint.generate_url({ base_url: "https://api.example.com" });
+// https://api.example.com/items?page=1
+```
+
+A schema output of `undefined` means there is nothing to send: no search string for `query`, no
+body for `body`, and `serialize` is not called for it.
 
 ## Validation Errors
 

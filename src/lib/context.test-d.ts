@@ -460,3 +460,32 @@ new Endpoint({ method: "POST", pathname: "/order" }, (_context: { tz: string }) 
     schema: z.object({ name: z.string() }),
   },
 }));
+
+// --- an endpoint-level `context` default is constrained to the declared context ---
+
+new Endpoint(
+  { method: "GET", pathname: "/tz" },
+  (context: { tz: string }) => ({
+    responses: { 200: { schema: z.object({ tz: z.literal(context.tz) }), parse: "json" } },
+  }),
+  // @ts-expect-error: `nope` is not a key of the declared context
+  { context: { nope: 1 } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/tz" },
+  (context: { tz: string }) => ({
+    responses: { 200: { schema: z.object({ tz: z.literal(context.tz) }), parse: "json" } },
+  }),
+  // @ts-expect-error: a known key with the wrong type is rejected too
+  { context: { tz: 1 } },
+);
+// the default is still inferred as a literal, so `tz` becomes optional at the call site
+const tz_defaulted = new Endpoint(
+  { method: "GET", pathname: "/tz" },
+  (context: { tz: string }) => ({
+    responses: { 200: { schema: z.object({ tz: z.literal(context.tz) }), parse: "json" } },
+  }),
+  { context: { tz: "UTC" } },
+);
+assert_type<Equal<typeof tz_defaulted.context_default, { readonly tz: "UTC" }>>();
+http_client({ tz_defaulted }, { base_url: "x" }).tz_defaulted({});

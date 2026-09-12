@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import { Endpoint } from "./endpoint.ts";
 import z from "zod";
 import { ParseError, SerializationError, UnexpectedError } from "./errors.ts";
+import { MissingParamsError, PathnameError } from "./pathname.ts";
 
 describe("Endpoint.generate_url", () => {
   test("basic pathname without params or query", async () => {
@@ -570,7 +571,6 @@ describe("Endpoint.serialize_body", () => {
             formData.append("file", data.file);
             return {
               body: formData,
-              content_type: "multipart/form-data",
             };
           },
         },
@@ -581,7 +581,14 @@ describe("Endpoint.serialize_body", () => {
     });
     assert.ok(!(result instanceof Error));
     assert.ok(result.body instanceof FormData);
-    assert.equal(result.content_type, "multipart/form-data");
+    // the runtime derives the media type, boundary included, from the body itself
+    assert.equal(result.content_type, undefined);
+    const sent = new Request("https://api.example.com/upload", {
+      method: "POST",
+      body: result.body,
+    });
+    assert.match(sent.headers.get("content-type") ?? "", /^multipart\/form-data; boundary=/);
+    assert.equal((await sent.formData()).get("name"), "test.txt");
   });
 
   test("POST request with custom serialize - URLSearchParams", async () => {
@@ -599,7 +606,6 @@ describe("Endpoint.serialize_body", () => {
             params.set("password", data.password);
             return {
               body: params,
-              content_type: "application/x-www-form-urlencoded",
             };
           },
         },
@@ -610,7 +616,12 @@ describe("Endpoint.serialize_body", () => {
     });
     assert.ok(!(result instanceof Error));
     assert.ok(result.body instanceof URLSearchParams);
-    assert.equal(result.content_type, "application/x-www-form-urlencoded");
+    assert.equal(result.content_type, undefined);
+    const sent = new Request("https://api.example.com/submit", {
+      method: "POST",
+      body: result.body,
+    });
+    assert.match(sent.headers.get("content-type") ?? "", /^application\/x-www-form-urlencoded/);
     const params = result.body as URLSearchParams;
     assert.equal(params.get("username"), "user123");
     assert.equal(params.get("password"), "secret");
@@ -1731,5 +1742,138 @@ describe("response kind discriminant", () => {
     assert.ok(!(result instanceof Error));
     const { kind, ok, status } = { ...result };
     assert.deepEqual({ kind, ok, status }, { kind: "SuccessfulResponse", ok: true, status: 200 });
+  });
+});
+
+describe("Endpoint.generate_url pathname failures", () => {
+  const endpoint = new Endpoint({ method: "GET", pathname: "/users/:id/posts" });
+  const base_url = "https://api.example.com";
+
+  test("an empty param is a returned SerializationError whose cause is the PathnameError", async () => {
+    const result = await endpoint.generate_url({ base_url, params: { id: "" } });
+    assert.ok(result instanceof SerializationError);
+    assert.equal(result.context.operation, "generate_url");
+    assert.ok(result.cause instanceof PathnameError);
+    assert.deepEqual(result.context.input, { params: { id: "" } });
+  });
+
+  test("a missing param is a returned SerializationError whose cause lists the missing names", async () => {
+    const result = await endpoint.generate_url({
+      base_url,
+      params: { id: undefined as unknown as string },
+    });
+    assert.ok(result instanceof SerializationError);
+    assert.ok(result.cause instanceof MissingParamsError);
+    assert.deepEqual(result.cause.missing_params, ["id"]);
+  });
+
+  test("'.' and '..' are rejected rather than collapsed by URL resolution", async () => {
+    for (const id of [".", ".."]) {
+      const result = await endpoint.generate_url({ base_url: `${base_url}/v1/`, params: { id } });
+      assert.ok(result instanceof SerializationError, `'${id}' produced ${String(result)}`);
+      assert.ok(result.cause instanceof PathnameError);
+    }
+  });
+});
+
+describe("Endpoint: a declared serializer always validates", () => {
+  const base_url = "https://api.example.com";
+
+  test("an omitted query still runs the schema, so defaults apply", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/items" },
+      {
+        query: {
+          schema: z.preprocess((value) => value ?? {}, z.object({ page: z.number().default(1) })),
+        },
+      },
+    );
+    const omitted = await endpoint.generate_url({ base_url });
+    const explicit = await endpoint.generate_url({ base_url, query: {} });
+    assert.ok(omitted instanceof URL && explicit instanceof URL);
+    assert.equal(omitted.href, `${base_url}/items?page=1`);
+    assert.equal(explicit.href, omitted.href);
+  });
+
+  test("an undefined query output adds no search string", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/items" },
+      { query: { schema: z.object({ q: z.string() }).optional() } },
+    );
+    const result = await endpoint.generate_url({ base_url });
+    assert.ok(result instanceof URL);
+    assert.equal(result.href, `${base_url}/items`);
+  });
+
+  test("an omitted query against a schema that rejects undefined is a SerializationError", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/items" },
+      { query: { schema: z.object({ q: z.string() }) } },
+    );
+    const result = await endpoint.generate_url({ base_url } as never);
+    assert.ok(result instanceof SerializationError);
+    assert.equal(result.context.operation, "generate_url");
+  });
+
+  test("an omitted body still runs the schema, so defaults are serialized", async () => {
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/items" },
+      {
+        body: {
+          schema: z.preprocess(
+            (value) => value ?? {},
+            z.object({ visibility: z.string().default("private") }),
+          ),
+          serialize: "json",
+        },
+      },
+    );
+    const result = await endpoint.serialize_body({});
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.body, JSON.stringify({ visibility: "private" }));
+    assert.equal(result.content_type, "application/json");
+  });
+
+  test("an undefined body output sends no body and skips `serialize`", async () => {
+    let serialize_calls = 0;
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/items" },
+      {
+        body: {
+          schema: z.object({ name: z.string() }).optional(),
+          serialize: (data) => {
+            serialize_calls++;
+            return { body: JSON.stringify(data), content_type: "application/json" };
+          },
+        },
+      },
+    );
+    const result = await endpoint.serialize_body({});
+    assert.ok(!(result instanceof Error));
+    assert.deepEqual(result, { body: null, content_type: undefined });
+    assert.equal(serialize_calls, 0);
+  });
+});
+
+describe("Endpoint.parse_response with an empty body under parse: 'json'", () => {
+  test("validates null, so an object schema is a ParseError carrying the null body", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      { responses: { 200: { schema: z.object({ a: z.number() }), parse: "json" } } },
+    );
+    const result = await endpoint.parse_response(new Response("", { status: 200 }));
+    assert.ok(result instanceof ParseError);
+    assert.equal(result.context.response?.body, null);
+  });
+
+  test("a nullable schema accepts it", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      { responses: { 200: { schema: z.object({ a: z.number() }).nullable(), parse: "json" } } },
+    );
+    const result = await endpoint.parse_response(new Response("", { status: 200 }));
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.status, 200);
+    assert.equal(result.data, null);
   });
 });

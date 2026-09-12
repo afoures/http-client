@@ -169,6 +169,16 @@ describe("generate_pathname", () => {
     assert.throws(() => href("/users/:id", { id: "" }), PathnameError);
   });
 
+  test("rejects '.' and '..', which URL resolution would collapse into the parent segment", () => {
+    assert.throws(() => href("/users/:id/posts", { id: ".." }), PathnameError);
+    assert.throws(() => href("/users/:id/posts", { id: "." }), PathnameError);
+    // a dot inside a longer value is ordinary text
+    assert.equal(href("/users/:id/posts", { id: "a.b" }), "/users/a.b/posts");
+    assert.equal(href("/users/:id/posts", { id: "..." }), "/users/.../posts");
+    // an already-encoded dot segment is encoded again, so it cannot collapse either
+    assert.equal(href("/users/:id/posts", { id: "%2e%2e" }), "/users/%252e%252e/posts");
+  });
+
   test("reuses a compiled pattern across calls", () => {
     const pattern = compile_pathname("/users(/:id)");
     assert.equal(generate_pathname(pattern, { id: "1" }), "/users/1");

@@ -79,14 +79,15 @@ function resolve_timeout(
 /**
  * A budget of `0` is exhausted from the outset, but `AbortSignal.timeout(0)` fires on a timer, so
  * it would still let one attempt start. Abort synchronously instead, keeping the reason shaped like
- * the runtime's so both paths classify identically.
+ * the runtime's so both paths classify identically. Serves the `total` deadline and the `attempt`
+ * bound alike.
  */
-function deadline_signal_for(total: number): AbortSignal {
-  return total === 0
+function timeout_signal_for(milliseconds: number): AbortSignal {
+  return milliseconds === 0
     ? AbortSignal.abort(
         new DOMException("The operation was aborted due to timeout", "TimeoutError"),
       )
-    : AbortSignal.timeout(total);
+    : AbortSignal.timeout(milliseconds);
 }
 
 /** `undefined` for no signals, the signal itself for one, `AbortSignal.any` beyond that. */
@@ -225,7 +226,7 @@ export function fetch_endpoint_factory<
   body_schema extends Schema._,
   responses extends Partial<Record<Parser.AllowedStatus, Schema._>>,
   context_type = unknown,
-  context_defaults = {},
+  context_defaults extends Partial<NoInfer<context_type>> = {},
   default_context = never,
 >({
   base_url,
@@ -288,13 +289,17 @@ export function fetch_endpoint_factory<
     const timeout = resolved_timeout;
 
     /**
-     * Built once, before anything else the call does, so `total` really is the call deadline: it
-     * covers URL generation, body serialization, every attempt, every inter-attempt delay, and
-     * response parsing. `call_signal` governs the sleep as well as every attempt, which is why no
-     * remaining-budget arithmetic is needed anywhere below.
+     * Built once, as early as the call can: `total` is only known once the client-level `options()`
+     * factory has resolved, so the time that factory took is subtracted from the budget here and the
+     * deadline is measured from `start_time` like everything else. From this point on it covers URL
+     * generation, body serialization, every attempt, every inter-attempt delay, and response
+     * parsing. `call_signal` governs the sleep as well as every attempt, which is why no other
+     * remaining-budget arithmetic is needed below.
      */
     const deadline_signal =
-      timeout?.total !== undefined ? deadline_signal_for(timeout.total) : undefined;
+      timeout?.total !== undefined
+        ? timeout_signal_for(Math.max(0, timeout.total - (Date.now() - start_time)))
+        : undefined;
     const call_signal = combine(merged_options.signal, deadline_signal);
 
     // Resolved once here and handed to all three methods below, so a definition factory runs
@@ -360,8 +365,11 @@ export function fetch_endpoint_factory<
       );
     if (serialized instanceof Error) return serialized;
 
+    // The serializer owns `Content-Type`: a header-level value is dropped, and the serializer's is
+    // re-applied after every `recover` replacement below.
+    const body_content_type = serialized.content_type;
     request_headers.delete("Content-Type");
-    if (serialized.content_type) request_headers.set("Content-Type", serialized.content_type);
+    if (body_content_type) request_headers.set("Content-Type", body_content_type);
 
     const retry_policy = {
       when: merged_options.retry?.when ?? default_retry_condition,
@@ -370,10 +378,20 @@ export function fetch_endpoint_factory<
       recover: merged_options.retry?.recover,
     } satisfies RetryPolicy.Configuration;
 
+    type AttemptError = UnexpectedError | NetworkError | TimeoutError | AbortedError;
+
     let attempt = 0;
     let request: Request;
     let response: Response | undefined;
-    let error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+    let error: AttemptError | undefined;
+
+    const request_context = () =>
+      ({
+        url: url.toString(),
+        method: endpoint.method,
+        timeout,
+        baseUrl: base_url,
+      }) satisfies ErrorContext["request"];
 
     /**
      * A `total` expiry is reported against the deadline it blew rather than by inspecting `reason`,
@@ -382,16 +400,12 @@ export function fetch_endpoint_factory<
      * value at all since `AbortController.abort(reason)` accepts one: a caller passing
      * `AbortSignal.timeout(n)` gets a `TimeoutError`, a plain `abort()` an `AbortedError`.
      */
-    function classify_abort(reason: unknown, operation: string) {
+    function classify_abort(reason: unknown, operation: string, extra: Partial<ErrorContext> = {}) {
       const context = {
         operation,
-        request: {
-          url: url instanceof URL ? url.toString() : base_url,
-          method: endpoint.method,
-          timeout,
-          baseUrl: base_url,
-        },
+        request: request_context(),
         timing: { startTime: start_time, duration: Date.now() - start_time, attempt },
+        ...extra,
       } satisfies Partial<ErrorContext>;
 
       if (deadline_signal?.aborted) {
@@ -413,10 +427,108 @@ export function fetch_endpoint_factory<
      * run out. The two timeouts are told apart by checking the deadline signal directly rather than
      * by inspecting the error, since an `attempt` expiry produces an identical `TimeoutError`.
      */
-    function terminal_abort(operation: string) {
-      if (deadline_signal?.aborted) return classify_abort(deadline_signal.reason, operation);
+    function terminal_abort(operation: string, extra?: Partial<ErrorContext>) {
+      if (deadline_signal?.aborted) return classify_abort(deadline_signal.reason, operation, extra);
       if (merged_options.signal?.aborted) {
-        return classify_abort(merged_options.signal.reason, operation);
+        return classify_abort(merged_options.signal.reason, operation, extra);
+      }
+      return undefined;
+    }
+
+    /**
+     * `when`, then `attempts`, then `delay`, for the attempt that just settled. `attempts` counts
+     * retries, so it is compared against the retries already made (`attempt - 1`) rather than the
+     * requests sent: `attempts: 1` allows a second request, `0` none. A throwing callback ends the
+     * call with an `UnexpectedError` naming `retry_policy`.
+     */
+    async function decide_retry(
+      attempt_request: HTTPFetch.RequestMetadata,
+      attempt_response: HTTPFetch.ResponseMetadata | undefined,
+      attempt_error: AttemptError | undefined,
+    ): Promise<{ retry: false } | { retry: true; delay: number } | UnexpectedError> {
+      try {
+        const should_retry = await retry_policy.when({
+          request: attempt_request,
+          response: attempt_response,
+          error: attempt_error,
+        });
+        if (!should_retry) return { retry: false };
+
+        const max_retries =
+          typeof retry_policy.attempts === "function"
+            ? await retry_policy.attempts({ request: attempt_request })
+            : retry_policy.attempts;
+        if (attempt - 1 >= max_retries) return { retry: false };
+
+        const delay =
+          typeof retry_policy.delay === "function"
+            ? await retry_policy.delay({
+                request: attempt_request,
+                response: attempt_response,
+                error: attempt_error,
+                attempt,
+              })
+            : retry_policy.delay;
+        return { retry: true, delay };
+      } catch (local_error) {
+        return new UnexpectedError("Failed to check retry policy", {
+          cause: local_error,
+          operation: "retry_policy",
+          request: request_context(),
+          timing: {
+            startTime: start_time,
+            attempt,
+            maxAttempts:
+              typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
+          },
+        });
+      }
+    }
+
+    /**
+     * The wait, then `recover`, once a retry has been decided. `sleep` only ever rejects on abort,
+     * and it is classified here rather than routed through the retry-policy catch, which would
+     * launder the abort into "Failed to check retry policy". Header overrides replace the set
+     * wholesale, except `Content-Type`, which the serializer owns.
+     */
+    async function prepare_retry(
+      delay: number,
+      attempt_request: HTTPFetch.RequestMetadata,
+      attempt_response: HTTPFetch.ResponseMetadata | undefined,
+      attempt_error: AttemptError | undefined,
+    ): Promise<AttemptError | undefined> {
+      if (delay > 0) {
+        try {
+          await sleep(delay, call_signal);
+        } catch (reason) {
+          return classify_abort(reason, "retry_delay");
+        }
+      }
+
+      if (!retry_policy.recover) return undefined;
+
+      let overrides: RetryPolicy.Overrides | void;
+      try {
+        overrides = await retry_policy.recover({
+          request: attempt_request,
+          response: attempt_response,
+          error: attempt_error,
+          attempt,
+          current: { headers: new Headers(request_headers) },
+        });
+      } catch (local_error) {
+        return new UnexpectedError("Failed to recover request", {
+          cause: local_error,
+          operation: "recover",
+          request: request_context(),
+          timing: { startTime: start_time, attempt },
+        });
+      }
+
+      if (overrides && "headers" in overrides && overrides.headers !== undefined) {
+        request_headers = new Headers(overrides.headers);
+        request_headers.delete("Content-Type");
+        if (body_content_type) request_headers.set("Content-Type", body_content_type);
       }
       return undefined;
     }
@@ -442,7 +554,7 @@ export function fetch_endpoint_factory<
 
       const attempt_signal = combine(
         call_signal,
-        timeout?.attempt !== undefined ? AbortSignal.timeout(timeout.attempt) : undefined,
+        timeout?.attempt !== undefined ? timeout_signal_for(timeout.attempt) : undefined,
       );
 
       try {
@@ -452,74 +564,48 @@ export function fetch_endpoint_factory<
           body: serialized.body,
           headers: request_headers,
           signal: attempt_signal,
+          // needed for streams, no impact adding it for all requests
+          // oxlint-disable-next-line unicorn/no-useless-spread
+          ...{ duplex: "half" },
         });
       } catch (local_error) {
         error = new UnexpectedError("Failed to create request", {
           cause: local_error,
           operation: "create_request",
-          request: {
-            url: url instanceof URL ? url.toString() : base_url,
-            method: endpoint.method,
-            headers,
-            timeout,
-            baseUrl: base_url,
-          },
-          timing: { startTime: start_time, attempt: 1 },
+          request: { ...request_context(), headers },
+          timing: { startTime: start_time, attempt: attempt + 1 },
         });
         break;
       }
 
-      try {
-        attempt++;
-        response = await custom_fetch(request);
-        error = undefined;
-      } catch (local_error) {
-        const duration = Date.now() - start_time;
-        if (local_error instanceof Error && local_error.name === "TimeoutError") {
-          error = new TimeoutError(local_error.message, {
-            cause: local_error,
+      attempt++;
+
+      if (attempt_signal?.aborted) {
+        /**
+         * `terminal_abort` just ruled out the deadline and the caller's signal, so only the
+         * `attempt` bound can be aborted here: an `attempt` of `0` is already expired. The fetch
+         * is skipped rather than trusted to notice, so the outcome does not depend on the fetch
+         * implementation honoring its signal, and the expiry goes through `when` like any other.
+         */
+        error = classify_abort(attempt_signal.reason, "fetch");
+      } else {
+        try {
+          response = await custom_fetch(request);
+          error = undefined;
+        } catch (local_error) {
+          const duration = Date.now() - start_time;
+          const context = {
             operation: "fetch",
-            request: {
-              url: request.url,
-              method: request.method,
-              timeout,
-            },
-            timing: {
-              startTime: start_time,
-              duration,
-              attempt,
-            },
-          });
-        } else if (local_error instanceof Error && local_error.name === "AbortError") {
-          error = new AbortedError(local_error.message, {
-            cause: local_error,
-            operation: "fetch",
-            request: {
-              url: request.url,
-              method: request.method,
-              timeout,
-            },
-            timing: {
-              startTime: start_time,
-              duration,
-              attempt,
-            },
-          });
-        } else {
-          error = new NetworkError("Network error", {
-            cause: local_error,
-            operation: "fetch",
-            request: {
-              url: request.url,
-              method: request.method,
-              timeout,
-            },
-            timing: {
-              startTime: start_time,
-              duration,
-              attempt,
-            },
-          });
+            request: { url: request.url, method: request.method, timeout },
+            timing: { startTime: start_time, duration, attempt },
+          } satisfies Partial<ErrorContext>;
+          if (local_error instanceof Error && local_error.name === "TimeoutError") {
+            error = new TimeoutError(local_error.message, { cause: local_error, ...context });
+          } else if (local_error instanceof Error && local_error.name === "AbortError") {
+            error = new AbortedError(local_error.message, { cause: local_error, ...context });
+          } else {
+            error = new NetworkError("Network error", { cause: local_error, ...context });
+          }
         }
       }
 
@@ -533,99 +619,102 @@ export function fetch_endpoint_factory<
        * The retry callbacks see metadata, never the request or response themselves: the body of the
        * response they are deciding about still has to be read by the parser (or cancelled here), and
        * a callback that consumed it would leave the call with nothing to parse. Built once per
-       * attempt and shared by all three.
+       * attempt and shared by all of them.
        */
       const attempt_request = request_metadata(request);
       const attempt_response = response ? response_metadata(response) : undefined;
 
-      let delay = 0;
-      try {
-        const should_retry = await retry_policy.when({
-          request: attempt_request,
-          response: attempt_response,
-          error,
-        });
-        if (!should_retry) break;
+      if (response) {
+        // Decided on metadata before the body is read, so a response that is retried away never
+        // has its body read into memory.
+        const decision = await decide_retry(attempt_request, attempt_response, undefined);
+        if (decision instanceof Error) {
+          error = decision;
+          break;
+        }
+        if (decision.retry) {
+          const failure = await prepare_retry(
+            decision.delay,
+            attempt_request,
+            attempt_response,
+            undefined,
+          );
+          if (failure) {
+            error = failure;
+            break;
+          }
+          continue;
+        }
 
-        const max_attempts =
-          typeof retry_policy.attempts === "function"
-            ? await retry_policy.attempts({ request: attempt_request })
-            : retry_policy.attempts;
-        if (attempt >= max_attempts) break;
+        /**
+         * `parse_response` returns its failures, so a rejection here is a body read that broke under
+         * it (an abort landing mid-stream) or a broken invariant. Neither can report the body: it is
+         * the thing that failed, there is no second copy, and reading one is what this whole design
+         * is built to prevent. `discard_body` releases whatever is left of it.
+         *
+         * The `attempt` bound covers the body read too, and an expiry there is the one rejection
+         * that is retried: the connection hung after the headers arrived, which is exactly what the
+         * bound exists to recover from. The response is gone with its body, so the retry decision
+         * below sees its metadata alongside the error.
+         */
+        const settled = response;
+        const outcome = await endpoint.parse_response(settled, context as any, definition).then(
+          (parsed) => ({ parsed }),
+          (thrown: unknown) => ({ thrown }),
+        );
+        if ("parsed" in outcome) return outcome.parsed;
 
-        delay =
-          typeof retry_policy.delay === "function"
-            ? await retry_policy.delay({
-                request: attempt_request,
-                response: attempt_response,
-                error,
-                attempt,
-              })
-            : retry_policy.delay;
-      } catch (local_error) {
-        error = new UnexpectedError("Failed to check retry policy", {
-          cause: local_error,
-          operation: "retry_policy",
-          request: {
-            url: url instanceof URL ? url.toString() : base_url,
-            method: endpoint.method,
-            timeout,
-            baseUrl: base_url,
-          },
-          timing: {
-            startTime: start_time,
-            attempt,
-            maxAttempts:
-              typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
-          },
-        });
+        discard_body(settled);
+        const response_context = {
+          response: { status: settled.status, headers: settled.headers },
+        } satisfies Partial<ErrorContext>;
+
+        const terminal = terminal_abort("parse_response", response_context);
+        if (terminal) return terminal;
+
+        const reason = outcome.thrown;
+        const timing = { startTime: start_time, duration: Date.now() - start_time, attempt };
+        if (reason instanceof Error && reason.name === "TimeoutError") {
+          error = new TimeoutError(reason.message, {
+            cause: reason,
+            operation: "parse_response",
+            request: request_context(),
+            ...response_context,
+            timing,
+          });
+          response = undefined;
+        } else if (reason instanceof Error && reason.name === "AbortError") {
+          return new AbortedError(reason.message, {
+            cause: reason,
+            operation: "parse_response",
+            request: request_context(),
+            ...response_context,
+            timing,
+          });
+        } else {
+          return new UnexpectedError("Failed to parse response", {
+            cause: reason,
+            operation: "parse_response",
+            request: request_context(),
+            ...response_context,
+            timing,
+          });
+        }
+      }
+
+      // A failed attempt: the fetch threw, the `attempt` bound was already expired, or the body
+      // read timed out. `attempt_response` is set in the last case only.
+      const decision = await decide_retry(attempt_request, attempt_response, error);
+      if (decision instanceof Error) {
+        error = decision;
         break;
       }
+      if (!decision.retry) break;
 
-      /**
-       * Outside the retry-policy try block: `sleep` only ever rejects on abort, and routing that
-       * through the catch above would launder any abort into an `UnexpectedError` and end the call
-       * with "Failed to check retry policy".
-       */
-      if (delay > 0) {
-        try {
-          await sleep(delay, call_signal);
-        } catch (reason) {
-          error = classify_abort(reason, "retry_delay");
-          break;
-        }
-      }
-
-      if (retry_policy.recover) {
-        let overrides: RetryPolicy.Overrides | void;
-        try {
-          overrides = await retry_policy.recover({
-            request: attempt_request,
-            response: attempt_response,
-            error,
-            attempt,
-            current: { headers: new Headers(request_headers) },
-          });
-        } catch (local_error) {
-          error = new UnexpectedError("Failed to recover request", {
-            cause: local_error,
-            operation: "recover",
-            request: {
-              url: url instanceof URL ? url.toString() : base_url,
-              method: endpoint.method,
-              timeout,
-              baseUrl: base_url,
-            },
-            timing: { startTime: start_time, attempt },
-          });
-          break;
-        }
-
-        if (overrides && "headers" in overrides) {
-          request_headers = new Headers(overrides.headers);
-          request_headers.delete("Content-Type");
-          if (serialized.content_type) request_headers.set("Content-Type", serialized.content_type);
-        }
+      const failure = await prepare_retry(decision.delay, attempt_request, attempt_response, error);
+      if (failure) {
+        error = failure;
+        break;
       }
       // oxlint-disable-next-line no-constant-condition
     } while (true);
@@ -636,52 +725,15 @@ export function fetch_endpoint_factory<
       discard_body(response);
       return error;
     }
-    if (!response) {
-      return new UnexpectedError("No response received", {
-        cause: "No response received",
-        operation: "parse_response",
-        request: {
-          url: url instanceof URL ? url.toString() : base_url,
-          method: endpoint.method,
-          timeout,
-          baseUrl: base_url,
-        },
-        timing: { startTime: start_time, attempt },
-      });
-    }
-    /**
-     * `parse_response` returns its failures, so this only catches a body read that rejected under it
-     * (an abort landing mid-stream) or a broken invariant. Neither can report the body: it is the
-     * thing that failed, there is no second copy, and reading one is what this whole design is
-     * built to prevent. `discard_body` releases whatever is left of it.
-     */
-    const result = await endpoint
-      .parse_response(response, context as any, definition)
-      .catch((error) => {
-        discard_body(response);
 
-        const context = {
-          operation: "parse_response",
-          request: {
-            url: response.url,
-            method: endpoint.method,
-            timeout,
-            baseUrl: base_url,
-          },
-          response: {
-            status: response.status,
-            headers: response.headers,
-          },
-          timing: { startTime: start_time, attempt },
-        } satisfies Partial<ErrorContext>;
-
-        if (error instanceof Error && error.name === "AbortError") {
-          return new AbortedError(error.message, { cause: error, ...context });
-        }
-        return new UnexpectedError("Failed to parse response", { cause: error, ...context });
-      });
-
-    return result;
+    // Every exit from the loop either returned a parsed result or set `error`, so this is an
+    // invariant check rather than a reachable outcome.
+    return new UnexpectedError("No response received", {
+      cause: "No response received",
+      operation: "parse_response",
+      request: request_context(),
+      timing: { startTime: start_time, attempt },
+    });
   }
 
   return fetch_endpoint;

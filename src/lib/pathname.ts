@@ -135,8 +135,10 @@ export type CompiledPathname = {
 };
 
 /**
- * A pathname pattern is malformed, or the params given for it cannot produce a pathname. Thrown
- * rather than returned, because both cases are programmer errors rather than runtime failures.
+ * A pathname pattern is malformed, or the params given for it cannot produce a pathname. Thrown by
+ * {@link compile_pathname} (and so by the `Endpoint` constructor, where a malformed pattern is a
+ * programmer error) and by {@link generate_pathname}. `Endpoint.generate_url` catches the latter
+ * and returns it as the `cause` of a `SerializationError`, since param values are runtime input.
  */
 export class PathnameError extends Error {
   /** The pattern that failed. */
@@ -237,12 +239,14 @@ export type PathnameParamValue = string | number | null | undefined;
 
 /**
  * Generate a pathname from a compiled pattern. Param values are percent-encoded, so a value can
- * never introduce a new path segment or start a search string. A param that is `null` or
- * `undefined` drops its innermost enclosing optional group, collapsing the separator it leaves
- * behind.
+ * never introduce a new path segment or start a search string. The values `"."` and `".."` are
+ * rejected outright: percent-encoding leaves them alone, and URL resolution collapses a dot
+ * segment in every spelling (`..`, `%2E%2E`, `.%2e`), so a value could otherwise remove a
+ * segment. A param that is `null` or `undefined` drops its innermost enclosing optional group,
+ * collapsing the separator it leaves behind.
  *
  * @throws {MissingParamsError} When a param outside any optional group has no value.
- * @throws {PathnameError} When a param value serializes to an empty string.
+ * @throws {PathnameError} When a param value serializes to an empty string, `"."` or `".."`.
  */
 export function generate_pathname(
   pattern: CompiledPathname,
@@ -300,6 +304,12 @@ export function generate_pathname(
     const serialized = String(value);
     if (serialized === "") {
       throw new PathnameError(`param '${token.name}' cannot be empty`, pattern.source);
+    }
+    if (serialized === "." || serialized === "..") {
+      throw new PathnameError(
+        `param '${token.name}' cannot be '${serialized}': URL resolution would collapse the segment`,
+        pattern.source,
+      );
     }
 
     frame.pathname += encodeURIComponent(serialized);

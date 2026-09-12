@@ -36,13 +36,14 @@ const result = await api.users.get({ params: { id: "123" }, timeout: 1000 });
 
 if (result instanceof TimeoutError) {
   console.log(result.kind); // "TimeoutError"
-  console.log(result.context.operation); // "fetch" | "retry_delay"
+  console.log(result.context.operation); // "fetch" | "retry_delay" | "parse_response"
 }
 ```
 
 The message tells the two bounds apart: a `total` expiry reads `Call deadline of 1000ms exceeded`,
-an `attempt` expiry keeps the runtime's own `The operation was aborted due to timeout`. See
-[Timeouts](./http-client.md#timeouts).
+an `attempt` expiry keeps the runtime's own `The operation was aborted due to timeout`. An expiry
+that lands while the body is being read carries `operation: "parse_response"` and the response's
+`status` and `headers` in `context.response`. See [Timeouts](./http-client.md#timeouts).
 
 ### `AbortedError`
 
@@ -88,6 +89,9 @@ if (result instanceof SerializationError) {
   console.log(result.cause); // Schema validation issues
 }
 ```
+
+A path param that is missing, empty, `"."` or `".."` is a `SerializationError` too (with
+`operation: "generate_url"`), since those values cannot produce a pathname.
 
 ### `ParseError`
 
@@ -306,17 +310,17 @@ if (result instanceof HttpClientError) {
 
 Roughly in the order a call runs through them:
 
-| Operation         | Failed at                                                        |
-| ----------------- | ---------------------------------------------------------------- |
-| `resolve_timeout` | reading `timeout`: a key was `NaN` or `Infinity`                 |
-| `generate_url`    | validating or serializing `params` / `query`                     |
-| `serialize_body`  | validating or serializing `body`                                 |
-| `create_request`  | constructing the `Request`                                       |
-| `fetch`           | the request itself: network failure, timeout, or abort           |
-| `retry_policy`    | a `when`, `attempts` or `delay` callback threw                   |
-| `retry_delay`     | the wait between attempts was cut short by a timeout or an abort |
-| `recover`         | a `recover` callback threw                                       |
-| `parse_response`  | reading or validating the response body                          |
+| Operation         | Failed at                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `resolve_timeout` | reading `timeout`: a key was `NaN` or `Infinity`                                             |
+| `generate_url`    | validating or serializing `params` / `query`, or a param that is missing, empty, `.` or `..` |
+| `serialize_body`  | validating or serializing `body`                                                             |
+| `create_request`  | constructing the `Request` (a stream body re-sent by a retry lands here)                     |
+| `fetch`           | the request itself: network failure, timeout, or abort                                       |
+| `retry_policy`    | a `when`, `attempts` or `delay` callback threw                                               |
+| `retry_delay`     | the wait between attempts was cut short by a timeout or an abort                             |
+| `recover`         | a `recover` callback threw                                                                   |
+| `parse_response`  | reading or validating the response body, or a timeout or abort while reading it              |
 
 `context.request.timeout` carries the **normalized** `{ total?, attempt? }` the call actually ran
 under, never the bare number a caller may have passed.

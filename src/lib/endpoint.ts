@@ -191,7 +191,7 @@ export class Endpoint<
   body_schema extends Schema._ = never,
   response_schemas extends Partial<Record<Parser.AllowedStatus, Schema._>> = {},
   context_type = unknown,
-  const context_defaults = {},
+  const context_defaults extends Partial<NoInfer<context_type>> = {},
 > {
   #method: http_method;
   #pattern: CompiledPathname;
@@ -279,7 +279,17 @@ export class Endpoint<
     return this.#context_default;
   }
 
-  /** Build the request URL from `base_url` plus typed params and query. `http_client` calls this internally; call it directly to produce a URL (e.g. for a link or prefetch) without sending a request. Returns a {@link SerializationError} as a value if validation or serialization fails, or an {@link UnexpectedError} if a definition factory throws. */
+  /**
+   * Build the request URL from `base_url` plus typed params and query. `http_client` calls this
+   * internally; call it directly to produce a URL (e.g. for a link or prefetch) without sending a
+   * request. Returns a {@link SerializationError} as a value if validation or serialization fails,
+   * or if a param is missing, empty, `"."` or `".."` (its `cause` is then a `PathnameError`), or an
+   * {@link UnexpectedError} if a definition factory throws.
+   *
+   * A declared `params` or `query` serializer always runs its schema, an omitted slot included, so
+   * a schema with defaults or a `preprocess` sees `undefined` rather than being skipped. An
+   * `undefined` output means there is nothing to add to the URL.
+   */
   async generate_url(
     init: Pretty<
       { base_url: string } & HTTPFetch.TypedParamsInit<pathname, params_schema> &
@@ -292,68 +302,84 @@ export class Endpoint<
     const definition = resolved ?? this.resolve_definition(context);
     if (definition instanceof Error) return definition;
     const { params: params_serializer, query: query_serializer } = definition.serializers;
+    // Read once, untyped: a slot the type omits is simply `undefined` here, and a declared
+    // serializer validates that `undefined` like any other value.
+    const { params: raw_params, query: raw_query } = init as { params?: unknown; query?: unknown };
 
     // Values are left unstringified: `generate_pathname` stringifies them itself, and needs to see
     // `null`/`undefined` to drop an optional segment rather than emit `"null"`/`"undefined"`.
     let pathname_params: Record<string, string | number | null | undefined> = {};
 
-    if ("params" in init && init.params !== undefined) {
-      if (params_serializer) {
-        const result = await params_serializer.schema["~standard"].validate(init.params);
+    if (params_serializer) {
+      const result = await params_serializer.schema["~standard"].validate(raw_params);
 
-        if (result.issues !== undefined) {
+      if (result.issues !== undefined) {
+        return new SerializationError("Params serialization failed", {
+          operation: "generate_url",
+          cause: result.issues,
+          input: { params: raw_params },
+        });
+      }
+
+      const transformed_params = result.value;
+
+      if (transformed_params === undefined) {
+        // nothing to place in the pathname
+      } else if (typeof params_serializer.serialize === "function") {
+        try {
+          pathname_params = params_serializer.serialize(transformed_params);
+        } catch (cause) {
           return new SerializationError("Params serialization failed", {
             operation: "generate_url",
-            cause: result.issues,
-            input: { params: init.params },
+            cause,
+            input: { params: raw_params },
           });
         }
-
-        const transformed_params = result.value;
-
-        if (typeof params_serializer.serialize === "function") {
-          try {
-            pathname_params = params_serializer.serialize(transformed_params);
-          } catch (cause) {
-            return new SerializationError("Params serialization failed", {
-              operation: "generate_url",
-              cause,
-              input: { params: init.params },
-            });
-          }
-        } else {
-          pathname_params = transformed_params as typeof pathname_params;
-        }
       } else {
-        pathname_params = init.params as typeof pathname_params;
+        pathname_params = transformed_params as typeof pathname_params;
       }
+    } else if (raw_params !== undefined) {
+      pathname_params = raw_params as typeof pathname_params;
     }
 
-    const pathname = generate_pathname(this.#pattern, pathname_params);
+    // `generate_pathname` throws `PathnameError` / `MissingParamsError`; both are about the values
+    // this call was given, so they come back as a returned failure like a schema rejection would.
+    let pathname: string;
+    try {
+      pathname = generate_pathname(this.#pattern, pathname_params);
+    } catch (cause) {
+      return new SerializationError("Params serialization failed", {
+        operation: "generate_url",
+        cause,
+        input: { params: raw_params },
+      });
+    }
 
     let search_params = new URLSearchParams();
 
-    if ("query" in init && init.query !== undefined && query_serializer) {
-      const result = await query_serializer.schema["~standard"].validate(init.query);
+    if (query_serializer) {
+      const result = await query_serializer.schema["~standard"].validate(raw_query);
 
       if (result.issues !== undefined) {
         return new SerializationError("Query serialization failed", {
           cause: result.issues,
           operation: "generate_url",
-          input: { query: init.query },
+          input: { query: raw_query },
         });
       }
 
       const transformed_query = result.value;
 
-      if (typeof query_serializer.serialize === "function") {
+      if (transformed_query === undefined) {
+        // nothing to add to the search string
+      } else if (typeof query_serializer.serialize === "function") {
         try {
           search_params = query_serializer.serialize(transformed_query);
         } catch (cause) {
           return new SerializationError("Query serialization failed", {
             cause,
             operation: "generate_url",
-            input: { query: init.query },
+            input: { query: raw_query },
           });
         }
       } else if (query_serializer.serialize === "urlencoded") {
@@ -365,18 +391,18 @@ export class Endpoint<
                   "an array query must be a list of [key, value] entries; use a `serialize` function for any other shape",
                 ),
                 operation: "generate_url",
-                input: { query: init.query },
+                input: { query: raw_query },
               });
             }
             const [key, value] = entry;
             if (!append_query_value(search_params, String(key), value)) {
-              return query_value_error(String(key), init.query);
+              return query_value_error(String(key), raw_query);
             }
           }
         } else if (transformed_query !== null && typeof transformed_query === "object") {
           for (const [key, value] of Object.entries(transformed_query)) {
             if (!append_query_value(search_params, key, value)) {
-              return query_value_error(key, init.query);
+              return query_value_error(key, raw_query);
             }
           }
         }
@@ -393,7 +419,15 @@ export class Endpoint<
     return url;
   }
 
-  /** Validate and serialize the request body, returning the encoded body and its content type. Returns a {@link SerializationError} as a value on failure, or an {@link UnexpectedError} if a definition factory throws. */
+  /**
+   * Validate and serialize the request body, returning the encoded body and its content type.
+   * Returns a {@link SerializationError} as a value on failure, or an {@link UnexpectedError} if a
+   * definition factory throws.
+   *
+   * A declared `body` serializer always runs its schema, an omitted body included, so defaults and
+   * `preprocess` apply. An `undefined` output is sent as no body at all, and `serialize` is not
+   * called for it.
+   */
   async serialize_body(
     init: Pretty<HTTPFetch.TypedBodyInit<body_schema>>,
     context?: context_type,
@@ -407,29 +441,30 @@ export class Endpoint<
     | SerializationError
     | UnexpectedError
   > {
-    if (!("body" in init) || init.body == undefined) {
-      return { body: null, content_type: undefined };
-    }
-
     const definition = resolved ?? this.resolve_definition(context);
     if (definition instanceof Error) return definition;
     const body_serializer = definition.serializers.body;
+    const { body: raw_body } = init as { body?: unknown };
 
     if (!body_serializer) {
       return { body: null, content_type: undefined };
     }
 
-    const result = await body_serializer.schema["~standard"].validate(init.body);
+    const result = await body_serializer.schema["~standard"].validate(raw_body);
 
     if (result.issues !== undefined) {
       return new SerializationError("Body serialization failed", {
         operation: "serialize_body",
         cause: result.issues,
-        input: { body: init.body },
+        input: { body: raw_body },
       });
     }
 
     const transformed_content = result.value;
+
+    if (transformed_content === undefined) {
+      return { body: null, content_type: undefined };
+    }
 
     if (typeof body_serializer.serialize === "function") {
       try {
@@ -438,7 +473,7 @@ export class Endpoint<
         return new SerializationError("Body serialization failed", {
           operation: "serialize_body",
           cause,
-          input: { body: init.body },
+          input: { body: raw_body },
         });
       }
     } else {
