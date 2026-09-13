@@ -4,14 +4,24 @@ The HTTP client provides typed errors for different failure scenarios. Every req
 **returned** as a value, never thrown, so a call result is either a response envelope or an error
 instance.
 
-The single exception is client construction: `http_client` throws a `TypeError` when `base_url` is
-not a parsable absolute URL. That is a static misconfiguration rather than a request outcome, so it
-surfaces once at startup instead of from every call.
+The exceptions are construction time, where a mistake is in code rather than in call input, so it
+surfaces once at startup instead of from every call:
+
+- `http_client` throws a `TypeError` when `base_url` is not a parsable absolute URL.
+- `new Endpoint(...)` throws a `PathnameError` when the pathname pattern is malformed: a `?` or `#`,
+  a `:` with no param name after it, or unbalanced optional-group parentheses.
 
 ```typescript
 http_client(endpoints, { base_url: "/api" });
 // TypeError: Invalid base_url: /api. Expected an absolute URL parsable by `new URL()`.
+
+new Endpoint({ method: "GET", pathname: "/users/(:id" });
+// PathnameError: unmatched '('
 ```
+
+`PathnameError` and its subclass `MissingParamsError` are exported from the package root. A call
+never returns them directly: a param value that cannot produce a pathname (missing, empty, `"."` or
+`".."`) is returned as a `SerializationError` whose `cause` is the pathname error.
 
 ## Error Types
 
@@ -91,7 +101,8 @@ if (result instanceof SerializationError) {
 ```
 
 A path param that is missing, empty, `"."` or `".."` is a `SerializationError` too (with
-`operation: "generate_url"`), since those values cannot produce a pathname.
+`operation: "generate_url"`), since those values cannot produce a pathname. Its `cause` is then a
+`MissingParamsError` (listing every missing name in `missing_params`) or a `PathnameError`.
 
 ### `ParseError`
 
@@ -118,6 +129,12 @@ if (result instanceof UnexpectedError) {
   console.log(result.context.operation); // "resolve_definition" | "create_request" | etc.
 }
 ```
+
+It also covers a response no envelope describes: a `1xx` status comes back as an `UnexpectedError`
+with `operation: "parse_response"`, as does a `status` of `0` (an opaque response in a browser).
+
+`UnexpectedError` extends `Error` directly rather than `HttpClientError`, so that a broad
+`instanceof HttpClientError` cannot swallow what is most likely a bug in your own callback.
 
 ## Checking Results
 
@@ -181,8 +198,9 @@ After handling `200`, `201` and `404` above, what remains is
 ```
 
 so the compiler cannot tell you that you forgot a code the way it can for a `kind` switch. An
-undeclared status carries the fallback type for its class rather than a schema, which is what
-`default` is there to handle.
+undeclared status carries its class fallback: the output of the `2xx` / `4xx` / `5xx` wildcard
+parser when one is declared, otherwise `null` for a 2xx and the raw text for a 4xx or 5xx. That is
+what `default` is there to handle.
 
 Compare exact statuses. Relational comparisons such as `result.status >= 400` do not narrow a union
 of numeric literals in TypeScript, so `result.error` stays inaccessible.
@@ -204,7 +222,7 @@ if (result instanceof Error) {
 if (result.ok) {
   console.log(result.data);
 } else if (result.kind === "RedirectMessage") {
-  // rare under the default `redirect: "follow"`, see Response Parsing
+  // rare under the default `redirect: "follow"`, see Redirects in Response Parsing
   console.warn("unexpected redirect to", result.redirect_to);
 } else {
   console.error(result.error); // ClientErrorResponse | ServerErrorResponse
@@ -290,7 +308,8 @@ look up:
 - Responses, exported as `HTTPFetch.ResponseKind`: `"SuccessfulResponse"`, `"RedirectMessage"`,
   `"ClientErrorResponse"`, `"ServerErrorResponse"`.
 - Errors, exported as `ErrorKind`: `"TimeoutError"`, `"AbortedError"`, `"SerializationError"`,
-  `"ParseError"`, `"NetworkError"`, `"UnexpectedError"`.
+  `"ParseError"`, `"NetworkError"`, `"UnexpectedError"`, plus `"HttpClientError"` for the base
+  class, which a call never returns on its own (so the switch above need not list it).
 
 For the error classes this matches `name`, which carries the same string. The difference is that
 `name` is typed as `string` by `Error` and so cannot discriminate a union, whereas `kind` is a literal
@@ -298,29 +317,30 @@ type on each class.
 
 ## Error Context
 
-All errors have a `context` property with the operation that failed:
+All errors, `UnexpectedError` included, have a `context` property with the operation that failed:
 
 ```typescript
-if (result instanceof HttpClientError) {
+if (result instanceof Error) {
   result.context.operation;
-  // "resolve_timeout" | "generate_url" | "serialize_body" | "create_request" | "fetch"
-  // | "retry_policy" | "retry_delay" | "recover" | "parse_response"
+  // "resolve_timeout" | "resolve_definition" | "generate_url" | "serialize_body" | "create_request"
+  // | "fetch" | "retry_policy" | "retry_delay" | "recover" | "parse_response"
 }
 ```
 
-Roughly in the order a call runs through them:
+Roughly in the order a call runs through them, with the class each one comes back as:
 
-| Operation         | Failed at                                                                                    |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| `resolve_timeout` | reading `timeout`: a key was `NaN` or `Infinity`                                             |
-| `generate_url`    | validating or serializing `params` / `query`, or a param that is missing, empty, `.` or `..` |
-| `serialize_body`  | validating or serializing `body`                                                             |
-| `create_request`  | constructing the `Request` (a stream body re-sent by a retry lands here)                     |
-| `fetch`           | the request itself: network failure, timeout, or abort                                       |
-| `retry_policy`    | a `when`, `attempts` or `delay` callback threw                                               |
-| `retry_delay`     | the wait between attempts was cut short by a timeout or an abort                             |
-| `recover`         | a `recover` callback threw                                                                   |
-| `parse_response`  | reading or validating the response body, or a timeout or abort while reading it              |
+| Operation            | Class                                                           | Failed at                                                                                                              |
+| -------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `resolve_timeout`    | `UnexpectedError`                                               | reading `timeout`: a key was `NaN` or `Infinity`                                                                       |
+| `resolve_definition` | `UnexpectedError`                                               | the definition factory threw                                                                                           |
+| `generate_url`       | `SerializationError`                                            | validating or serializing `params` / `query`, or a param that is missing, empty, `.` or `..`                           |
+| `serialize_body`     | `SerializationError`                                            | validating or serializing `body`                                                                                       |
+| `create_request`     | `UnexpectedError`                                               | constructing the `Request` (a stream body re-sent by a retry lands here)                                               |
+| `fetch`              | `NetworkError`, `TimeoutError`, `AbortedError`                  | the request itself: network failure, timeout, or abort                                                                 |
+| `retry_policy`       | `UnexpectedError`                                               | a `when`, `attempts` or `delay` callback threw                                                                         |
+| `retry_delay`        | `TimeoutError`, `AbortedError`                                  | the wait between attempts was cut short by a timeout or an abort                                                       |
+| `recover`            | `UnexpectedError`                                               | a `recover` callback threw                                                                                             |
+| `parse_response`     | `ParseError`, `TimeoutError`, `AbortedError`, `UnexpectedError` | decoding or validating the body, a timeout or abort while reading it, a `parse` function that threw, or a `1xx` status |
 
 `context.request.timeout` carries the **normalized** `{ total?, attempt? }` the call actually ran
 under, never the bare number a caller may have passed.

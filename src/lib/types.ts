@@ -185,7 +185,11 @@ export namespace RetryPolicy {
     current: { headers: Headers };
   }) => MaybePromise<Overrides | void>;
 
-  /** Retry configuration passed as the `retry` request option. */
+  /**
+   * Retry configuration passed as the `retry` request option. Merged per key across the client,
+   * endpoint and call levels; a key set to `undefined` inherits the earlier level's value rather
+   * than clearing it.
+   */
   export type Configuration = {
     /** Retries allowed after the first request. Defaults to `0`, so `when` alone never retries. */
     attempts?: Attempts;
@@ -302,7 +306,9 @@ export namespace HTTPFetch {
     ok: true;
   } & (
       | {
-          status: Exclude<HTTPStatus.SuccessfulResponse, keyof data>;
+          // 204 has its own arm below and never carries a body, so it is kept out of the fallback
+          // even when a `2xx` wildcard would otherwise claim it.
+          status: Exclude<HTTPStatus.SuccessfulResponse, keyof data | 204>;
           data: fallback;
         }
       | { [status in keyof data & number]: { status: status; data: data[status] } }[keyof data &

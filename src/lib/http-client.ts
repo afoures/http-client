@@ -564,7 +564,9 @@ export function fetch_endpoint_factory<
           body: serialized.body,
           headers: request_headers,
           signal: attempt_signal,
-          // needed for streams, no impact adding it for all requests
+          // Required by `fetch` for a `ReadableStream` body. Harmless on every other request: a
+          // runtime that does not know `duplex` drops it during WebIDL dictionary conversion, and
+          // one that does ignores it when there is no stream to send.
           // oxlint-disable-next-line unicorn/no-useless-spread
           ...{ duplex: "half" },
         });
@@ -895,7 +897,10 @@ export namespace $infer {
             responses,
             context_type,
             context_defaults,
-            any
+            // A raw `Endpoint` has no client in front of it, so no client-level defaults: `never`,
+            // like `http_client` without `default_context`. `any` here would read as "every key
+            // defaulted" and make the whole context optional in `$infer.Context` and `$infer.Input`.
+            never
           >
         >
       : never;

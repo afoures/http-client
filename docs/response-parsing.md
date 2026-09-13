@@ -98,7 +98,7 @@ if (result.ok && result.status === 200) {
 Each parser's `parse` controls how the raw body is read before validation. `parse` is always
 required (there is no runtime default) and is narrowed by the schema:
 
-- `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema. An empty body decodes to `null`, which is then validated like any other value.
+- `"json"`: parse the body as JSON. Required/allowed for object (non-string) schemas; the compiler rejects `"json"` on a string schema. An empty body decodes to `null`, which is then validated like any other value, so a `200` with no body fails an object schema with a `ParseError` whose `context.response.body` is `null`. Make the schema `.nullable()` when the server may legitimately send nothing. Malformed JSON is a `ParseError` carrying the raw text in `context.response.body`.
 - `"text"`: read the body as text. Required/allowed for string-input schemas; the compiler rejects `"text"` on an object schema.
 - A function: custom deserialization, allowed for any schema. It receives the raw
   `Response["body"]` stream, plus the response's `status`, `ok`, `url` and `headers` as a second
@@ -194,7 +194,10 @@ If no parser (specific or wildcard) covers a status:
   `{ schema: z.string(), parse: "text" }` for the raw text.
 - **204 No Content**: always `data: null`, regardless of any parser.
 - **4xx / 5xx**: `error` is the raw response text (typed as `string`).
-- **3xx redirects**: never schema'd; you get `redirect_to` instead (see above).
+- **3xx redirects**: never schema'd; you get `redirect_to` instead (see [Redirects](#redirects)).
+- **1xx**: no envelope covers an informational status, so it is returned as an `UnexpectedError`
+  with `context.operation === "parse_response"`. The same goes for a `status` of `0`, which a
+  browser produces for an opaque response.
 
 ```typescript
 const endpoint = new Endpoint({ method: "DELETE", pathname: "/users/:id" });
@@ -207,6 +210,25 @@ if (!result.ok && result.status >= 400) {
   console.log(typeof result.error); // "string", raw text fallback
 }
 ```
+
+### Redirects
+
+`fetch` follows redirects by default (`redirect: "follow"`), so a 3xx is consumed inside `fetch` and
+the client sees the final response. A `RedirectMessage` therefore only reaches you when the
+redirect could not be followed, or when you ask to see it with `redirect: "manual"` in the request
+options:
+
+```typescript
+const result = await api.files.download({ params: { id: "1" }, redirect: "manual" });
+
+if (!(result instanceof Error) && result.kind === "RedirectMessage") {
+  console.log(result.status, result.redirect_to); // 302, the `Location` header or null
+}
+```
+
+That works in Node, where `redirect: "manual"` surfaces the real 3xx response. In browsers the same
+option yields an opaque response with `status: 0` and no headers, which the client returns as an
+`UnexpectedError`. The body of a redirect is always discarded, so a 3xx never has a parser.
 
 ## Schema Transforms
 
@@ -273,7 +295,8 @@ switch (result.status) {
     console.warn(result.error.message);
     break;
   default:
-    // an undeclared status is parsed by the `2xx` / `4xx` / `5xx` fallback, never a schema
+    // an undeclared status carries its class fallback: the wildcard parser's output when a
+    // `2xx` / `4xx` / `5xx` is declared, otherwise `null` for a 2xx and the raw text for the rest
     console.warn("unhandled response", result.status);
 }
 ```

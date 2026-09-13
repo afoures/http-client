@@ -2,8 +2,8 @@
 // Not executed at runtime (does not match the `*.test.ts` glob); validated by `pnpm typecheck`.
 import { http_client, type $infer } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
-import { NetworkError, ParseError, TimeoutError } from "./errors.ts";
-import type { HTTPFetch, RetryPolicy, Schema } from "./types.ts";
+import { NetworkError, ParseError, TimeoutError, type ErrorKind } from "./errors.ts";
+import type { HTTPFetch, HTTPMethod, RetryPolicy, Schema } from "./types.ts";
 import z from "zod";
 
 type Equal<left, right> =
@@ -51,25 +51,12 @@ const create_user = new Endpoint(
 // optional path param via the `(/:id)` group syntax (no schema)
 const get_user_optional = new Endpoint({ method: "GET", pathname: "/users(/:id)" });
 
-// wildcard response statuses (`2xx` / `4xx` / `5xx`) acting as per-class defaults
-const wildcard = new Endpoint(
-  { method: "GET", pathname: "/wild" },
-  {
-    responses: {
-      "2xx": { schema: z.object({ ok: z.boolean() }), parse: "json" },
-      "4xx": { schema: z.object({ error: z.string() }), parse: "json" },
-      "5xx": { schema: z.object({ fatal: z.string() }), parse: "json" },
-    },
-  },
-);
-
 const client = http_client(
   {
     get_user,
     create_required,
     create_user,
     get_user_optional,
-    wildcard,
     // nested endpoint map → mapped recursively
     admin: { get_user },
   },
@@ -84,6 +71,43 @@ assert_type<
 assert_type<
   Equal<typeof client.admin.get_user extends (...args: never[]) => unknown ? true : false, true>
 >();
+
+// negative: every leaf of the tree must be an `Endpoint`, at any depth
+http_client(
+  {
+    get_user,
+    // @ts-expect-error: a number is not an Endpoint
+    not_an_endpoint: 1,
+  },
+  { base_url: "https://api.example.com" },
+);
+http_client(
+  {
+    admin: {
+      get_user,
+      // @ts-expect-error: nor is a string, nested or not
+      not_an_endpoint: "x",
+    },
+  },
+  { base_url: "https://api.example.com" },
+);
+
+// --- `timeout` takes a bare number or `{ total?, attempt? }` at every level ---
+
+http_client({ get_user }, { base_url: "x", options: { timeout: { total: 5000, attempt: 1000 } } });
+http_client({ get_user }, { base_url: "x", options: { timeout: 5000 } });
+http_client({ get_user }, { base_url: "x", options: () => ({ timeout: { attempt: 1000 } }) });
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  timeout: { total: 5000 },
+});
+client.get_user({
+  params: { id: "1" },
+  query: { include: "a", page: "1" },
+  // @ts-expect-error: only `total` and `attempt` are timeout keys
+  timeout: { connect: 5000 },
+});
 
 // --- fetch input shape ---
 
@@ -177,6 +201,7 @@ client.get_user({
 assert_type<Equal<RecoverContext["request"], HTTPFetch.RequestMetadata>>();
 assert_type<Equal<RecoverContext["response"], HTTPFetch.ResponseMetadata | undefined>>();
 assert_type<Equal<keyof HTTPFetch.RequestMetadata, "url" | "method" | "headers">>();
+assert_type<Equal<HTTPFetch.RequestMetadata["method"], HTTPMethod.Any>>();
 assert_type<Equal<keyof HTTPFetch.ResponseMetadata, "status" | "ok" | "url" | "headers">>();
 
 client.get_user({
@@ -222,16 +247,8 @@ assignable<GetUserResult>(null as unknown as NetworkError);
 assignable<GetUserResult>(null as unknown as TimeoutError);
 assignable<GetUserResult>(null as unknown as ParseError);
 
-// the response envelope narrows by ok/status to the schema outputs
-assert_type<
-  Equal<Extract<GetUserResult, { ok: true; status: 200 }>["data"], { id: string; name: string }>
->();
-assert_type<
-  Equal<
-    Extract<GetUserResult, { ok: false; status: 404 }>["error"],
-    { message: string; code: number }
-  >
->();
+// the per-status narrowing of the envelope is pinned in `endpoint.test-d.ts` (Endpoint level) and
+// `infer.test-d.ts` (client level); here only the client-specific shape is checked.
 
 // an envelope carries the response metadata and no `Response`, so it cannot re-read a spent body
 assert_type<
@@ -240,23 +257,17 @@ assert_type<
 assert_type<Equal<Extract<GetUserResult, { ok: true }>["url"], string>>();
 assert_type<Equal<Extract<GetUserResult, { ok: true }>["headers"], Headers>>();
 
-// --- fetch output narrowing with `2xx` / `4xx` / `5xx` wildcard statuses ---
-
-type WildcardResult = Awaited<ReturnType<typeof client.wildcard>>;
-
-assert_type<
-  Equal<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
->();
+// every error class the client returns is named in `ErrorKind`, plus the base class
 assert_type<
   Equal<
-    Extract<WildcardResult, { ok: false; error: { error: string } }>["error"],
-    { error: string }
-  >
->();
-assert_type<
-  Equal<
-    Extract<WildcardResult, { ok: false; error: { fatal: string } }>["error"],
-    { fatal: string }
+    ErrorKind,
+    | "HttpClientError"
+    | "TimeoutError"
+    | "AbortedError"
+    | "SerializationError"
+    | "ParseError"
+    | "NetworkError"
+    | "UnexpectedError"
   >
 >();
 
@@ -469,6 +480,13 @@ async function ok_keeps_the_success_union() {
     use(result.data.created_at);
   }
 }
+
+// the two `null` arms of the union above, told apart by status: an undeclared 2xx and 204
+assert_type<Equal<$infer.Data<typeof client.create_user, 202>, null>>();
+assert_type<Equal<$infer.Data<typeof client.create_user, 204>, null>>();
+assert_type<
+  Equal<$infer.Data<typeof client.create_user, 201>, { id: string; created_at: string }>
+>();
 
 // negative: a `status` chain is never exhaustive, which is why `default` is required
 async function status_chain_is_open() {

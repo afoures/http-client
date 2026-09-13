@@ -10,35 +10,51 @@ type RequestMetadata = { url: string; method: HTTPMethod; headers: Headers };
 // everything about the response, except its body
 type ResponseMetadata = { status: number; ok: boolean; url: string; headers: Headers };
 
+// the failure of the attempt, when it failed before a response could be parsed
+type AttemptError = NetworkError | TimeoutError | AbortedError | UnexpectedError;
+
 type RetryPolicy = {
   attempts?: number | ((ctx: { request: RequestMetadata }) => number | Promise<number>);
   delay?:
     | number
     | ((ctx: {
         request: RequestMetadata;
-        response?: ResponseMetadata;
-        error?: Error;
+        response: ResponseMetadata | undefined;
+        error: AttemptError | undefined;
         attempt: number;
       }) => number | Promise<number>);
   when?: (ctx: {
     request: RequestMetadata;
-    response?: ResponseMetadata;
-    error?: Error;
+    response: ResponseMetadata | undefined;
+    error: AttemptError | undefined;
   }) => boolean | Promise<boolean>;
   recover?: (ctx: {
     request: RequestMetadata;
-    response?: ResponseMetadata;
-    error?: Error;
+    response: ResponseMetadata | undefined;
+    error: AttemptError | undefined;
     attempt: number;
     current: { headers: Headers };
   }) => { headers?: HeadersInit } | void | Promise<{ headers?: HeadersInit } | void>;
 };
 ```
 
+These are the `RetryPolicy.Configuration`, `RetryPolicy.Condition`, `RetryPolicy.Delay`,
+`RetryPolicy.Attempts` and `RetryPolicy.Recover` types exported from the package root.
+
 Decide from `status`, `headers` and `error`: the callbacks get metadata rather than the `Request` and
 `Response`, so a retry decision can never eat the body your parser is about to read (see
 [Reading the Body](./response-parsing.md#reading-the-body)). If you need the body to decide, the
 decision belongs in the parser or at the call site instead.
+
+`when` runs after every attempt that settled, successful ones included: a `200` is offered to it
+before its body is read, and a `when` that returns `true` for it retries the request instead of
+parsing it. The default condition returns `false` for every 2xx, so this only matters for a custom
+`when`, which should look at `response.status` rather than return `true` unconditionally. A
+`ParseError` is never offered to `when`: by then the attempt has completed and the body is spent.
+
+`response` and `error` are usually exclusive: one arrived, or the attempt failed. Both are set in
+one case, an `attempt` timeout that fired while the body was being read. `response` is then the
+metadata of the response that was lost and `error` the `TimeoutError`.
 
 `request.headers` is what that attempt was sent with, and is read-only in effect: each attempt builds
 its own request, so use `recover` to change the next one's headers.
@@ -216,7 +232,14 @@ If `recover` throws, the request fails with an `UnexpectedError` (`context.opera
 
 ### Layering
 
-Like `when`, `delay`, and `attempts`, `recover` is resolved per key across client, endpoint, and per-call options: the most specific layer that defines it wins wholesale (per-call over endpoint over client). Recover functions do not chain or compose across layers.
+Like `when`, `delay`, and `attempts`, `recover` is resolved per key across client, endpoint, and
+per-call options: the most specific layer that defines it wins wholesale (per-call over endpoint
+over client). Recover functions do not chain or compose across layers.
+
+A key set to `undefined` does not count as defined: `retry: { when: options?.when }` with the
+option absent inherits the client-level `when` rather than resetting it to the default condition.
+To drop an inherited callback on purpose, replace it with one that does nothing, such as
+`when: () => false`.
 
 ## Default Behavior
 
@@ -278,7 +301,8 @@ const endpoint = new Endpoint(
 );
 ```
 
-Per-request retry overrides endpoint defaults.
+Per-request retry overrides endpoint defaults key by key, so `retry: { attempts: 1 }` at the call
+site keeps the endpoint's `delay`. See [Layering](#layering).
 
 ## Timeouts and Retries
 

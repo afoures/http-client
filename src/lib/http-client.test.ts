@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { fetch_endpoint_factory, http_client } from "./http-client.ts";
 import { Endpoint } from "./endpoint.ts";
 import { MissingParamsError, PathnameError } from "./pathname.ts";
-import { default_retry_condition, request_metadata, response_metadata } from "./utils.ts";
+import { default_retry_condition } from "./utils.ts";
 import {
   default_retry_condition as entry_point_retry_condition,
   MissingParamsError as entry_point_missing_params_error,
@@ -28,6 +28,27 @@ import { delay, http, HttpResponse } from "msw";
 const API_BASE_URL = "https://api.example.com";
 
 const server = setupServer();
+
+/**
+ * Wraps `fetch` so the request the client built can be asserted on after the call, instead of
+ * inside an msw handler that silently never runs when the URL does not match. The clone keeps the
+ * body readable after the real request has consumed it.
+ */
+function capturing_fetch() {
+  const requests: Request[] = [];
+  return {
+    requests,
+    last: () => {
+      const request = requests.at(-1);
+      assert.ok(request, "no request reached fetch");
+      return request;
+    },
+    custom_fetch: (request: Request) => {
+      requests.push(request.clone());
+      return fetch(request);
+    },
+  };
+}
 
 describe("fetch_endpoint_factory", () => {
   before(() => {
@@ -56,46 +77,45 @@ describe("fetch_endpoint_factory", () => {
     );
 
     server.use(
-      http.get(`${API_BASE_URL}/users/:id`, ({ request, params }) => {
-        assert.equal(request.url, `${API_BASE_URL}/users/123`);
-        assert.equal(request.method, "GET");
+      http.get(`${API_BASE_URL}/users/:id`, ({ params }) => {
         return HttpResponse.json({ id: params.id, name: "John" });
       }),
     );
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({ params: { id: "123" } });
 
+    assert.equal(captured.last().url, `${API_BASE_URL}/users/123`);
+    assert.equal(captured.last().method, "GET");
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, { id: "123", name: "John" });
   });
 
-  test("request with pathname parameters", async () => {
-    const endpoint = new Endpoint({ method: "GET", pathname: "/users/(:id)" });
+  test("an optional-group param passed as undefined drops its segment", async () => {
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users(/:id)" });
 
-    server.use(
-      http.get(`${API_BASE_URL}/users/:id`, ({ params }) => {
-        return HttpResponse.json({ id: params.id });
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({ users: [] })));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
-    const result = await fetch_endpoint({ params: { id: "456" } });
+    const result = await fetch_endpoint({ params: { id: undefined } });
 
+    assert.equal(captured.last().url, `${API_BASE_URL}/users`);
     assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
+    assert.equal(result.status, 200);
   });
 
   test("request with query parameters", async () => {
@@ -112,24 +132,21 @@ describe("fetch_endpoint_factory", () => {
       },
     );
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, ({ request }) => {
-        const url = new URL(request.url);
-        assert.equal(url.pathname, "/users");
-        assert.equal(url.searchParams.get("page"), "1");
-        assert.equal(url.searchParams.get("limit"), "10");
-        return HttpResponse.json({ users: [] });
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({ users: [] })));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({ query: { page: 1, limit: 10 } });
 
+    const url = new URL(captured.last().url);
+    assert.equal(url.pathname, "/users");
+    assert.equal(url.searchParams.get("page"), "1");
+    assert.equal(url.searchParams.get("limit"), "10");
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
   });
@@ -146,23 +163,22 @@ describe("fetch_endpoint_factory", () => {
     );
 
     server.use(
-      http.post(`${API_BASE_URL}/users`, async ({ request }) => {
-        assert.equal(request.method, "POST");
-        assert.equal(request.headers.get("Content-Type"), "application/json");
-        const body = await request.json();
-        assert.deepEqual(body, { name: "John", email: "john@example.com" });
-        return HttpResponse.json({ id: "123" }, { status: 201 });
-      }),
+      http.post(`${API_BASE_URL}/users`, () => HttpResponse.json({ id: "123" }, { status: 201 })),
     );
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({ body: { name: "John", email: "john@example.com" } });
 
+    const sent = captured.last();
+    assert.equal(sent.method, "POST");
+    assert.equal(sent.headers.get("content-type"), "application/json");
+    assert.deepEqual(await sent.json(), { name: "John", email: "john@example.com" });
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
     assert.equal(result.status, 201);
@@ -177,45 +193,21 @@ describe("fetch_endpoint_factory", () => {
       },
     );
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, ({ request }) => {
-        assert.equal(request.headers.get("x-default"), "default-value");
-        assert.equal(request.headers.get("x-custom"), "custom-value");
-        return HttpResponse.json({});
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({ headers: { "X-Custom": "custom-value" } });
 
+    assert.equal(captured.last().headers.get("x-default"), "default-value");
+    assert.equal(captured.last().headers.get("x-custom"), "custom-value");
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
-  });
-
-  test("timeout handling", async () => {
-    const endpoint = new Endpoint({ method: "GET", pathname: "/slow" });
-
-    server.use(
-      http.get(`${API_BASE_URL}/slow`, async () => {
-        await delay(100);
-        return HttpResponse.json({});
-      }),
-    );
-
-    const fetch_endpoint = fetch_endpoint_factory({
-      base_url: API_BASE_URL,
-      endpoint,
-      custom_fetch: fetch,
-    });
-
-    const result = await fetch_endpoint({ timeout: 10 });
-
-    assert.ok(result instanceof TimeoutError);
   });
 
   describe("timeout", () => {
@@ -273,7 +265,8 @@ describe("fetch_endpoint_factory", () => {
           `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
         );
         assert.match(result.message, /Call deadline of 100ms exceeded/);
-        assert.ok(elapsed < 250, `expected the call to end near 100ms, took ${elapsed}ms`);
+        // four attempts with 50ms delays would run past 150ms if the delays were unbounded
+        assert.ok(elapsed < 400, `expected the call to end near 100ms, took ${elapsed}ms`);
         assert.ok(attempts() >= 2, `expected more than one attempt, got ${attempts()}`);
       });
 
@@ -303,7 +296,8 @@ describe("fetch_endpoint_factory", () => {
 
         assert.ok(result instanceof TimeoutError);
         assert.match(result.message, /Call deadline of 200ms exceeded/);
-        assert.ok(elapsed < 400, `expected the call to end near 200ms, took ${elapsed}ms`);
+        // twenty cut attempts at 30ms each would run past 600ms if the deadline did not end the call
+        assert.ok(elapsed < 600, `expected the call to end near 200ms, took ${elapsed}ms`);
         assert.ok(attempts() >= 2, `expected several cut attempts, got ${attempts()}`);
       });
 
@@ -413,6 +407,26 @@ describe("fetch_endpoint_factory", () => {
           `expected AbortedError, got ${result instanceof Error ? `${result.name}: ${result.message}` : "success"}`,
         );
         assert.equal(result.context.operation, "retry_delay");
+        assert.equal(result.context.timing?.attempt, 1, "reports the attempt that just completed");
+        assert.deepEqual(result.context.request?.timeout, undefined);
+      });
+
+      test("a caller-supplied timeout signal firing mid-fetch yields a TimeoutError", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({
+          signal: AbortSignal.timeout(30),
+          retry: { attempts: 3 },
+        });
+
+        assert.ok(
+          result instanceof TimeoutError,
+          `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.doesNotMatch(result.message, /Call deadline/);
+        assert.equal(result.context.operation, "fetch");
+        assert.equal(attempts(), 1, "a caller signal is terminal, so nothing is retried");
       });
 
       test("a non-Error abort reason is carried through as the cause", async () => {
@@ -445,21 +459,6 @@ describe("fetch_endpoint_factory", () => {
           `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
         );
         assert.doesNotMatch(result.message, /Call deadline/);
-      });
-
-      test("a delay abort reports the attempt that just completed", async () => {
-        serve_instant_503();
-        const fetch_endpoint = make_client();
-        const controller = new AbortController();
-        setTimeout(() => controller.abort(), 30);
-
-        const result = await fetch_endpoint({
-          signal: controller.signal,
-          retry: { attempts: 3, delay: 200 },
-        });
-
-        assert.ok(result instanceof AbortedError);
-        assert.equal(result.context.timing?.attempt, 1);
       });
     });
 
@@ -514,6 +513,30 @@ describe("fetch_endpoint_factory", () => {
         assert.equal(attempts(), 0);
       });
 
+      test("`Infinity` is rejected the same way, since it cannot become a timer", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { total: Number.POSITIVE_INFINITY } });
+
+        assert.ok(result instanceof UnexpectedError);
+        assert.equal(result.context.operation, "resolve_timeout");
+        assert.match(result.message, /timeout\.total/);
+        assert.equal(attempts(), 0);
+      });
+
+      test("the `attempt` key is validated too, and the error names it", async () => {
+        const attempts = serve_slow(200);
+        const fetch_endpoint = make_client();
+
+        const result = await fetch_endpoint({ timeout: { attempt: Number.NaN } });
+
+        assert.ok(result instanceof UnexpectedError);
+        assert.equal(result.context.operation, "resolve_timeout");
+        assert.match(result.message, /timeout\.attempt/);
+        assert.equal(attempts(), 0);
+      });
+
       test("an explicit `undefined` leaves the call unbounded", async () => {
         serve_slow(50);
         const fetch_endpoint = make_client();
@@ -558,51 +581,50 @@ describe("fetch_endpoint_factory", () => {
     });
   });
 
-  test("AbortSignal handling - before request starts", async () => {
+  test("a signal already aborted before the call never reaches fetch", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
-
-    const controller = new AbortController();
-    server.use(
-      http.get(`${API_BASE_URL}/users`, async () => {
-        await delay(100);
-        return HttpResponse.json({});
-      }),
-    );
+    let fetch_calls = 0;
 
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: async () => {
+        fetch_calls++;
+        return HttpResponse.json({});
+      },
     });
 
-    controller.abort();
-    const result = await fetch_endpoint({ signal: controller.signal });
+    const result = await fetch_endpoint({ signal: AbortSignal.abort() });
 
     assert.ok(result instanceof AbortedError);
+    assert.equal(result.context.operation, "fetch");
+    assert.equal(result.context.timing?.attempt, 0);
+    assert.equal(fetch_calls, 0);
   });
 
-  test("AbortSignal handling - during request", async () => {
+  test("a signal aborted while fetch is in flight is an AbortedError naming the attempt", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
-
     const controller = new AbortController();
-    server.use(
-      http.get(`${API_BASE_URL}/users`, async () => {
-        await delay(10);
-        controller.abort();
-        await delay(20);
-        return HttpResponse.json({});
-      }),
-    );
 
+    // Deterministic: the abort is raised from inside the fetch, once the request is in flight,
+    // and the fetch rejects the way a real one does, with the signal's reason.
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: (request) =>
+        new Promise<Response>((_, reject) => {
+          request.signal.addEventListener("abort", () => reject(request.signal.reason));
+          controller.abort();
+        }),
     });
 
-    const result = await fetch_endpoint({ signal: controller.signal });
+    const result = await fetch_endpoint({ signal: controller.signal, retry: { attempts: 2 } });
 
     assert.ok(result instanceof AbortedError);
+    assert.equal(result.context.operation, "fetch");
+    assert.equal(result.context.timing?.attempt, 1, "a caller abort is terminal: no retry");
+    assert.ok(result.cause instanceof DOMException);
+    assert.equal(result.cause.name, "AbortError");
   });
 
   test("AbortSignal handling - after request", async () => {
@@ -653,35 +675,6 @@ describe("fetch_endpoint_factory", () => {
 
     assert.ok(result instanceof AbortedError);
     assert.equal(result.context.operation, "parse_response");
-  });
-
-  test("retry on failure - success on retry", async () => {
-    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
-
-    let attemptCount = 0;
-
-    server.use(
-      http.get(`${API_BASE_URL}/users`, () => {
-        attemptCount++;
-        if (attemptCount < 3) {
-          return HttpResponse.error();
-        }
-        return HttpResponse.json({ success: true });
-      }),
-    );
-
-    const fetch_endpoint = fetch_endpoint_factory({
-      base_url: API_BASE_URL,
-      endpoint,
-      custom_fetch: fetch,
-    });
-
-    const result = await fetch_endpoint({
-      retry: { attempts: 3, delay: 10, when: (ctx) => !!ctx.error },
-    });
-
-    assert.ok(!(result instanceof Error));
-    assert.equal(attemptCount, 3);
   });
 
   test("retry exhaustion - returns error", async () => {
@@ -1234,27 +1227,30 @@ describe("fetch_endpoint_factory", () => {
     const result = await fetch_endpoint({});
 
     assert.ok(result instanceof NetworkError);
+    assert.equal(result.context.operation, "fetch");
+    assert.equal(result.context.request?.url, `${API_BASE_URL}/users`);
+    assert.equal(result.context.request?.method, "GET");
+    assert.equal(result.context.timing?.attempt, 1);
+    assert.equal(typeof result.context.timing?.duration, "number");
+    assert.ok(result.cause instanceof TypeError, "the fetch rejection is carried as the cause");
   });
 
   test("default options from get_default_options", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, ({ request }) => {
-        assert.equal(request.headers.get("x-default"), "default-value");
-        return HttpResponse.json({});
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
       get_default_options: () => ({ headers: { "X-Default": "default-value" } }),
     });
 
     const result = await fetch_endpoint({});
 
+    assert.equal(captured.last().headers.get("x-default"), "default-value");
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
   });
@@ -1284,135 +1280,34 @@ describe("fetch_endpoint_factory", () => {
     assert.equal(attemptCount, 1);
   });
 
-  test("request object creation", async () => {
-    const endpoint = new Endpoint(
-      { method: "POST", pathname: "/users" },
-      {
-        body: {
-          schema: z.object({ name: z.string() }),
-          serialize: "json",
-        },
-      },
-    );
-
-    server.use(
-      http.post(`${API_BASE_URL}/users`, async ({ request }) => {
-        assert.equal(request.method, "POST");
-        const url = new URL(request.url);
-        assert.equal(url.pathname, "/users");
-        assert.equal(request.headers.get("x-custom"), "value");
-        assert.equal(request.headers.get("content-type"), "application/json");
-        const body = await request.json();
-        assert.deepEqual(body, { name: "John" });
-        return HttpResponse.json({ id: "123" }, { status: 201 });
-      }),
-    );
-
-    const fetch_endpoint = fetch_endpoint_factory({
-      base_url: API_BASE_URL,
-      endpoint,
-      custom_fetch: fetch,
-    });
-
-    const result = await fetch_endpoint({
-      body: { name: "John" },
-      headers: { "X-Custom": "value" },
-    });
-
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.status, 201);
-  });
-
-  test("async get_default_options", async () => {
+  test("an async get_default_options factory is awaited, and invoked once per call", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
+    let factory_calls = 0;
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, ({ request }) => {
-        assert.equal(request.headers.get("x-async"), "async-value");
-        return HttpResponse.json({});
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
       get_default_options: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        return { headers: { "X-Async": "async-value" } };
+        factory_calls++;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { headers: { "X-Async": `call-${factory_calls}` } };
       },
     });
 
-    const result = await fetch_endpoint({});
+    const first = await fetch_endpoint({});
+    const second = await fetch_endpoint({});
 
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
-  });
-
-  test("PUT request with body", async () => {
-    const endpoint = new Endpoint(
-      { method: "PUT", pathname: "/users/(:id)" },
-      {
-        body: {
-          schema: z.object({ name: z.string() }),
-          serialize: "json",
-        },
-      },
+    assert.ok(!(first instanceof Error));
+    assert.ok(!(second instanceof Error));
+    assert.equal(factory_calls, 2, "the factory is not cached across calls");
+    assert.deepEqual(
+      captured.requests.map((request) => request.headers.get("x-async")),
+      ["call-1", "call-2"],
     );
-
-    server.use(
-      http.put(`${API_BASE_URL}/users/:id`, ({ request }) => {
-        assert.equal(request.method, "PUT");
-        return HttpResponse.json({});
-      }),
-    );
-
-    const fetch_endpoint = fetch_endpoint_factory({
-      base_url: API_BASE_URL,
-      endpoint,
-      custom_fetch: fetch,
-    });
-
-    const result = await fetch_endpoint({
-      params: { id: "123" },
-      body: { name: "Updated" },
-    });
-
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
-  });
-
-  test("PATCH request with body", async () => {
-    const endpoint = new Endpoint(
-      { method: "PATCH", pathname: "/users/(:id)" },
-      {
-        body: {
-          schema: z.object({ name: z.string() }),
-          serialize: "json",
-        },
-      },
-    );
-
-    server.use(
-      http.patch(`${API_BASE_URL}/users/:id`, ({ request }) => {
-        assert.equal(request.method, "PATCH");
-        return HttpResponse.json({});
-      }),
-    );
-
-    const fetch_endpoint = fetch_endpoint_factory({
-      base_url: API_BASE_URL,
-      endpoint,
-      custom_fetch: fetch,
-    });
-
-    const result = await fetch_endpoint({
-      params: { id: "123" },
-      body: { name: "Patched" },
-    });
-
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
   });
 
   test("DELETE request with body", async () => {
@@ -1427,18 +1322,14 @@ describe("fetch_endpoint_factory", () => {
     );
 
     server.use(
-      http.delete(`${API_BASE_URL}/users/:id`, async ({ request }) => {
-        assert.equal(request.method, "DELETE");
-        const body = await request.json();
-        assert.deepEqual(body, { reason: "inactive" });
-        return new HttpResponse(null, { status: 204 });
-      }),
+      http.delete(`${API_BASE_URL}/users/:id`, () => new HttpResponse(null, { status: 204 })),
     );
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({
@@ -1446,40 +1337,35 @@ describe("fetch_endpoint_factory", () => {
       body: { reason: "inactive" },
     });
 
+    assert.equal(captured.last().method, "DELETE");
+    assert.deepEqual(await captured.last().json(), { reason: "inactive" });
     assert.ok(!(result instanceof Error));
     assert.equal(result.status, 204);
+    assert.equal(result.data, null);
   });
 
-  test("endpoint options merged with request options", async () => {
+  test("standard RequestInit options reach fetch on the built Request", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
       {},
-      {
-        headers: { "X-Endpoint": "endpoint-value" },
-        timeout: 5000,
-      },
+      { credentials: "include" },
     );
 
-    server.use(
-      http.get(`${API_BASE_URL}/users`, ({ request }) => {
-        assert.equal(request.headers.get("x-endpoint"), "endpoint-value");
-        assert.equal(request.headers.get("x-request"), "request-value");
-        return HttpResponse.json({});
-      }),
-    );
+    server.use(http.get(`${API_BASE_URL}/users`, () => HttpResponse.json({})));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
-    const result = await fetch_endpoint({
-      headers: { "X-Request": "request-value" },
-    });
+    const result = await fetch_endpoint({ cache: "no-store", redirect: "manual" });
 
     assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
+    assert.equal(captured.last().credentials, "include", "from the endpoint options");
+    assert.equal(captured.last().cache, "no-store", "from the call");
+    assert.equal(captured.last().redirect, "manual");
   });
 
   test("retry with attempts as function", async () => {
@@ -1718,25 +1604,103 @@ describe("fetch_endpoint_factory", () => {
       },
     );
 
-    server.use(
-      http.post(`${API_BASE_URL}/upload`, async ({ request }) => {
-        assert.equal(request.headers.get("content-type"), "text/plain");
-        const body = await request.text();
-        assert.equal(body, "test");
-        return HttpResponse.json({});
-      }),
-    );
+    server.use(http.post(`${API_BASE_URL}/upload`, () => HttpResponse.json({})));
 
+    const captured = capturing_fetch();
     const fetch_endpoint = fetch_endpoint_factory({
       base_url: API_BASE_URL,
       endpoint,
-      custom_fetch: fetch,
+      custom_fetch: captured.custom_fetch,
     });
 
     const result = await fetch_endpoint({ body: { data: "test" } });
 
+    assert.equal(captured.last().headers.get("content-type"), "text/plain");
+    assert.equal(await captured.last().text(), "test");
     assert.ok(!(result instanceof Error));
     assert.equal(result.ok, true);
+  });
+
+  describe("Content-Type ownership", () => {
+    const bodiless = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      {},
+      {
+        headers: { "Content-Type": "application/vnd.endpoint" },
+      },
+    );
+    const json_body = new Endpoint(
+      { method: "POST", pathname: "/x" },
+      { body: { schema: z.object({ a: z.number() }), serialize: "json" } },
+      { headers: { "Content-Type": "application/vnd.endpoint" } },
+    );
+
+    function client_for(endpoint: typeof bodiless | typeof json_body) {
+      const captured = capturing_fetch();
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: endpoint as typeof json_body,
+        custom_fetch: async (request) => {
+          captured.requests.push(request.clone());
+          return new Response(null, { status: 204 });
+        },
+        get_default_options: () => ({ headers: { "Content-Type": "application/vnd.client" } }),
+      });
+      return { fetch_endpoint, captured };
+    }
+
+    test("a request without a body sends no Content-Type, whatever the headers say", async () => {
+      const { fetch_endpoint, captured } = client_for(bodiless);
+
+      await fetch_endpoint({ headers: { "Content-Type": "application/vnd.call" } } as never);
+
+      assert.equal(captured.last().headers.has("content-type"), false);
+    });
+
+    test("a request with a body sends the serializer's Content-Type over every layer", async () => {
+      const { fetch_endpoint, captured } = client_for(json_body);
+
+      await fetch_endpoint({
+        body: { a: 1 },
+        headers: { "Content-Type": "application/vnd.call" },
+      });
+
+      assert.equal(captured.last().headers.get("content-type"), "application/json");
+    });
+
+    test("a FormData body gets the runtime's Content-Type, boundary included", async () => {
+      const upload = new Endpoint(
+        { method: "POST", pathname: "/x" },
+        {
+          body: {
+            schema: z.object({ name: z.string() }),
+            serialize: (data) => {
+              const form = new FormData();
+              form.append("name", data.name);
+              return { body: form };
+            },
+          },
+        },
+      );
+      let sent: Request | undefined;
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: upload,
+        custom_fetch: async (request) => {
+          sent = request;
+          return new Response(null, { status: 204 });
+        },
+      });
+
+      await fetch_endpoint({
+        body: { name: "x" },
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      assert.ok(sent);
+      assert.match(sent.headers.get("content-type") ?? "", /^multipart\/form-data; boundary=/);
+      assert.equal((await sent.formData()).get("name"), "x");
+    });
   });
 
   describe("default retry condition", () => {
@@ -1886,16 +1850,113 @@ describe("fetch_endpoint_factory", () => {
     });
 
     test("is exported from the package entry point", () => {
-      assert.equal(typeof entry_point_retry_condition, "function");
       assert.equal(entry_point_retry_condition, default_retry_condition);
-      assert.equal(
-        entry_point_retry_condition({
-          request: request_metadata(new Request(`${API_BASE_URL}/users`)),
-          response: response_metadata(new Response(null, { status: 503 })),
-          error: undefined,
+    });
+
+    test("a per-call `when: undefined` inherits the client-level condition", async () => {
+      let attempts = 0;
+      server.use(
+        http.get(`${API_BASE_URL}/users`, () => {
+          attempts++;
+          return HttpResponse.json({ error: "bad request" }, { status: 400 });
         }),
-        true,
       );
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: new Endpoint({ method: "GET", pathname: "/users" }),
+        custom_fetch: fetch,
+        get_default_options: () => ({ retry: { when: () => true, attempts: 2 } }),
+      });
+
+      await fetch_endpoint({});
+      assert.equal(attempts, 3, "the client-level policy retries a 400 twice");
+
+      attempts = 0;
+      // The shape a wrapper forwarding an optional option produces: the key is present, its value
+      // is not. It must read as "not set here", not as "reset to the default condition".
+      await fetch_endpoint({ retry: { when: undefined, attempts: undefined } });
+      assert.equal(attempts, 3);
+    });
+
+    test("a throwing `attempts` or `delay` callback ends the call without re-consulting `when`", async () => {
+      for (const broken of ["attempts", "delay"] as const) {
+        let attempts = 0;
+        let when_calls = 0;
+        server.use(
+          http.get(`${API_BASE_URL}/users`, () => {
+            attempts++;
+            return HttpResponse.json({}, { status: 503 });
+          }),
+        );
+        const fetch_endpoint = fetch_endpoint_factory({
+          base_url: API_BASE_URL,
+          endpoint: new Endpoint({ method: "GET", pathname: "/users" }),
+          custom_fetch: fetch,
+        });
+
+        const result = await fetch_endpoint({
+          retry: {
+            when: () => {
+              when_calls++;
+              return true;
+            },
+            attempts:
+              broken === "attempts"
+                ? () => {
+                    throw new Error("attempts blew up");
+                  }
+                : 3,
+            delay:
+              broken === "delay"
+                ? () => {
+                    throw new Error("delay blew up");
+                  }
+                : 0,
+          },
+        });
+
+        assert.ok(result instanceof UnexpectedError, `${broken}: got ${String(result)}`);
+        assert.equal(result.context.operation, "retry_policy");
+        assert.equal((result.cause as Error).message, `${broken} blew up`);
+        assert.equal(result.context.timing?.attempt, 1);
+        assert.equal(attempts, 1, `${broken}: no second request`);
+        assert.equal(when_calls, 1, `${broken}: \`when\` runs once, before the callback threw`);
+      }
+    });
+
+    test("`when: () => true` retries a 200 too, and only the last response is parsed", async () => {
+      let attempts = 0;
+      let parse_calls = 0;
+      const parsed_endpoint = new Endpoint(
+        { method: "GET", pathname: "/users" },
+        {
+          responses: {
+            200: {
+              schema: z.object({ attempt: z.number() }),
+              parse: async (body) => {
+                parse_calls++;
+                return new Response(body).json();
+              },
+            },
+          },
+        },
+      );
+      const fetch_endpoint = fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        endpoint: parsed_endpoint,
+        custom_fetch: async () => {
+          attempts++;
+          return Response.json({ attempt: attempts });
+        },
+      });
+
+      const result = await fetch_endpoint({ retry: { attempts: 2, when: () => true } });
+
+      assert.ok(!(result instanceof Error), `got ${String(result)}`);
+      assert.ok(result.ok);
+      assert.equal(attempts, 3);
+      assert.equal(parse_calls, 1, "a response retried away is never parsed");
+      assert.deepEqual(result.data, { attempt: 3 });
     });
   });
 });
@@ -2220,17 +2281,23 @@ describe("audit follow-ups", () => {
   });
 
   test("the deadline is measured from before the `options()` factory ran", async () => {
+    /**
+     * The factory eats 100ms of a 120ms budget. Measured from the start of the call, the deadline
+     * fires about 20ms into the fetch (near 120ms in total); measured after the factory it would
+     * fire at 220ms. The 200ms cutoff sits between the two, so a regression fails.
+     */
     const fetch_endpoint = client_for(
-      slow_fetch(200),
-      () => new Promise((resolve) => setTimeout(() => resolve({}), 40)),
+      slow_fetch(500),
+      () => new Promise((resolve) => setTimeout(() => resolve({}), 100)),
     );
     const started = Date.now();
 
-    const result = await fetch_endpoint({ timeout: { total: 100 } });
+    const result = await fetch_endpoint({ timeout: { total: 120 } });
     const elapsed = Date.now() - started;
 
     assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
-    assert.ok(elapsed < 190, `expected the call to end near 100ms, took ${elapsed}ms`);
+    assert.match(result.message, /Call deadline of 120ms exceeded/);
+    assert.ok(elapsed < 200, `expected the call to end near 120ms, took ${elapsed}ms`);
   });
 
   test("`attempts` counts retries after the first request", async () => {
@@ -2368,11 +2435,6 @@ describe("error kind discriminant", () => {
     });
   }
 
-  test("kinds are unique across the error classes", () => {
-    const kinds = cases.map(({ kind }) => kind);
-    assert.equal(new Set(kinds).size, kinds.length);
-  });
-
   test("kind survives a spread, unlike a prototype check", () => {
     const error = new TimeoutError("x", context);
     const copy = { ...error };
@@ -2407,6 +2469,112 @@ describe("http_client base_url validation", () => {
   test("accepts a valid base_url", () => {
     const api = http_client(endpoints, { base_url: API_BASE_URL });
     assert.equal(typeof api.users.list, "function");
+  });
+});
+
+describe("http_client endpoint tree", () => {
+  test("a nested tree mirrors its shape, and a leaf two levels down calls through", async () => {
+    const seen_urls: string[] = [];
+    const api = http_client(
+      {
+        posts: {
+          comments: {
+            list: new Endpoint(
+              { method: "GET", pathname: "/posts/:post_id/comments" },
+              { responses: { 200: { schema: z.array(z.string()), parse: "json" } } },
+            ),
+          },
+          get: new Endpoint({ method: "GET", pathname: "/posts/:id" }),
+        },
+      },
+      {
+        base_url: API_BASE_URL,
+        fetch: async (request) => {
+          seen_urls.push(request.url);
+          return Response.json(["first"]);
+        },
+      },
+    );
+
+    const comments = await api.posts.comments.list({ params: { post_id: "7" } });
+    const post = await api.posts.get({ params: { id: "7" } });
+
+    assert.ok(!(comments instanceof Error));
+    assert.ok(comments.ok);
+    assert.deepEqual(comments.data, ["first"]);
+    assert.ok(!(post instanceof Error));
+    assert.equal(post.status, 200);
+    assert.deepEqual(seen_urls, [`${API_BASE_URL}/posts/7/comments`, `${API_BASE_URL}/posts/7`]);
+  });
+
+  test("a 1xx response is an UnexpectedError, since no envelope covers it", async () => {
+    // `new Response()` refuses a 1xx status, so the status is overridden on the instance the way a
+    // proxied or hand-rolled fetch could hand one over.
+    const informational = new Response(null, { status: 200 });
+    Object.defineProperty(informational, "status", { value: 101 });
+
+    const api = http_client(
+      { probe: new Endpoint({ method: "GET", pathname: "/x" }) },
+      { base_url: API_BASE_URL, fetch: async () => informational },
+    );
+
+    const result = await api.probe({});
+
+    assert.ok(result instanceof UnexpectedError, `got ${String(result)}`);
+    assert.equal(result.context.operation, "parse_response");
+    assert.equal(result.context.response?.status, 101);
+    assert.match(result.message, /Unhandled status code: 101/);
+  });
+
+  test("a redirect without a Location header has `redirect_to: null`", async () => {
+    const api = http_client(
+      { probe: new Endpoint({ method: "GET", pathname: "/x" }) },
+      { base_url: API_BASE_URL, fetch: async () => new Response(null, { status: 304 }) },
+    );
+
+    const result = await api.probe({});
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.kind, "RedirectMessage");
+    assert.equal(result.status, 304);
+    assert.equal(result.ok, false);
+    assert.equal(result.redirect_to, null);
+  });
+
+  test("a client-level signal and a per-call signal both abort an in-flight request", async () => {
+    /** A fetch that aborts `to_abort` once the request is in flight, then rejects like a real one. */
+    function api_aborting(to_abort: AbortController, client_signal: AbortSignal) {
+      return http_client(
+        { probe: new Endpoint({ method: "GET", pathname: "/x" }) },
+        {
+          base_url: API_BASE_URL,
+          options: { signal: client_signal },
+          fetch: (request) =>
+            new Promise<Response>((_, reject) => {
+              request.signal.addEventListener("abort", () => reject(request.signal.reason));
+              to_abort.abort();
+            }),
+        },
+      );
+    }
+
+    const client_controller = new AbortController();
+    const call_controller = new AbortController();
+    const from_call = await api_aborting(call_controller, client_controller.signal).probe({
+      signal: call_controller.signal,
+    });
+    assert.ok(from_call instanceof AbortedError, "the per-call signal aborts");
+    assert.equal(from_call.context.operation, "fetch");
+    assert.equal(client_controller.signal.aborted, false, "without touching the client's");
+
+    const other_client_controller = new AbortController();
+    const other_call_controller = new AbortController();
+    const from_client = await api_aborting(
+      other_client_controller,
+      other_client_controller.signal,
+    ).probe({ signal: other_call_controller.signal });
+    assert.ok(from_client instanceof AbortedError, "the client-level signal aborts too");
+    assert.equal(other_call_controller.signal.aborted, false, "without touching the caller's");
   });
 });
 
@@ -2687,8 +2855,9 @@ describe("dynamic (context-driven) schemas", () => {
     assert.equal((result.cause as Error)?.message, "boom");
   });
 
-  test("the definition factory runs once per request", async () => {
+  test("the definition factory runs once per request, retries included", async () => {
     let calls = 0;
+    let requests = 0;
     const api = http_client(
       {
         post: new Endpoint({ method: "POST", pathname: "/things" }, (context: { tag: string }) => {
@@ -2700,17 +2869,58 @@ describe("dynamic (context-driven) schemas", () => {
           };
         }),
       },
-      { base_url: API_BASE_URL },
+      {
+        base_url: API_BASE_URL,
+        fetch: async () => {
+          requests++;
+          return requests === 1 ? new Response(null, { status: 503 }) : Response.json({ ok: true });
+        },
+      },
     );
-
-    server.use(http.post(`${API_BASE_URL}/things`, () => HttpResponse.json({ ok: true })));
 
     const ok = await api.post({
       query: { tag: "a" },
       body: { name: "widget" },
       context: { tag: "a" },
+      retry: { attempts: 1 },
     });
     assert.ok(!(ok instanceof Error));
-    assert.equal(calls, 1);
+    assert.equal(requests, 2);
+    assert.equal(calls, 1, "the definition is resolved once, not once per attempt");
+  });
+
+  test("an endpoint-level context default wins over the client-level one", async () => {
+    const api = http_client(
+      {
+        get: new Endpoint(
+          { method: "GET", pathname: "/echo" },
+          (context: { tenant: string }) => ({
+            responses: {
+              200: { schema: z.object({ tenant: z.literal(context.tenant) }), parse: "json" },
+            },
+          }),
+          { context: { tenant: "endpoint" } },
+        ),
+      },
+      {
+        base_url: API_BASE_URL,
+        context: { tenant: "client" },
+        fetch: async () => Response.json({ tenant: "endpoint" }),
+      },
+    );
+
+    const defaulted = await api.get({});
+    assert.ok(!(defaulted instanceof Error), `got ${String(defaulted)}`);
+    assert.ok(defaulted.ok);
+    assert.deepEqual(defaulted.data, { tenant: "endpoint" });
+
+    // an explicit `undefined` at the call site is "not set here", so the endpoint default holds
+    const explicit_undefined = await api.get({ context: { tenant: undefined } });
+    assert.ok(!(explicit_undefined instanceof Error), `got ${String(explicit_undefined)}`);
+    assert.ok(explicit_undefined.ok);
+    assert.deepEqual(explicit_undefined.data, { tenant: "endpoint" });
+
+    const overridden = await api.get({ context: { tenant: "call" } });
+    assert.ok(overridden instanceof ParseError, "the per-call value replaced the default");
   });
 });

@@ -21,6 +21,26 @@ const api = http_client(
 const result = await api.users({});
 ```
 
+Every call takes one argument, the request input, even when the endpoint needs nothing: `{}` is the
+whole input for a parameterless `GET`. Request options such as `headers`, `timeout`, `retry` and
+`signal` go in the same object (see [Per-Request Options](#per-request-options)).
+
+## Base URL
+
+Each endpoint's pathname is resolved against `base_url` with standard `URL` resolution, the same
+rule as `new URL(pathname, base_url)`. A path prefix is kept only when the base ends with a slash;
+otherwise its last segment is replaced by the pathname:
+
+```typescript
+base_url: "https://api.example.com"; // + "/users" -> https://api.example.com/users
+base_url: "https://api.example.com/v1/"; // + "/users" -> https://api.example.com/v1/users
+base_url: "https://api.example.com/v1"; // + "/users" -> https://api.example.com/users (prefix dropped)
+```
+
+`base_url` must be absolute and parsable. `http_client` throws a `TypeError` at construction
+otherwise, the one place it throws rather than returning an error (see
+[Error Handling](./error-handling.md)).
+
 ## Organizing Endpoints
 
 Nest endpoints in objects for logical grouping:
@@ -40,7 +60,10 @@ const api = http_client(
       get: new Endpoint({ method: "GET", pathname: "/posts/:id" }),
       comments: {
         list: new Endpoint({ method: "GET", pathname: "/posts/:post_id/comments" }),
-        create: new Endpoint({ method: "POST", pathname: "/posts/:post_id/comments" }),
+        create: new Endpoint(
+          { method: "POST", pathname: "/posts/:post_id/comments" },
+          { body: { schema: z.object({ text: z.string() }), serialize: "json" } },
+        ),
       },
     },
   },
@@ -52,6 +75,9 @@ await api.users.list({});
 await api.users.get({ params: { id: "123" } });
 await api.posts.comments.create({ params: { post_id: "1" }, body: { text: "Nice!" } });
 ```
+
+A `body` is only accepted where the endpoint declares a `body` serializer: on `users.create` above,
+which declares none, passing one is a compile error, and the request goes out without a body.
 
 ## Shared Options
 
@@ -77,6 +103,24 @@ Options are merged in this order (later overrides earlier):
 1. `options()` from `http_client`
 2. Endpoint default options
 3. Per-request options
+
+Three keys merge more finely than "later overrides earlier":
+
+- `headers` merge per header name, see [Headers](#headers).
+- `timeout` and `retry` merge per key, so a client-level `timeout: { attempt: 2000 }` survives a
+  per-call `timeout: { total: 5000 }`, and a client-level `retry.when` survives a per-call
+  `retry: { attempts: 3 }`. A key set to `undefined` at a more specific level means "not set here"
+  and inherits the earlier value; only a different value replaces it.
+- `signal`s are combined with `AbortSignal.any`, so a client-level, endpoint-level and per-call
+  signal all stay in force and any one of them aborts the call.
+
+Everything else in the merged options is passed to the `Request` constructor as-is: `credentials`,
+`cache`, `redirect`, `mode`, `referrer` and the rest of `RequestInit`, minus `body` and `method`,
+which the endpoint owns, and `Content-Type`, which the body serializer owns (see
+[Content-Type](./serialization.md#content-type)).
+
+The `options()` factory runs once per call, before anything else, so an `async` factory that fetches
+a token adds its own duration to the call. That time counts against `timeout.total`.
 
 ## Shared Context
 
@@ -210,13 +254,21 @@ await api.users.get({ params, timeout: { total: budget_remaining() } });
 `NaN` and `Infinity` have no sensible reading and come back as an `UnexpectedError` with
 `context.operation === "resolve_timeout"`.
 
-The two layers merge per key, so a client-level `{ attempt: 2000 }` survives a per-call
-`{ total: 5000 }` instead of being replaced by it. See
+All three layers (client, endpoint, call) merge per key, so a client-level `{ attempt: 2000 }`
+survives a per-call `{ total: 5000 }` instead of being replaced by it. See
 [Retry Policy](./retry-policy.md#timeouts-and-retries) for how the bounds interact with retries.
 
-## Headers with Reducers
+## Headers
 
-Headers can be functions that receive the current value:
+`headers` at every level accepts what `fetch` accepts (a record, an array of pairs, or a `Headers`
+instance), and the three levels are merged into one `Headers` object, header by header:
+
+- Names are case-insensitive: `Authorization` and `authorization` are the same header, and a later
+  level replaces the earlier value.
+- A `null` or `undefined` value deletes the header set by an earlier level.
+- Numbers and booleans are stringified, so `{ "x-retry": 2 }` sends `x-retry: 2`.
+- A function is a reducer: it receives the current value (or `undefined`) and returns the new one,
+  or `null` / `undefined` to delete the header.
 
 ```typescript
 const endpoint = new Endpoint(
@@ -225,10 +277,14 @@ const endpoint = new Endpoint(
   {
     headers: {
       "X-Request-ID": (current) => current ?? crypto.randomUUID(),
+      "X-Legacy": null, // drop a client-level default for this endpoint
     },
   },
 );
 ```
+
+`Content-Type` is the one header this merge does not control: the body serializer sets it, and a
+value given through `headers` is dropped. See [Content-Type](./serialization.md#content-type).
 
 ## Response Handling
 
@@ -335,9 +391,10 @@ const api = http_client(
 type UsersGetParams = $infer.Params<typeof api.users.get>;
 type UsersGetData = $infer.Data<typeof api.users.get>; // data for any success status
 type UsersGetError = $infer.Error<typeof api.users.get>;
+type CreateBody = $infer.Body<typeof api.users.create>; // { name: string }
 
 // ...or directly from an Endpoint instance
-type CreateBody = $infer.Body<typeof get_user>;
+type GetUserParams = $infer.Params<typeof get_user>; // { id: string | number }
 
 // Narrow data/error to a specific status code
 type User = $infer.Data<typeof api.users.get, 200>; // { id: string; name: string }
@@ -348,10 +405,10 @@ Available type helpers (each takes an `Endpoint` instance or a fetch function):
 
 - `$infer.Params` - The URL params input type
 - `$infer.Query` - The query parameter input type
-- `$infer.Body` - The request body input type
+- `$infer.Body` - The request body input type (`never` when the endpoint declares no `body`)
 - `$infer.Context` - The per-call [context](./dynamic-context.md) argument (`never` when the endpoint declares none)
 - `$infer.Input` - The full request argument (params + query + body + context + request init)
-- `$infer.Result` - Everything `fetch` can return, including thrown transport error classes (`NetworkError`, `TimeoutError`, `ParseError`, …)
+- `$infer.Result` - Everything a call can resolve to: the response envelopes plus the returned error classes (`NetworkError`, `TimeoutError`, `ParseError`, …)
 - `$infer.Response` - The discriminated HTTP response envelope only (drops the transport errors); narrowable on `ok` / `status`
 - `$infer.Data<endpoint, status?>` - Successful response `data`, optionally narrowed to a status code (or wildcard class)
 - `$infer.Error<endpoint, status?>` - Error response `error`, optionally narrowed to a status code (or wildcard class)

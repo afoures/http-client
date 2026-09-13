@@ -248,4 +248,6 @@ interface StandardSchemaV1<Input = unknown, Output = Input> {
 }
 ```
 
-The HTTP client uses `schema['~standard'].validate()` for both input serialization and output parsing.
+The HTTP client uses `schema['~standard'].validate()` for both input serialization and output
+parsing, and treats a result with `issues` as a `SerializationError` or `ParseError` whose `cause`
+is that array.

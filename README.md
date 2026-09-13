@@ -24,6 +24,13 @@ yarn add @afoures/http-client
 bun add @afoures/http-client
 ```
 
+The package has no runtime dependencies. It needs a runtime with `fetch`, `AbortSignal.any`,
+`AbortSignal.timeout` and `URL.canParse`: Node 20.3 or later (declared in `engines`), Bun, Deno,
+and every current browser. Schemas come from your own library, anything implementing the
+[Standard Schema spec](https://github.com/standard-schema/standard-schema).
+
+## Quick Start
+
 ```typescript
 import { Endpoint, http_client } from "@afoures/http-client";
 import { z } from "zod";
@@ -93,7 +100,23 @@ const api = http_client(
 const list = await api.users.list({ query: { page: 1, limit: 10 } });
 const user = await api.users.get({ params: { id: "123" } });
 const created = await api.users.create({ body: { name: "John", email: "john@example.com" } });
+
+// Failures are returned, never thrown; peel them off first, then narrow on `status`
+if (user instanceof Error) {
+  console.error(user.message, user.context);
+} else if (user.status === 200) {
+  console.log(user.data.name); // { id: string; name: string }
+} else if (user.status === 404) {
+  console.warn(user.error.message); // { message: string }
+}
 ```
+
+Two things worth knowing before the first request:
+
+- `base_url` follows standard URL resolution, so a path prefix needs a trailing slash:
+  `"https://api.example.com/v1/"` keeps `/v1`, `"https://api.example.com/v1"` drops it. See
+  [Base URL](./docs/http-client.md#base-url).
+- Every call takes one input object, even when empty: `api.users.list({})`.
 
 ## Documentation
 
@@ -105,6 +128,7 @@ const created = await api.users.create({ body: { name: "John", email: "john@exam
 - [Response Parsing](./docs/response-parsing.md)
 - [Error Handling](./docs/error-handling.md)
 - [Retry Policy](./docs/retry-policy.md)
+- [API Reference](./docs/api-reference.md)
 
 ## License
 

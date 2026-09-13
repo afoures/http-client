@@ -1,6 +1,7 @@
 // Compile-time type tests for the `Endpoint` class.
 // Not executed at runtime (does not match the `*.test.ts` glob); validated by `pnpm typecheck`.
 import { Endpoint } from "./endpoint.ts";
+import { type $infer } from "./http-client.ts";
 import { ParseError } from "./errors.ts";
 import z from "zod";
 
@@ -140,11 +141,19 @@ assert_type<
 // @ts-expect-error: `params` is required for a parameterized route
 get_user.generate_url({ base_url: "https://x", query: { include: "a", page: "1" } });
 
-// negative: wrong param key
+// negative: an undeclared param key is rejected on its own, with `id` present
 get_user.generate_url({
   base_url: "https://x",
-  // @ts-expect-error: `wrong` is not a declared param; `id` is missing
-  params: { wrong: "a" },
+  // @ts-expect-error: `wrong` is not a declared param
+  params: { id: "1", wrong: "a" },
+  query: { include: "a", page: "1" },
+});
+
+// negative: a declared param cannot be left out
+get_user.generate_url({
+  base_url: "https://x",
+  // @ts-expect-error: `id` is missing
+  params: {},
   query: { include: "a", page: "1" },
 });
 
@@ -176,6 +185,10 @@ assert_type<
 // @ts-expect-error: `name` must be a string
 create_required.serialize_body({ body: { name: 123 } });
 
+// a body-capable method with no body schema has no `body` key at all
+const create_without_schema = new Endpoint({ method: "POST", pathname: "/things" });
+assert_type<Equal<Parameters<typeof create_without_schema.serialize_body>[0], {}>>();
+
 // --- `parse_response` return narrowing ---
 
 type GetUserResult = Awaited<ReturnType<typeof get_user.parse_response>>;
@@ -193,8 +206,13 @@ assert_type<
   >
 >();
 
-// unspecified 2xx falls back to the `2xx` default (`null` when none is declared)
-assert_type<Equal<Extract<GetUserResult, { ok: true; data: null }>["data"], null>>();
+// an undeclared 2xx status falls back to `null` when no `2xx` parser is declared; probed by status,
+// since an `Extract` on `{ data: null }` would be satisfied by the 204 arm alone
+assert_type<Equal<$infer.Data<typeof get_user, 201>, null>>();
+assert_type<Equal<$infer.Data<typeof get_user, 204>, null>>();
+// an undeclared 4xx or 5xx falls back to the body text
+assert_type<Equal<$infer.Error<typeof get_user, 418>, string>>();
+assert_type<Equal<$infer.Error<typeof get_user, 503>, string>>();
 
 // the redirect arm is always present and exposes `redirect_to`
 assignable<string | null>(
@@ -204,55 +222,60 @@ assignable<string | null>(
 // `ParseError` is part of the returned union
 assignable<GetUserResult>(null as unknown as ParseError);
 
+// --- no `responses` at all: the four envelopes with their built-in fallbacks ---
+
+type NoSchemaResult = Awaited<ReturnType<typeof get_user_no_schema.parse_response>>;
+
+assert_type<Equal<Extract<NoSchemaResult, { ok: true }>["data"], null>>();
+assert_type<Equal<Extract<NoSchemaResult, { kind: "ClientErrorResponse" }>["error"], string>>();
+assert_type<Equal<Extract<NoSchemaResult, { kind: "ServerErrorResponse" }>["error"], string>>();
+assert_type<
+  Equal<Extract<NoSchemaResult, { kind: "RedirectMessage" }>["redirect_to"], string | null>
+>();
+
 // --- `parse_response` narrowing with `2xx` / `4xx` / `5xx` wildcard statuses ---
 
-type WildcardResult = Awaited<ReturnType<typeof wildcard.parse_response>>;
-
-// `2xx` default applies as `data` to every successful (non-204) status
-assert_type<
-  Equal<Extract<WildcardResult, { ok: true; data: { ok: boolean } }>["data"], { ok: boolean }>
->();
-// `4xx` default applies as `error` to every client-error status
-assert_type<
-  Equal<
-    Extract<WildcardResult, { ok: false; error: { error: string } }>["error"],
-    { error: string }
-  >
->();
-// `5xx` default applies as `error` to every server-error status
-assert_type<
-  Equal<
-    Extract<WildcardResult, { ok: false; error: { fatal: string } }>["error"],
-    { fatal: string }
-  >
->();
+// a wildcard's output shows up on a status it was never spelled out for
+assert_type<Equal<$infer.Data<typeof wildcard, 202>, { ok: boolean }>>();
+assert_type<Equal<$infer.Error<typeof wildcard, 418>, { error: string }>>();
+assert_type<Equal<$infer.Error<typeof wildcard, 503>, { fatal: string }>>();
+// 204 never has a body, so it yields `null` even under a `2xx` wildcard: the fallback arm of
+// `HTTPFetch.SuccessfulResponse` keeps 204 out of its status set.
+assert_type<Equal<$infer.Data<typeof wildcard, 204>, null>>();
 
 // --- specific status precedence over its wildcard ---
 
-type MixedResult = Awaited<ReturnType<typeof mixed.parse_response>>;
-
 // a specific status wins over its class wildcard
-assert_type<Equal<Extract<MixedResult, { ok: true; status: 200 }>["data"], { id: string }>>();
-assert_type<Equal<Extract<MixedResult, { ok: false; status: 404 }>["error"], { nf: string }>>();
-// remaining statuses fall back to the wildcard default
-assert_type<
-  Equal<
-    Extract<MixedResult, { ok: true; data: { generic: boolean } }>["data"],
-    { generic: boolean }
-  >
->();
-assert_type<
-  Equal<
-    Extract<MixedResult, { ok: false; error: { generic_err: string } }>["error"],
-    { generic_err: string }
-  >
->();
+assert_type<Equal<$infer.Data<typeof mixed, 200>, { id: string }>>();
+assert_type<Equal<$infer.Error<typeof mixed, 404>, { nf: string }>>();
+// a status the definition does not spell out takes its class wildcard
+assert_type<Equal<$infer.Data<typeof mixed, 202>, { generic: boolean }>>();
+assert_type<Equal<$infer.Error<typeof mixed, 418>, { generic_err: string }>>();
+// a class with no wildcard keeps the built-in fallback
+assert_type<Equal<$infer.Error<typeof mixed, 500>, string>>();
 
 // --- getters ---
 
 // `method` carries the literal http method
 assert_type<Equal<typeof get_user.method, "GET">>();
 assert_type<Equal<typeof create_required.method, "POST">>();
+
+// --- endpoint-level options accept the object form of `timeout` ---
+
+new Endpoint(
+  { method: "GET", pathname: "/timed" },
+  {},
+  { timeout: { total: 5000, attempt: 1000 } },
+);
+new Endpoint({ method: "GET", pathname: "/timed" }, {}, { timeout: 5000 });
+
+// --- response keys: `204` is not a parser slot, since it never carries a body ---
+
+new Endpoint(
+  { method: "GET", pathname: "/no-content" },
+  // @ts-expect-error: 204 is excluded from `Parser.AllowedStatus`
+  { responses: { 204: { schema: z.object({ id: z.string() }), parse: "json" } } },
+);
 
 // --- schema-driven narrowing of `serialize` / `parse` (regression guards) ---
 
@@ -391,6 +414,25 @@ new Endpoint(
     // @ts-expect-error: an object schema parses as "json", not "text"
     responses: {
       200: { schema: z.object({ id: z.string() }), parse: "text" },
+    },
+  },
+);
+
+// response: a custom `parse` must resolve to the schema's input
+new Endpoint(
+  { method: "GET", pathname: "/typed-parse" },
+  {
+    // @ts-expect-error: the parser yields a number where the schema expects `{ id: string }`
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: async () => 123 },
+    },
+  },
+);
+new Endpoint(
+  { method: "GET", pathname: "/typed-parse" },
+  {
+    responses: {
+      200: { schema: z.object({ id: z.string() }), parse: async () => ({ id: "1" }) },
     },
   },
 );

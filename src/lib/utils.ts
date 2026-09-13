@@ -148,6 +148,21 @@ function merge_timeout(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
+/**
+ * Merge `retry` per key, skipping `undefined` values like {@link merge_context} does, so a per-call
+ * `retry: { when: options?.when }` with the option absent inherits the client-level `when` instead
+ * of silently resetting it to the default condition. A spread would copy the `undefined` over.
+ */
+function merge_retry(
+  left: RetryPolicy.Configuration | undefined,
+  right: RetryPolicy.Configuration | undefined,
+): RetryPolicy.Configuration {
+  return merge_context(
+    left as Record<string, unknown> | undefined,
+    right as Record<string, unknown> | undefined,
+  ) as RetryPolicy.Configuration;
+}
+
 /** The result of {@link merge_options}: the two custom keys resolved, and `headers` always present. */
 export type MergedOptions = Omit<
   HTTPFetch.OptionalRequestInit & HTTPFetch.DefaultRequestInit,
@@ -169,7 +184,7 @@ export function merge_options(
             ? AbortSignal.any([acc.signal, source.signal])
             : acc.signal
           : source.signal,
-        retry: { ...acc.retry, ...source.retry },
+        retry: merge_retry(acc.retry, source.retry),
         timeout: merge_timeout(acc.timeout, source.timeout),
       };
     }, {}),

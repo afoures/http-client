@@ -90,6 +90,13 @@ assert_type<
 // no context declared => `$infer.Context` is `never` (key absent)
 assert_type<Equal<$infer.Context<typeof api.no_ctx>, never>>();
 
+// on a raw `Endpoint` there is no client and so no client-level defaults: every declared key stays
+// required (`locale` is optional above only because `api` defaults it), and only an endpoint-level
+// default makes one optional.
+assert_type<Equal<$infer.Context<typeof with_ctx>, { tz: string; locale: string }>>();
+assert_type<Equal<$infer.Input<typeof with_ctx>["context"], { tz: string; locale: string }>>();
+assert_type<Equal<$infer.Context<typeof with_default>, { tz?: string; locale: string }>>();
+
 // response `data` is inferred from the factory's returned schema
 assert_type<Equal<$infer.Data<typeof api.with_ctx, 200>, { tz: string; name: string }>>();
 

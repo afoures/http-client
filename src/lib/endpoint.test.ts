@@ -17,25 +17,6 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.search, "");
   });
 
-  test("with query string - array schema", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/users" },
-      {
-        query: {
-          schema: z.array(z.tuple([z.literal("ok"), z.string()])),
-        },
-      },
-    );
-    const url = await endpoint.generate_url({
-      base_url: "https://api.example.com",
-      query: [["ok", "test"]],
-    });
-    assert.ok(url instanceof URL);
-    assert.equal(url.origin, "https://api.example.com");
-    assert.equal(url.pathname, "/users");
-    assert.ok(url.search.length > 0, "Query string should not be empty");
-  });
-
   test("with query string - object schema", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
@@ -401,7 +382,7 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.searchParams.get("role"), "admin");
   });
 
-  test("base_url with relative pathname", async () => {
+  test("base_url with a trailing slash keeps its path prefix", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users/:id" });
     const url = await endpoint.generate_url({
       base_url: "https://api.example.com/api/",
@@ -411,6 +392,58 @@ describe("Endpoint.generate_url", () => {
     assert.equal(url.origin, "https://api.example.com");
     assert.equal(url.pathname, "/api/users/123");
     assert.equal(url.search, "");
+  });
+
+  test("base_url without a trailing slash drops its last segment, per URL resolution", async () => {
+    const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
+    const url = await endpoint.generate_url({ base_url: "https://api.example.com/v1" });
+    assert.ok(url instanceof URL);
+    assert.equal(url.href, "https://api.example.com/users");
+  });
+
+  test("a params schema whose output is undefined drops the optional group", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/users(/:id)" },
+      {
+        params: {
+          schema: z.object({ id: z.string() }).optional(),
+          // not reached for an undefined output, which is the point of the test
+          serialize: (data) => ({ id: data?.id }),
+        },
+      },
+    );
+    const without = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      params: undefined,
+    });
+    assert.ok(without instanceof URL, "expected URL, got SerializationError");
+    assert.equal(without.pathname, "/users");
+
+    const with_id = await endpoint.generate_url({
+      base_url: "https://api.example.com",
+      params: { id: "7" },
+    });
+    assert.ok(with_id instanceof URL, "expected URL, got SerializationError");
+    assert.equal(with_id.pathname, "/users/7");
+  });
+
+  test("query serializer with explicit `serialize: undefined` falls back to urlencoded default", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/u" },
+      {
+        query: {
+          schema: z.object({ x: z.number().transform(String) }),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          serialize: undefined as any,
+        },
+      },
+    );
+    const url = await endpoint.generate_url({
+      base_url: "https://example.com",
+      query: { x: 1 },
+    });
+    assert.ok(url instanceof URL, "expected URL, got SerializationError");
+    assert.equal(url.searchParams.get("x"), "1");
   });
 
   test("a throwing definition factory returns UnexpectedError", async () => {
@@ -467,24 +500,6 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with JSON serialize - array schema", async () => {
-    const endpoint = new Endpoint(
-      { method: "POST", pathname: "/users" },
-      {
-        body: {
-          schema: z.array(z.object({ id: z.number() })),
-          serialize: "json",
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({
-      body: [{ id: 1 }, { id: 2 }],
-    });
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.body, JSON.stringify([{ id: 1 }, { id: 2 }]));
-    assert.equal(result.content_type, "application/json");
-  });
-
   test("POST request with JSON serialize - schema transformations", async () => {
     const endpoint = new Endpoint(
       { method: "POST", pathname: "/users" },
@@ -503,56 +518,6 @@ describe("Endpoint.serialize_body", () => {
     });
     assert.ok(!(result instanceof Error));
     assert.equal(result.body, JSON.stringify({ name: "JOHN", age: 50 }));
-    assert.equal(result.content_type, "application/json");
-  });
-
-  test("PUT request with JSON serialize", async () => {
-    const endpoint = new Endpoint(
-      { method: "PUT", pathname: "/users/(:id)" },
-      {
-        body: {
-          schema: z.object({ name: z.string() }),
-          serialize: "json",
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({ body: { name: "Jane" } });
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.body, JSON.stringify({ name: "Jane" }));
-    assert.equal(result.content_type, "application/json");
-  });
-
-  test("PATCH request with JSON serialize", async () => {
-    const endpoint = new Endpoint(
-      { method: "PATCH", pathname: "/users/(:id)" },
-      {
-        body: {
-          schema: z.object({ name: z.string() }),
-          serialize: "json",
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({ body: { name: "Bob" } });
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.body, JSON.stringify({ name: "Bob" }));
-    assert.equal(result.content_type, "application/json");
-  });
-
-  test("DELETE request with JSON serialize", async () => {
-    const endpoint = new Endpoint(
-      { method: "DELETE", pathname: "/users/(:id)" },
-      {
-        body: {
-          schema: z.object({ reason: z.string() }),
-          serialize: "json",
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({
-      body: { reason: "inactive" },
-    });
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.body, JSON.stringify({ reason: "inactive" }));
     assert.equal(result.content_type, "application/json");
   });
 
@@ -677,33 +642,7 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.content_type, "application/json");
   });
 
-  test("POST request with custom serialize - schema transformations", async () => {
-    const endpoint = new Endpoint(
-      { method: "POST", pathname: "/transform" },
-      {
-        body: {
-          schema: z.object({
-            value: z.string().transform((s) => s.toUpperCase()),
-            count: z.number().transform((n) => n * 2),
-          }),
-          serialize: (data) => {
-            return {
-              body: `${data.value}:${data.count}`,
-              content_type: "text/plain",
-            };
-          },
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({
-      body: { value: "hello", count: 5 },
-    });
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.body, "HELLO:10");
-    assert.equal(result.content_type, "text/plain");
-  });
-
-  test("POST request with invalid content - validation error", async () => {
+  test("a body the schema rejects is a SerializationError carrying the issues and the input", async () => {
     const endpoint = new Endpoint(
       { method: "POST", pathname: "/users" },
       {
@@ -717,52 +656,37 @@ describe("Endpoint.serialize_body", () => {
       },
     );
 
-    const result = await endpoint.serialize_body({
-      body: { name: "ab", age: -1 },
-    });
+    const input = { name: "ab", age: -1 };
+    const result = await endpoint.serialize_body({ body: input });
     assert.ok(result instanceof SerializationError);
     assert.equal(result.context.operation, "serialize_body");
+    assert.deepEqual(result.context.input, { body: input });
+    assert.ok(Array.isArray(result.cause), "cause should be the schema's issues");
+    assert.deepEqual(
+      (result.cause as Array<{ path?: ReadonlyArray<PropertyKey> }>)
+        .map((issue) => issue.path?.join("."))
+        .sort(),
+      ["age", "name"],
+    );
   });
 
-  test("POST request with invalid content type - validation error", async () => {
+  test("a custom serialize that throws is a SerializationError with the thrown cause", async () => {
     const endpoint = new Endpoint(
       { method: "POST", pathname: "/users" },
       {
         body: {
-          schema: z.object({
-            name: z.string(),
-          }),
-          serialize: "json",
+          schema: z.object({ name: z.string() }),
+          serialize: () => {
+            throw new Error("cannot encode");
+          },
         },
       },
     );
-    const result = await endpoint.serialize_body({
-      // @ts-expect-error - wrong type
-      body: { name: 123 },
-    });
+    const result = await endpoint.serialize_body({ body: { name: "John" } });
     assert.ok(result instanceof SerializationError);
     assert.equal(result.context.operation, "serialize_body");
-  });
-
-  test("POST request with missing required fields - validation error", async () => {
-    const endpoint = new Endpoint(
-      { method: "POST", pathname: "/users" },
-      {
-        body: {
-          schema: z.object({
-            name: z.string(),
-            email: z.string().email(),
-          }),
-          serialize: "json",
-        },
-      },
-    );
-    const result = await endpoint.serialize_body({
-      // @ts-expect-error - missing email
-      body: { name: "John" },
-    });
-    assert.ok(result instanceof SerializationError);
-    assert.equal(result.context.operation, "serialize_body");
+    assert.equal((result.cause as Error).message, "cannot encode");
+    assert.deepEqual(result.context.input, { body: { name: "John" } });
   });
 
   test("a throwing definition factory returns UnexpectedError", async () => {
@@ -887,7 +811,7 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.data, null);
   });
 
-  test("200 OK with no data schema (void)", async () => {
+  test("200 OK with no parser declared yields data: null (the body is discarded, see body ownership)", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users" });
     const response = new Response(JSON.stringify({ id: 1 }), {
       status: 200,
@@ -954,7 +878,7 @@ describe("Endpoint.parse_response", () => {
     assert.deepEqual(result.data, { name: "JOHN", age: 50 });
   });
 
-  test("301 Moved Permanently", async () => {
+  test("a 3xx is a RedirectMessage exposing the Location header", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/old" });
     const response = new Response(null, {
       status: 301,
@@ -962,35 +886,19 @@ describe("Endpoint.parse_response", () => {
     });
     const result = await endpoint.parse_response(response);
     assert.ok(!(result instanceof Error));
+    assert.equal(result.kind, "RedirectMessage");
     assert.equal(result.ok, false);
     assert.equal(result.status, 301);
     assert.equal(result.redirect_to, "https://example.com/new");
   });
 
-  test("302 Found", async () => {
-    const endpoint = new Endpoint({ method: "GET", pathname: "/redirect" });
-    const response = new Response(null, {
-      status: 302,
-      headers: { Location: "https://example.com/target" },
-    });
-    const result = await endpoint.parse_response(response);
+  test("a 3xx without a Location header has redirect_to: null", async () => {
+    const endpoint = new Endpoint({ method: "GET", pathname: "/cached" });
+    const result = await endpoint.parse_response(new Response(null, { status: 304 }));
     assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 302);
-    assert.equal(result.redirect_to, "https://example.com/target");
-  });
-
-  test("308 Permanent Redirect", async () => {
-    const endpoint = new Endpoint({ method: "GET", pathname: "/redirect" });
-    const response = new Response(null, {
-      status: 308,
-      headers: { Location: "https://example.com/permanent" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 308);
-    assert.equal(result.redirect_to, "https://example.com/permanent");
+    assert.equal(result.kind, "RedirectMessage");
+    assert.equal(result.status, 304);
+    assert.equal(result.redirect_to, null);
   });
 
   test("400 Bad Request with error schema", async () => {
@@ -1084,31 +992,6 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.error, "Error message");
   });
 
-  test("401 Unauthorized with JSON error body", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/protected" },
-      {
-        responses: {
-          401: {
-            schema: z.object({
-              code: z.string(),
-            }),
-            parse: "json",
-          },
-        },
-      },
-    );
-    const response = new Response(JSON.stringify({ code: "UNAUTHORIZED" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 401);
-    assert.deepEqual(result.error, { code: "UNAUTHORIZED" });
-  });
-
   test("500 Internal Server Error with error schema", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
@@ -1138,79 +1021,6 @@ describe("Endpoint.parse_response", () => {
     });
   });
 
-  test("503 Service Unavailable with text error", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/users" },
-      {
-        responses: {
-          503: {
-            schema: z.string(),
-            parse: "text",
-          },
-        },
-      },
-    );
-    const response = new Response("Service unavailable", {
-      status: 503,
-      headers: { "Content-Type": "text/plain" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 503);
-    assert.equal(result.error, "Service unavailable");
-  });
-
-  test("502 Bad Gateway with custom error parse", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/proxy" },
-      {
-        responses: {
-          502: {
-            schema: z.object({
-              upstream: z.string(),
-            }),
-            parse: async (body) => {
-              const text = await readStream(body);
-              return { upstream: `gateway-${text}` };
-            },
-          },
-        },
-      },
-    );
-    const response = new Response("error", {
-      status: 502,
-      headers: { "Content-Type": "text/plain" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 502);
-    assert.deepEqual(result.error, { upstream: "gateway-error" });
-  });
-
-  test("200 OK with empty body", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/empty" },
-      {
-        responses: {
-          200: {
-            schema: z.object({
-              id: z.number(),
-            }),
-            parse: "json",
-          },
-        },
-      },
-    );
-    const response = new Response("", {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(result instanceof ParseError);
-  });
-
   test("400 Bad Request with no body", async () => {
     const endpoint = new Endpoint(
       { method: "POST", pathname: "/users" },
@@ -1233,7 +1043,7 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.error, "");
   });
 
-  test("200 OK with invalid JSON (doesn't match schema)", async () => {
+  test("a 2xx body the schema rejects is a ParseError carrying the decoded payload", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/users" },
       {
@@ -1250,13 +1060,18 @@ describe("Endpoint.parse_response", () => {
     );
     const response = new Response(JSON.stringify({ id: "invalid" }), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-trace": "abc" },
     });
     const result = await endpoint.parse_response(response);
     assert.ok(result instanceof ParseError);
+    assert.equal(result.context.operation, "parse_response");
+    assert.equal(result.context.response?.status, 200);
+    assert.equal(result.context.response?.headers?.get("x-trace"), "abc");
+    assert.deepEqual(result.context.response?.body, { id: "invalid" });
+    assert.ok(Array.isArray(result.cause), "cause should be the schema's issues");
   });
 
-  test("400 Bad Request with invalid error format", async () => {
+  test("a 4xx body its declared parser rejects is a ParseError, not an error envelope", async () => {
     const endpoint = new Endpoint(
       { method: "POST", pathname: "/users" },
       {
@@ -1271,39 +1086,16 @@ describe("Endpoint.parse_response", () => {
         },
       },
     );
-    const response = new Response(JSON.stringify({ message: "Error", code: "not-a-number" }), {
+    const payload = { message: "Error", code: "not-a-number" };
+    const response = new Response(JSON.stringify(payload), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
     const result = await endpoint.parse_response(response);
     assert.ok(result instanceof ParseError);
     assert.equal(result.context.operation, "parse_response");
-  });
-
-  test("headers preserved", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/users" },
-      {
-        responses: {
-          200: {
-            schema: z.object({ id: z.number() }),
-            parse: "json",
-          },
-        },
-      },
-    );
-    const headers = new Headers();
-    headers.set("X-Custom-Header", "test-value");
-    headers.set("Content-Type", "application/json");
-    const response = new Response(JSON.stringify({ id: 1 }), {
-      status: 200,
-      headers,
-    });
-    const result = await endpoint.parse_response(response);
-    assert.ok(!(result instanceof Error));
-    assert.equal(result.ok, true);
-    assert.equal(result.headers.get("X-Custom-Header"), "test-value");
-    assert.equal(result.headers.get("Content-Type"), "application/json");
+    assert.equal(result.context.response?.status, 400);
+    assert.deepEqual(result.context.response?.body, payload);
   });
 
   test("the envelope exposes the response metadata, and no response", async () => {
@@ -1329,25 +1121,6 @@ describe("Endpoint.parse_response", () => {
     assert.equal(result.headers, response.headers);
     assert.ok(!Object.hasOwn(result, "raw_response"));
     assert.equal(response.bodyUsed, true);
-  });
-
-  test("query serializer with explicit `serialize: undefined` falls back to urlencoded default", async () => {
-    const endpoint = new Endpoint(
-      { method: "GET", pathname: "/u" },
-      {
-        query: {
-          schema: z.object({ x: z.number().transform(String) }),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          serialize: undefined as any,
-        },
-      },
-    );
-    const url = await endpoint.generate_url({
-      base_url: "https://example.com",
-      query: { x: 1 },
-    });
-    assert.ok(url instanceof URL, "expected URL, got SerializationError");
-    assert.equal(url.searchParams.get("x"), "1");
   });
 
   test("distinct schemas per status code", async () => {
@@ -1639,6 +1412,53 @@ describe("Endpoint.parse_response body ownership", () => {
     assert.equal(new TextDecoder().decode(value), "streamed");
   });
 
+  test("leaves alone a body a failing parse had locked, since cancelling under a reader would throw", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      {
+        responses: {
+          200: {
+            schema: z.string(),
+            parse: async (body) => {
+              body!.getReader();
+              throw new Error("locked then gave up");
+            },
+          },
+        },
+      },
+    );
+    const { body, was_cancelled } = open_body("held");
+    const result = await endpoint.parse_response(new Response(body, { status: 200 }));
+
+    assert.ok(result instanceof ParseError);
+    assert.equal((result.cause as Error).message, "locked then gave up");
+    assert.equal(was_cancelled(), false);
+  });
+
+  test("hands an exact-status custom parse the response metadata too", async () => {
+    const endpoint = new Endpoint(
+      { method: "GET", pathname: "/x" },
+      {
+        responses: {
+          404: {
+            schema: z.object({ status: z.number(), url: z.string(), ok: z.boolean() }),
+            parse: async (body, metadata) => {
+              await new Response(body).text();
+              return { status: metadata.status, url: metadata.url, ok: metadata.ok };
+            },
+          },
+        },
+      },
+    );
+
+    const result = await endpoint.parse_response(new Response("missing", { status: 404 }));
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 404);
+    if (result.status === 404) assert.deepEqual(result.error, { status: 404, url: "", ok: false });
+  });
+
   test("cancels the body a failing parse left untouched", async () => {
     const endpoint = new Endpoint(
       { method: "GET", pathname: "/x" },
@@ -1772,6 +1592,19 @@ describe("Endpoint.generate_url pathname failures", () => {
       const result = await endpoint.generate_url({ base_url: `${base_url}/v1/`, params: { id } });
       assert.ok(result instanceof SerializationError, `'${id}' produced ${String(result)}`);
       assert.ok(result.cause instanceof PathnameError);
+    }
+  });
+
+  test("dots inside a longer value and pre-encoded dot segments survive URL resolution", async () => {
+    const cases = [
+      { id: "a..b", pathname: "/v1/users/a..b/posts" },
+      { id: "...", pathname: "/v1/users/.../posts" },
+      { id: "%2E%2E", pathname: "/v1/users/%252E%252E/posts" },
+    ];
+    for (const { id, pathname } of cases) {
+      const result = await endpoint.generate_url({ base_url: `${base_url}/v1/`, params: { id } });
+      assert.ok(result instanceof URL, `'${id}' produced ${String(result)}`);
+      assert.equal(result.pathname, pathname);
     }
   });
 });

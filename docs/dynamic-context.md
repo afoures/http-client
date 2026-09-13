@@ -103,7 +103,8 @@ new Endpoint(
 ```
 
 `context` is only accepted once the factory declares a context type. On an endpoint that declares
-none it is a compile error, rather than a default that silently does nothing.
+none it is a compile error, rather than a default that silently does nothing. Its keys are checked
+against that type too, so a misspelled key or a value of the wrong type is rejected.
 
 ### Client-level
 

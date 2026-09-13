@@ -68,27 +68,23 @@ describe("merge_headers", () => {
     assert.equal(result.get("x-counter"), "3");
   });
 
-  test("header deletion via null", () => {
-    const result = merge_headers({ "Content-Type": "application/json" }, { "Content-Type": null });
-    assert.equal(result.get("content-type"), null);
-  });
-
-  test("header deletion via undefined", () => {
+  test("a null or undefined value deletes the header set by an earlier source", () => {
     const result = merge_headers(
-      { "Content-Type": "application/json" },
-      { "Content-Type": undefined },
+      { "Content-Type": "application/json", "X-Trace": "abc", "X-Kept": "yes" },
+      { "Content-Type": null, "X-Trace": undefined },
     );
     assert.equal(result.get("content-type"), null);
+    assert.equal(result.get("x-trace"), null);
+    assert.equal(result.get("x-kept"), "yes");
   });
 
-  test("reducer returning null deletes header", () => {
-    const result = merge_headers({ "X-Custom": "value" }, { "X-Custom": () => null });
-    assert.equal(result.get("x-custom"), null);
-  });
-
-  test("reducer returning undefined deletes header", () => {
-    const result = merge_headers({ "X-Custom": "value" }, { "X-Custom": () => undefined });
-    assert.equal(result.get("x-custom"), null);
+  test("a reducer returning null or undefined deletes the header", () => {
+    const result = merge_headers(
+      { "X-Null": "value", "X-Undefined": "value" },
+      { "X-Null": () => null, "X-Undefined": () => undefined },
+    );
+    assert.equal(result.get("x-null"), null);
+    assert.equal(result.get("x-undefined"), null);
   });
 
   test("multiple source types mixed", () => {
@@ -103,9 +99,13 @@ describe("merge_headers", () => {
     assert.equal(result.get("x-from-array"), "value3");
   });
 
-  test("empty sources", () => {
-    const result = merge_headers();
-    assert.equal(result.get("content-type"), null);
+  test("a Headers instance overrides an object key spelled in another case", () => {
+    const later = new Headers();
+    later.set("content-type", "text/html");
+    const result = merge_headers({ "Content-Type": "application/json", "X-Keep": "1" }, later);
+    assert.equal(result.get("content-type"), "text/html");
+    assert.equal(result.get("x-keep"), "1");
+    assert.deepEqual([...result.keys()].sort(), ["content-type", "x-keep"]);
   });
 
   test("undefined sources", () => {
@@ -154,17 +154,32 @@ describe("merge_options", () => {
     assert.equal(result.headers.get("x-second"), "value2");
   });
 
-  test("signal combining with AbortSignal.any()", async () => {
-    const controller1 = new AbortController();
-    const controller2 = new AbortController();
+  test("signals from two sources are combined, and either one aborts the result with its reason", () => {
+    const first = new AbortController();
+    const second = new AbortController();
 
-    const result = merge_options({ signal: controller1.signal }, { signal: controller2.signal });
+    const result = merge_options({ signal: first.signal }, { signal: second.signal });
 
     assert.ok(result.signal instanceof AbortSignal);
+    assert.notEqual(result.signal, first.signal);
+    assert.notEqual(result.signal, second.signal);
+    assert.equal(result.signal.aborted, false);
 
-    controller1.abort("reason1");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.ok(result.signal?.aborted);
+    first.abort("reason1");
+    assert.equal(result.signal.aborted, true);
+    assert.equal(result.signal.reason, "reason1");
+  });
+
+  test("signals from three sources all reach the combined signal", () => {
+    const controllers = [new AbortController(), new AbortController(), new AbortController()];
+    const result = merge_options(
+      { signal: controllers[0]!.signal },
+      { signal: controllers[1]!.signal },
+      { signal: controllers[2]!.signal },
+    );
+    controllers[2]!.abort("last");
+    assert.equal(result.signal?.aborted, true);
+    assert.equal(result.signal?.reason, "last");
   });
 
   test("signal from single source", () => {
@@ -203,6 +218,22 @@ describe("merge_options", () => {
     assert.equal(result.retry?.delay, 1000);
   });
 
+  test("an explicit `undefined` retry key inherits the earlier value instead of clearing it", () => {
+    const when = () => true;
+    const result = merge_options(
+      { retry: { when, attempts: 3 } },
+      { retry: { when: undefined, attempts: undefined, delay: 10 } },
+    );
+    assert.equal(result.retry?.when, when);
+    assert.equal(result.retry?.attempts, 3);
+    assert.equal(result.retry?.delay, 10);
+  });
+
+  test("a whole `retry: undefined` source leaves the earlier policy untouched", () => {
+    const result = merge_options({ retry: { attempts: 2 } }, { retry: undefined });
+    assert.deepEqual(result.retry, { attempts: 2 });
+  });
+
   test("timeout merging is per key, like retry", () => {
     const result = merge_options({ timeout: { attempt: 1000 } }, { timeout: { total: 5000 } });
     assert.deepEqual(result.timeout, { attempt: 1000, total: 5000 });
@@ -226,6 +257,15 @@ describe("merge_options", () => {
     assert.equal(result.timeout, undefined);
   });
 
+  test("timeout keys merge across client, endpoint and call sources in order", () => {
+    const result = merge_options(
+      { timeout: { attempt: 1000 } },
+      { timeout: 8000 },
+      { timeout: { total: 5000 } },
+    );
+    assert.deepEqual(result.timeout, { attempt: 1000, total: 5000 });
+  });
+
   test("headers delegation to merge_headers", () => {
     const result = merge_options(
       { headers: { "Content-Type": "text/plain" } },
@@ -239,36 +279,14 @@ describe("merge_options", () => {
     assert.ok(result.headers instanceof Headers);
   });
 
-  test("complex options with all features", () => {
-    const controller = new AbortController();
-
+  test("plain RequestInit keys pass through, later sources winning", () => {
     const result = merge_options(
-      { headers: { "X-Default": "value1" }, retry: { attempts: 1 } },
-      { headers: { "X-Override": "value2" }, timeout: 5000 },
-      { signal: controller.signal, retry: { attempts: 3, delay: 100 } },
+      { credentials: "include", cache: "no-store" },
+      { cache: "force-cache", redirect: "manual" },
     );
-
-    assert.equal(result.headers.get("x-default"), "value1");
-    assert.equal(result.headers.get("x-override"), "value2");
-    assert.ok(result.signal instanceof AbortSignal);
-    assert.deepEqual(result.timeout, { total: 5000 });
-    assert.equal(result.retry?.attempts, 3);
-    assert.equal(result.retry?.delay, 100);
-  });
-
-  test("retry with function values", () => {
-    const whenFn = () => true;
-    const delayFn = () => 100;
-    const attemptsFn = () => 5;
-
-    const result = merge_options(
-      { retry: { when: whenFn, attempts: 3, delay: 50 } },
-      { retry: { attempts: attemptsFn, delay: delayFn } },
-    );
-
-    assert.equal(result.retry?.when, whenFn);
-    assert.equal(result.retry?.attempts, attemptsFn);
-    assert.equal(result.retry?.delay, delayFn);
+    assert.equal(result.credentials, "include");
+    assert.equal(result.cache, "force-cache");
+    assert.equal(result.redirect, "manual");
   });
 
   test("headers with reducer functions", () => {
@@ -291,26 +309,36 @@ describe("merge_options", () => {
 });
 
 describe("sleep", () => {
-  test("rejects immediately when signal is already aborted", async () => {
+  test("rejects synchronously when the signal is already aborted, before any timer fires", async () => {
     const signal = AbortSignal.abort("preset-reason");
-    const started = Date.now();
-    await assert.rejects(
-      () => sleep(100, signal),
-      (err: unknown) => err === "preset-reason",
-    );
-    assert.ok(
-      Date.now() - started < 50,
-      "sleep should have rejected immediately, not waited for the timeout",
-    );
+    // Order rather than wall-clock: an already-rejected promise settles before a 0ms timer does.
+    const winner = await Promise.race([
+      sleep(100, signal).then(
+        () => "resolved",
+        (reason: unknown) => `rejected:${String(reason)}`,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timer"), 0)),
+    ]);
+    assert.equal(winner, "rejected:preset-reason");
   });
 
-  test("rejects when signal is aborted during sleep", async () => {
+  test("rejects with the abort reason when the signal fires mid-sleep", async () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort("mid-sleep"), 5);
     await assert.rejects(
-      () => sleep(500, controller.signal),
-      (err: unknown) => err === "mid-sleep",
+      () => sleep(5_000, controller.signal),
+      (reason: unknown) => reason === "mid-sleep",
     );
+  });
+
+  test("resolves once the delay has elapsed when nothing aborts it", async () => {
+    let settled = false;
+    const pending = sleep(5).then(() => {
+      settled = true;
+    });
+    assert.equal(settled, false);
+    await pending;
+    assert.equal(settled, true);
   });
 });
 

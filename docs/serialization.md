@@ -63,7 +63,7 @@ const url = await endpoint.generate_url({
 // https://api.example.com/users/user-123
 ```
 
-`serialize` is optional when the schema output already matches the pathname's params (the keys the route declares, with `string`/`number` values). When the output shape differs (renamed keys, non-string values), `serialize` is **required** and the compiler enforces it.
+`serialize` is optional when the schema output already matches the pathname's params: the keys the route declares, each a `string` or `number` (or `undefined` for a param inside an optional group). When the output shape differs (renamed keys, missing keys, values of another type), `serialize` is **required** and the compiler enforces it.
 
 ## Query
 
@@ -141,7 +141,7 @@ A value the encoder cannot express returns a `SerializationError` naming the key
 
 ## Body
 
-Request bodies are serialized for POST, PUT, PATCH, and DELETE methods.
+Request bodies are serialized for POST, PUT, PATCH, DELETE, and QUERY methods. A `body` serializer on a GET endpoint is a compile error.
 
 ### JSON
 
@@ -170,7 +170,14 @@ const { body, content_type } = await endpoint.serialize_body({
 
 ### Custom Serialization
 
-For non-JSON bodies (FormData, text, etc.):
+For non-JSON bodies (FormData, text, etc.), `serialize` returns `{ body, content_type? }`. Whether
+`content_type` is allowed, required or forbidden depends on the body type:
+
+| `body`                           | `content_type`                                                        |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `FormData`, `URLSearchParams`    | not accepted: the runtime derives it from the body, boundary included |
+| `BufferSource`, `ReadableStream` | required: raw bytes carry no type                                     |
+| `Blob`, `string`, `null`         | optional: a `Blob` brings its own `type`, a string defaults to text   |
 
 ```typescript
 const endpoint = new Endpoint(
@@ -241,11 +248,12 @@ request without a body sends none, a request with one sends the serializer's. Th
 hook cannot change it either. This keeps one source of truth for the header and its body, which is
 what a `FormData` boundary or a charset parameter needs.
 
-Some data structures does not need an explicit `Content-Type`: `FormData` and `URLSearchParams` for example. In this case, the lib uses default runtime behavior.
+Some bodies do not take an explicit `Content-Type` at all: `FormData` and `URLSearchParams` carry
+enough for the runtime to derive it, so `serialize` must not return one for them (see the table
+above), and the request goes out with whatever `fetch` computes.
 
-When you want to change the default behavior, you can write a custom serializer for your endpoint.
-
-Here is a JSON serializer that returns HSON with vendor media type (JSON:API, `merge-patch+json`, GitHub's `vnd.github+json`) :
+To send a media type the `"json"` serializer does not produce, write the serializer out. Here is
+JSON under a vendor media type (JSON:API, `merge-patch+json`, GitHub's `vnd.github+json`):
 
 ```typescript
 const endpoint = new Endpoint(
