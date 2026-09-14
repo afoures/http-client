@@ -119,6 +119,19 @@ const url = await endpoint.generate_url({
 
 `serialize` is optional (defaulting to `"urlencoded"`) only when the schema output is a shape the default encoder accepts: a record of `string | number | boolean | null | undefined` values (or arrays of those), a list of `[key, value]` entries, or `undefined`. For anything richer (nested objects, or arrays that aren't key/value pairs) `serialize` is **required** and `"urlencoded"` is no longer offered, since it would stringify nested values into `[object Object]`.
 
+A schema whose output is `any` or `unknown` is in that second group, and for a stricter reason: it does not describe a shape at all, so the client has nothing to decide an encoding from. `serialize` is required there too. This mirrors `parse`, which a schema with an `any` input has to spell out for the same reason.
+
+```typescript
+// compile error: `serialize` is required, since `any` says nothing about the encoding
+new Endpoint({ method: "GET", pathname: "/users" }, { query: { schema: z.any() } });
+
+// fine: the function is the encoding
+new Endpoint(
+  { method: "GET", pathname: "/users" },
+  { query: { schema: z.any(), serialize: (data) => new URLSearchParams(data) } },
+);
+```
+
 ### What `"urlencoded"` encodes to
 
 Several of these shapes have more than one convention in the wild, so the default encoder commits to the ones `URLSearchParams` implements natively (a query is a flat list of name/value pairs, per the WHATWG URL Standard):
@@ -137,7 +150,9 @@ Several of these shapes have more than one convention in the wild, so the defaul
 
 If your backend expects a different dialect (bracketed array keys, `1`/`0` booleans, an explicit empty value), pass a `serialize` function and build the `URLSearchParams` yourself.
 
-A value the encoder cannot express returns a `SerializationError` naming the key rather than writing `[object Object]`. That is reachable only by casting past the type above, since the compiler already requires `serialize` for those shapes.
+A value the encoder cannot express returns a `SerializationError` naming the key rather than writing `[object Object]`. So does an output that is not a record or an entry list at all, such as a bare string, a number or `null`: there are no key/value pairs to be had, and emitting no search string at all is the one failure you would have no way to notice. Both are reachable only by casting past the type above, since the compiler already requires `serialize` for those shapes.
+
+The exception is `undefined`, which is not an error but the documented way to send nothing. See [Omitted Input](#omitted-input).
 
 ## Body
 
@@ -299,6 +314,10 @@ await endpoint.generate_url({ base_url: "https://api.example.com" });
 
 A schema output of `undefined` means there is nothing to send: no search string for `query`, no
 body for `body`, and `serialize` is not called for it.
+
+`undefined` is the only output read that way. `null` and every other non-record output are rejected
+by `"urlencoded"` rather than skipped, since "send nothing" and "I cannot encode this" are different
+answers and only one of them should be silent.
 
 ## Validation Errors
 

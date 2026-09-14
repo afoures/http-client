@@ -76,6 +76,22 @@ const result = await api.users.get({
 `attempts` counts retries, not requests: `attempts: 1` allows a second request, and `attempts: 0`
 (the default) means the first request is the only one.
 
+Both numbers are floored and clamped to `0`, so `attempts: 2.9` allows two retries and a negative
+one allows none. Both must be finite: `NaN` and `Infinity` come back as an `UnexpectedError` with
+`context.operation === "retry_policy"`, naming the key. The same rule as `timeout`, and for the same
+reason. A `NaN` in particular cannot be read as a budget at all, since every comparison against it is
+`false`, so an unchecked one would retry until the deadline stopped the call, or forever without one.
+
+To retry until something other than the budget stops the call, pair a large budget with a deadline:
+
+```typescript
+const result = await api.users.get({
+  params: { id: "123" },
+  retry: { attempts: Number.MAX_SAFE_INTEGER, delay: 1000 },
+  timeout: { total: 30_000 }, // what actually ends it
+});
+```
+
 ### Conditional Retry
 
 By default, retries transient failures only (see [Default Behavior](#default-behavior)). Customize with `when`:
@@ -160,6 +176,9 @@ const result = await api.users.get({
   },
 });
 ```
+
+A callback must return a finite number: returning `NaN` (from a
+`parseInt` of a missing header, say) ends the call with an `UnexpectedError`.
 
 ## Context Information
 

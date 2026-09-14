@@ -487,6 +487,27 @@ export namespace Schema {
    */
   export type accepts<schema, value> = [value] extends [Schema.input_of<schema>] ? true : false;
 
+  /**
+   * The output type of a schema, read by inference rather than by indexing, so it works on a type
+   * parameter that is not constrained to {@link Schema.Any}. The mirror of {@link Schema.input_of}.
+   * Anything that is not a schema, an unresolved slot included, yields `never`.
+   */
+  export type output_of<schema> = schema extends Schema._<any, infer output> ? output : never;
+
+  /**
+   * `true` when `schema` can produce a value of type `value`, `false` otherwise. The mirror of
+   * {@link Schema.accepts}, and non-distributive on both sides for the same reason.
+   *
+   * Its use here is `produces<schema, void>`, which is how a serializer asks whether a schema output
+   * is `any` or `unknown`: neither says anything about how to encode the value, so both have to be
+   * told apart from a concrete output that happens to be encodable.
+   *
+   * @example
+   * Schema.produces<typeof z.any(), void>              // true
+   * Schema.produces<typeof z.object({ q: z.string() }), void> // false
+   */
+  export type produces<schema, value> = [value] extends [Schema.output_of<schema>] ? true : false;
+
   /** The output type of a schema, or `default_value` when the schema is `never`. */
   export type infer_output<schema extends Schema.Any, default_value extends unknown = never> = [
     default_value,
@@ -538,17 +559,23 @@ export namespace Serializer {
    */
   export type Params<pathname extends Pathname.Relative, schema> = {
     schema: schema;
-  } & ([schema] extends [Schema._<any, Pathname.Params<pathname>>]
+  } & (Schema.produces<schema, void> extends true
     ? {
-        serialize?: (
-          data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
-        ) => Pathname.Params<pathname>;
-      }
-    : {
         serialize: (
           data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
         ) => Pathname.Params<pathname>;
-      });
+      }
+    : [schema] extends [Schema._<any, Pathname.Params<pathname>>]
+      ? {
+          serialize?: (
+            data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
+          ) => Pathname.Params<pathname>;
+        }
+      : {
+          serialize: (
+            data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
+          ) => Pathname.Params<pathname>;
+        });
 
   /** A value `"urlencoded"` can encode on its own. `null` and `undefined` are dropped from the query string. */
   export type UrlencodedValue = string | number | boolean | null | undefined;
@@ -577,17 +604,23 @@ export namespace Serializer {
    */
   export type QueryString<schema> = {
     schema: schema;
-  } & ([schema] extends [Schema._<any, UrlencodedCompatible>]
+  } & (Schema.produces<schema, void> extends true
     ? {
-        serialize?:
-          | "urlencoded"
-          | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) => URLSearchParams);
-      }
-    : {
         serialize: (
           data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
         ) => URLSearchParams;
-      });
+      }
+    : [schema] extends [Schema._<any, UrlencodedCompatible>]
+      ? {
+          serialize?:
+            | "urlencoded"
+            | ((data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>) => URLSearchParams);
+        }
+      : {
+          serialize: (
+            data: Schema.infer_output<NoInfer<schema & Schema._>, unknown>,
+          ) => URLSearchParams;
+        });
 
   /**
    * Request-body serializer. `serialize` is `"json"` or a function returning the encoded body and

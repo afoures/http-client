@@ -77,6 +77,35 @@ function resolve_timeout(
 }
 
 /**
+ * Floor and clamp a resolved `retry` number, for the same reasons {@link resolve_timeout} does it:
+ * both keys are counts of whole things, and a negative one reads as an exhausted one.
+ *
+ * `NaN` and `Infinity` come back as an {@link UnexpectedError} naming the key. This is not defensive
+ * either: every comparison against `NaN` is `false`, so an unchecked `attempts` of `NaN` never trips
+ * the exhaustion guard and the call retries until the deadline stops it, or forever if none is set.
+ * `Infinity` is rejected alongside it rather than read as "retry until something else stops you",
+ * so the two keys stay one rule; spell that intent `attempts: Number.MAX_SAFE_INTEGER`.
+ *
+ * Returned rather than thrown, like the timeouts: both keys accept a callback, so a bad value is a
+ * call outcome rather than a construction mistake.
+ */
+function resolve_retry_number(
+  value: number,
+  key: "attempts" | "delay",
+  /** Built on demand: this runs on every retry decision, and only a rejected value needs a context. */
+  context: () => Partial<ErrorContext>,
+): number | UnexpectedError {
+  if (!Number.isFinite(value)) {
+    return new UnexpectedError(`Invalid retry.${key}: ${value}. Expected a finite number.`, {
+      cause: value,
+      operation: "retry_policy",
+      ...context(),
+    });
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+/**
  * A budget of `0` is exhausted from the outset, but `AbortSignal.timeout(0)` fires on a timer, so
  * it would still let one attempt start. Abort synchronously instead, keeping the reason shaped like
  * the runtime's so both paths classify identically. Serves the `total` deadline and the `attempt`
@@ -96,6 +125,31 @@ function combine(...signals: Array<AbortSignal | null | undefined>): AbortSignal
   if (present.length === 0) return undefined;
   if (present.length === 1) return present[0];
   return AbortSignal.any(present);
+}
+
+/**
+ * Whether a tree node is a branch to recurse into. Deliberately narrow: only an object literal (or a
+ * null-prototype one) counts, so anything else reaching a leaf position is reported instead of being
+ * walked with `Object.entries` and silently yielding an endpoint-shaped `{}`.
+ *
+ * This is what turns the one case `instanceof` cannot see into an error. An `Endpoint` from a second
+ * installed copy of the package fails the `instanceof` check above it, and fails this one too, since
+ * its prototype is that copy's `Endpoint.prototype`. Without this it would be walked as a branch, and
+ * `Object.entries` would return nothing at all (its fields are `#private`), so the endpoint would
+ * come back as `{}` and only fail at the call site with "is not a function".
+ */
+function is_plain_object(value: unknown): value is EndpointMap {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Names a rejected tree node well enough to recognize a stray value and a duplicate install alike. */
+function describe(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value !== "object") return `a ${typeof value}`;
+  const name = (value as { constructor?: { name?: string } }).constructor?.name;
+  return name ? `an instance of \`${name}\`` : "an object";
 }
 
 type map_to_fetch_endpoint_functions<endpoints, default_context = {}> = Pretty<{
@@ -435,11 +489,24 @@ export function fetch_endpoint_factory<
       return undefined;
     }
 
+    /** Shared by both ways the retry policy can fail: a throwing callback, and a non-finite number. */
+    const retry_error_context = () =>
+      ({
+        request: request_context(),
+        timing: {
+          startTime: start_time,
+          attempt,
+          maxAttempts:
+            typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
+        },
+      }) satisfies Partial<ErrorContext>;
+
     /**
      * `when`, then `attempts`, then `delay`, for the attempt that just settled. `attempts` counts
      * retries, so it is compared against the retries already made (`attempt - 1`) rather than the
-     * requests sent: `attempts: 1` allows a second request, `0` none. A throwing callback ends the
-     * call with an `UnexpectedError` naming `retry_policy`.
+     * requests sent: `attempts: 1` allows a second request, `0` none. A callback that throws, or
+     * that returns a value {@link resolve_retry_number} rejects, ends the call with an
+     * `UnexpectedError` naming `retry_policy`.
      */
     async function decide_retry(
       attempt_request: HTTPFetch.RequestMetadata,
@@ -454,13 +521,17 @@ export function fetch_endpoint_factory<
         });
         if (!should_retry) return { retry: false };
 
-        const max_retries =
+        const max_retries = resolve_retry_number(
           typeof retry_policy.attempts === "function"
             ? await retry_policy.attempts({ request: attempt_request })
-            : retry_policy.attempts;
+            : retry_policy.attempts,
+          "attempts",
+          retry_error_context,
+        );
+        if (max_retries instanceof Error) return max_retries;
         if (attempt - 1 >= max_retries) return { retry: false };
 
-        const delay =
+        const delay = resolve_retry_number(
           typeof retry_policy.delay === "function"
             ? await retry_policy.delay({
                 request: attempt_request,
@@ -468,19 +539,17 @@ export function fetch_endpoint_factory<
                 error: attempt_error,
                 attempt,
               })
-            : retry_policy.delay;
+            : retry_policy.delay,
+          "delay",
+          retry_error_context,
+        );
+        if (delay instanceof Error) return delay;
         return { retry: true, delay };
       } catch (local_error) {
         return new UnexpectedError("Failed to check retry policy", {
           cause: local_error,
           operation: "retry_policy",
-          request: request_context(),
-          timing: {
-            startTime: start_time,
-            attempt,
-            maxAttempts:
-              typeof retry_policy.attempts === "function" ? undefined : retry_policy.attempts,
-          },
+          ...retry_error_context(),
         });
       }
     }
@@ -503,6 +572,20 @@ export function fetch_endpoint_factory<
         } catch (reason) {
           return classify_abort(reason, "retry_delay");
         }
+      } else {
+        /**
+         * Both timeouts are `AbortSignal.timeout`, so both are timers, and the microtask queue is
+         * drained to completion before the event loop reaches the timer phase. A `fetch` that
+         * resolves without real I/O (a test double, a cache layer, a service worker) therefore never
+         * lets a zero-delay retry loop reach it, and `timeout.total` never fires however long the
+         * loop runs. One tick per retry buys back the guarantee that the deadline holds whatever the
+         * fetch implementation does.
+         *
+         * No signal is passed: this must not reject, so that an abort already pending keeps being
+         * reported by `terminal_abort` at the top of the next iteration, under `operation: "fetch"`,
+         * rather than being reclassified as a `retry_delay` that never happened.
+         */
+        await sleep(0);
       }
 
       if (!retry_policy.recover) return undefined;
@@ -534,9 +617,10 @@ export function fetch_endpoint_factory<
     }
 
     do {
-      // Reached only when the previous attempt is being retried, so its response is spent: nothing
-      // will ever read that body, and cancelling it hands the connection back now rather than
-      // whenever the dangling stream is collected.
+      // The invariant that a new attempt never starts with a live body. Every path that loops back
+      // here already released its response at the point it was abandoned, so this is a no-op in
+      // practice; it stays as the guard that makes that a property of the loop rather than a
+      // property of each path into it.
       discard_body(response);
       response = undefined;
 
@@ -635,6 +719,12 @@ export function fetch_endpoint_factory<
           break;
         }
         if (decision.retry) {
+          // The decision was made on metadata, and `recover` only ever sees metadata too, so this
+          // response is already spent. Released here rather than at the top of the next iteration,
+          // so a backoff of seconds does not hold the connection open for its whole duration.
+          discard_body(response);
+          response = undefined;
+
           const failure = await prepare_retry(
             decision.delay,
             attempt_request,
@@ -809,9 +899,10 @@ export type HttpClientConfig<
  * );
  * const result = await api.users.get({ params: { id: "1" } });
  *
- * @throws {TypeError} When `base_url` is not an absolute, parsable URL. This is the one failure the
- * client throws instead of returning: it is a static misconfiguration, so it cannot depend on call
- * input and is worth surfacing once at startup rather than from every call.
+ * @throws {TypeError} When `base_url` is not an absolute, parsable URL, or when a leaf of the tree
+ * is neither an {@link Endpoint} nor a plain object of endpoints. Both are static misconfigurations
+ * that cannot depend on call input, so they are surfaced once at startup rather than from every
+ * call, and they are the only failures the client throws instead of returning.
  */
 export function http_client<
   const endpoints,
@@ -831,9 +922,10 @@ export function http_client<
     );
   }
 
-  function map(endpoints: EndpointMap): Record<string, unknown> {
+  function map(endpoints: EndpointMap, path: ReadonlyArray<string>): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(endpoints).map(([key, endpoint_or_object]) => {
+        const key_path = [...path, key];
         if (endpoint_or_object instanceof Endpoint) {
           return [
             key,
@@ -846,12 +938,18 @@ export function http_client<
             }),
           ];
         }
-        return [key, map(endpoint_or_object)];
+        if (!is_plain_object(endpoint_or_object)) {
+          throw new TypeError(
+            `Invalid endpoint at \`${key_path.join(".")}\`: expected an Endpoint or a plain object of endpoints, received ${describe(endpoint_or_object)}. ` +
+              "If this value is an Endpoint, two copies of this package are installed and `instanceof` cannot see across them; deduplicate the dependency.",
+          );
+        }
+        return [key, map(endpoint_or_object, key_path)];
       }),
     );
   }
 
-  return map(all_endpoints as EndpointMap) as map_to_fetch_endpoint_functions<
+  return map(all_endpoints as EndpointMap, []) as map_to_fetch_endpoint_functions<
     endpoints,
     default_context
   >;

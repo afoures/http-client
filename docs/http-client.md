@@ -38,7 +38,8 @@ base_url: "https://api.example.com/v1"; // + "/users" -> https://api.example.com
 ```
 
 `base_url` must be absolute and parsable. `http_client` throws a `TypeError` at construction
-otherwise, the one place it throws rather than returning an error (see
+otherwise. That is one of only two things it throws for rather than returning an error, the other
+being a malformed endpoint tree (see [Organizing Endpoints](#organizing-endpoints) and
 [Error Handling](./error-handling.md)).
 
 ## Organizing Endpoints
@@ -78,6 +79,8 @@ await api.posts.comments.create({ params: { post_id: "1" }, body: { text: "Nice!
 
 A `body` is only accepted where the endpoint declares a `body` serializer: on `users.create` above,
 which declares none, passing one is a compile error, and the request goes out without a body.
+
+Every node of the tree is an `Endpoint` or a plain object grouping more of them, and nothing else.
 
 ## Shared Options
 

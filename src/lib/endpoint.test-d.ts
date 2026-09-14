@@ -480,6 +480,45 @@ new Endpoint(
   { responses: { 200: { schema: z.record(z.string(), z.unknown()), parse: "json" } } },
 );
 
+// --- a schema that produces anything needs a `serialize` function, on the query and params slots ---
+// The output-side mirror of the `parse` rule above: `any` satisfies every compatibility check, so
+// without this it would take the default encoder and have its value silently dropped at runtime.
+
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  // @ts-expect-error: z.any() says nothing about the encoding, so `serialize` is required
+  { query: { schema: z.any() } },
+);
+new Endpoint(
+  { method: "GET", pathname: "/search" },
+  {
+    query: {
+      schema: z.any(),
+      // @ts-expect-error: and "urlencoded" is rejected for the same reason
+      serialize: "urlencoded",
+    },
+  },
+);
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  // @ts-expect-error: an `any` params output cannot be placed in the pathname on its own
+  { params: { schema: z.any() } },
+);
+// a function makes both slots compile again
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  {
+    query: { schema: z.any(), serialize: () => new URLSearchParams() },
+    params: { schema: z.any(), serialize: () => ({ id: "1" }) },
+  },
+);
+// a concrete output is untouched by the rule, including one that is mutually assignable with the
+// pathname's own params type
+new Endpoint(
+  { method: "GET", pathname: "/users/:id" },
+  { params: { schema: z.object({ id: z.union([z.string(), z.number()]) }) } },
+);
+
 // --- custom body serializer return shapes ---
 
 new Endpoint(

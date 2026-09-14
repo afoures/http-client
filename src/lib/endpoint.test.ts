@@ -191,6 +191,31 @@ describe("Endpoint.generate_url", () => {
     assert.match((result.cause as Error).message, /\[key, value\] entries/);
   });
 
+  test("with query string - a non-object output returns a SerializationError", async () => {
+    // The type now requires a `serialize` function for an output the encoder cannot read, so this
+    // is only reachable past a cast. It is still reported rather than skipped: emitting no query
+    // string at all is the one failure the caller has no way to notice.
+    for (const value of ["hello", 42, true, null]) {
+      const endpoint = new Endpoint(
+        { method: "GET", pathname: "/users" },
+        {
+          query: {
+            schema: z.any(),
+            serialize: "urlencoded" as never,
+          },
+        },
+      );
+      const result = await endpoint.generate_url({
+        base_url: "https://api.example.com",
+        query: value,
+      });
+      assert.ok(result instanceof SerializationError, `${String(value)}: got ${String(result)}`);
+      assert.equal(result.context.operation, "generate_url");
+      assert.match((result.cause as Error).message, /\[key, value\] entries/);
+      assert.equal(result.context.input?.query, value);
+    }
+  });
+
   test("with pathname params - without schema", async () => {
     const endpoint = new Endpoint({ method: "GET", pathname: "/users/(:id)" });
     const url = await endpoint.generate_url({
@@ -687,6 +712,65 @@ describe("Endpoint.serialize_body", () => {
     assert.equal(result.context.operation, "serialize_body");
     assert.equal((result.cause as Error).message, "cannot encode");
     assert.deepEqual(result.context.input, { body: { name: "John" } });
+  });
+
+  describe('the default "json" serializer', () => {
+    const endpoint = new Endpoint(
+      { method: "POST", pathname: "/x" },
+      { body: { schema: z.any(), serialize: "json" } },
+    );
+
+    test("encodes every JSON value, not just objects", async () => {
+      for (const [input, encoded] of [
+        ["hello", '"hello"'],
+        [42, "42"],
+        [null, "null"],
+        [{ a: 1 }, '{"a":1}'],
+        [[1, 2], "[1,2]"],
+      ] as const) {
+        const result = await endpoint.serialize_body({ body: input });
+        assert.ok(!(result instanceof Error), `${String(input)}: got ${String(result)}`);
+        assert.equal(result.body, encoded);
+        assert.equal(result.content_type, "application/json");
+      }
+    });
+
+    test("a value JSON.stringify refuses is a SerializationError, not a rejection", async () => {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+
+      for (const input of [1n, circular]) {
+        const result = await endpoint.serialize_body({ body: input });
+        assert.ok(result instanceof SerializationError, `${String(input)}: got ${String(result)}`);
+        assert.equal(result.context.operation, "serialize_body");
+        assert.ok(result.cause instanceof TypeError);
+      }
+    });
+
+    test("a value that serializes to nothing is reported, not sent as an empty JSON body", async () => {
+      // `JSON.stringify` answers `undefined` for these, which would otherwise go out as no body at
+      // all under a `Content-Type: application/json`.
+      for (const input of [() => {}, Symbol("s")]) {
+        const result = await endpoint.serialize_body({ body: input });
+        assert.ok(result instanceof SerializationError, `${String(input)}: got ${String(result)}`);
+        assert.equal(result.context.operation, "serialize_body");
+        assert.match((result.cause as Error).message, /serialized to nothing/);
+        assert.equal(result.context.input?.body, input);
+      }
+    });
+
+    test("an `undefined` from the schema is still no body, not an error", async () => {
+      const optional = new Endpoint(
+        { method: "POST", pathname: "/x" },
+        { body: { schema: z.undefined(), serialize: "json" } },
+      );
+
+      const result = await optional.serialize_body({ body: undefined });
+
+      assert.ok(!(result instanceof Error));
+      assert.equal(result.body, null);
+      assert.equal(result.content_type, undefined);
+    });
   });
 
   test("a throwing definition factory returns UnexpectedError", async () => {

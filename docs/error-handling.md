@@ -8,12 +8,18 @@ The exceptions are construction time, where a mistake is in code rather than in 
 surfaces once at startup instead of from every call:
 
 - `http_client` throws a `TypeError` when `base_url` is not a parsable absolute URL.
+- `http_client` throws a `TypeError` when a leaf of the endpoint tree is neither an `Endpoint` nor a
+  plain object of endpoints.
 - `new Endpoint(...)` throws a `PathnameError` when the pathname pattern is malformed: a `?` or `#`,
   a `:` with no param name after it, or unbalanced optional-group parentheses.
 
 ```typescript
 http_client(endpoints, { base_url: "/api" });
 // TypeError: Invalid base_url: /api. Expected an absolute URL parsable by `new URL()`.
+
+http_client({ users: { get: "/users/:id" } }, { base_url: "https://api.example.com" });
+// TypeError: Invalid endpoint at `users.get`: expected an Endpoint or a plain object of endpoints,
+// received a string.
 
 new Endpoint({ method: "GET", pathname: "/users/(:id" });
 // PathnameError: unmatched '('
@@ -86,7 +92,9 @@ if (result instanceof NetworkError) {
 
 ### `SerializationError`
 
-Failed to serialize params, query, or body:
+Failed to serialize params, query, or body. Either the schema rejected the input, a `serialize`
+function threw, a param value cannot produce a pathname, or the default `"urlencoded"` encoder was
+handed a value it cannot turn into key/value pairs:
 
 ```typescript
 const result = await api.users.create({
@@ -119,7 +127,8 @@ if (result instanceof ParseError) {
 
 ### `UnexpectedError`
 
-Unexpected failure during request, including a definition factory or a retry callback throwing:
+Unexpected failure during request, including a definition factory or a retry callback throwing, and
+a `timeout` or `retry` number that is not finite:
 
 ```typescript
 const result = await api.users.get({ params: { id: "123" } });
@@ -337,7 +346,7 @@ Roughly in the order a call runs through them, with the class each one comes bac
 | `serialize_body`     | `SerializationError`                                            | validating or serializing `body`                                                                                       |
 | `create_request`     | `UnexpectedError`                                               | constructing the `Request` (a stream body re-sent by a retry lands here)                                               |
 | `fetch`              | `NetworkError`, `TimeoutError`, `AbortedError`                  | the request itself: network failure, timeout, or abort                                                                 |
-| `retry_policy`       | `UnexpectedError`                                               | a `when`, `attempts` or `delay` callback threw                                                                         |
+| `retry_policy`       | `UnexpectedError`                                               | a `when`, `attempts` or `delay` callback threw, or `attempts` / `delay` resolved to `NaN` or `Infinity`                |
 | `retry_delay`        | `TimeoutError`, `AbortedError`                                  | the wait between attempts was cut short by a timeout or an abort                                                       |
 | `recover`            | `UnexpectedError`                                               | a `recover` callback threw                                                                                             |
 | `parse_response`     | `ParseError`, `TimeoutError`, `AbortedError`, `UnexpectedError` | decoding or validating the body, a timeout or abort while reading it, a `parse` function that threw, or a `1xx` status |

@@ -1924,6 +1924,102 @@ describe("fetch_endpoint_factory", () => {
       }
     });
 
+    describe("numeric validation", () => {
+      /** A 503 that `default_retry_condition` wants to retry, so only the numbers stop the loop. */
+      function setup_retryable() {
+        let attempts = 0;
+        return {
+          attempts: () => attempts,
+          fetch_endpoint: fetch_endpoint_factory({
+            base_url: API_BASE_URL,
+            endpoint: new Endpoint({ method: "GET", pathname: "/users" }),
+            custom_fetch: async () => {
+              attempts++;
+              return new Response("{}", { status: 503 });
+            },
+          }),
+        };
+      }
+
+      for (const key of ["attempts", "delay"] as const) {
+        for (const [label, value] of [
+          ["NaN", Number.NaN],
+          ["Infinity", Number.POSITIVE_INFINITY],
+        ] as const) {
+          test(`a literal \`${key}\` of ${label} is a caller error naming the key`, async () => {
+            const { fetch_endpoint, attempts } = setup_retryable();
+
+            const result = await fetch_endpoint({
+              // `delay` only resolves once `attempts` has allowed a retry, so the sibling key has
+              // to permit one for the `delay` case to be reached at all.
+              retry: key === "attempts" ? { attempts: value } : { attempts: 2, delay: value },
+            });
+
+            assert.ok(
+              result instanceof UnexpectedError,
+              `expected UnexpectedError, got ${result instanceof Error ? result.name : "success"}`,
+            );
+            assert.equal(result.context.operation, "retry_policy");
+            assert.match(result.message, new RegExp(`retry\\.${key}`));
+            assert.equal(attempts(), 1, "the call stops instead of retrying");
+          });
+
+          test(`an \`${key}\` callback returning ${label} is rejected the same way`, async () => {
+            const { fetch_endpoint, attempts } = setup_retryable();
+
+            const result = await fetch_endpoint({
+              retry:
+                key === "attempts"
+                  ? { attempts: () => value }
+                  : { attempts: 2, delay: () => value },
+            });
+
+            assert.ok(result instanceof UnexpectedError, `got ${String(result)}`);
+            assert.equal(result.context.operation, "retry_policy");
+            assert.match(result.message, new RegExp(`retry\\.${key}`));
+            assert.equal(attempts(), 1);
+          });
+        }
+      }
+
+      test("a fractional `attempts` is floored, and a negative one is exhausted", async () => {
+        const fractional = setup_retryable();
+        await fractional.fetch_endpoint({ retry: { attempts: 2.9 } });
+        assert.equal(fractional.attempts(), 3, "2.9 allows two retries, not three");
+
+        const negative = setup_retryable();
+        await negative.fetch_endpoint({ retry: { attempts: -1 } });
+        assert.equal(negative.attempts(), 1, "a negative budget allows no retry");
+      });
+
+      test("the retry loop yields, so `timeout.total` holds against a fetch that never does I/O", async () => {
+        // Every await in a zero-delay retry cycle settles as a microtask when the fetch resolves
+        // without touching the network, and the microtask queue is drained before any timer runs.
+        // Without a macrotask between attempts this call never lets `AbortSignal.timeout` fire and
+        // hangs with the event loop starved, so the assertion below is that it terminates at all.
+        let attempts = 0;
+        const fetch_endpoint = fetch_endpoint_factory({
+          base_url: API_BASE_URL,
+          endpoint: new Endpoint({ method: "GET", pathname: "/users" }),
+          custom_fetch: async () => {
+            attempts++;
+            return new Response("{}", { status: 503 });
+          },
+        });
+
+        const result = await fetch_endpoint({
+          retry: { attempts: Number.MAX_SAFE_INTEGER, delay: 0 },
+          timeout: { total: 50 },
+        });
+
+        assert.ok(
+          result instanceof TimeoutError,
+          `expected TimeoutError, got ${result instanceof Error ? result.name : "success"}`,
+        );
+        assert.ok(attempts > 1, "the deadline is what stopped it, not the attempt budget");
+      });
+    });
+
     test("`when: () => true` retries a 200 too, and only the last response is parsed", async () => {
       let attempts = 0;
       let parse_calls = 0;
@@ -2000,6 +2096,42 @@ describe("response body ownership", () => {
     assert.ok(!(result instanceof Error));
     assert.equal(attempts, 2);
     assert.equal(first.was_cancelled(), true);
+  });
+
+  test("releases it before the backoff delay, not after", async () => {
+    // Ordering rather than timing: `recover` runs after the delay and immediately before the next
+    // attempt, so a body released at the top of the next iteration is still open when it is called,
+    // and one released as soon as the retry is decided is not.
+    const first = open_body("first attempt, never read");
+    let attempts = 0;
+    let cancelled_before_recover: boolean | undefined;
+
+    const fetch_endpoint = fetch_endpoint_factory({
+      base_url: API_BASE_URL,
+      endpoint,
+      custom_fetch: () => {
+        attempts++;
+        return Promise.resolve(
+          attempts === 1
+            ? new Response(first.body, { status: 503 })
+            : new Response("ok", { status: 200 }),
+        );
+      },
+    });
+
+    const result = await fetch_endpoint({
+      retry: {
+        attempts: 1,
+        delay: 20,
+        recover: () => {
+          cancelled_before_recover = first.was_cancelled();
+        },
+      },
+    });
+
+    assert.ok(!(result instanceof Error));
+    assert.equal(attempts, 2);
+    assert.equal(cancelled_before_recover, true, "the connection is not held for the whole delay");
   });
 
   test("cancels the body of a response abandoned to an error", async () => {
@@ -2505,6 +2637,49 @@ describe("http_client endpoint tree", () => {
     assert.ok(!(post instanceof Error));
     assert.equal(post.status, 200);
     assert.deepEqual(seen_urls, [`${API_BASE_URL}/posts/7/comments`, `${API_BASE_URL}/posts/7`]);
+  });
+
+  describe("a leaf that is not an Endpoint", () => {
+    test("an Endpoint from a second copy of the package throws, naming the path and the cause", () => {
+      // What a duplicate install looks like from here: the same shape, a different prototype, so
+      // `instanceof` cannot see it. Walked as a branch it would yield `{}`, since its fields are
+      // `#private` and `Object.entries` returns nothing.
+      class OtherCopyEndpoint {}
+      const foreign = Object.create(OtherCopyEndpoint.prototype) as never;
+
+      assert.throws(
+        () => http_client({ users: { get: foreign } }, { base_url: API_BASE_URL }),
+        (error: unknown) => {
+          assert.ok(error instanceof TypeError);
+          assert.match(error.message, /`users\.get`/);
+          assert.match(error.message, /OtherCopyEndpoint/);
+          assert.match(error.message, /two copies of this package are installed/);
+          return true;
+        },
+      );
+    });
+
+    test("a primitive throws too, describing what it got", () => {
+      assert.throws(
+        () => http_client({ users: "not an endpoint" as never }, { base_url: API_BASE_URL }),
+        (error: unknown) => {
+          assert.ok(error instanceof TypeError);
+          assert.match(error.message, /`users`/);
+          assert.match(error.message, /a string/);
+          return true;
+        },
+      );
+    });
+
+    test("a null-prototype object is still a branch", () => {
+      const branch = Object.assign(Object.create(null) as object, {
+        get: new Endpoint({ method: "GET", pathname: "/users/:id" }),
+      });
+
+      const api = http_client({ users: branch as never }, { base_url: API_BASE_URL });
+
+      assert.equal(typeof (api.users as unknown as { get: unknown }).get, "function");
+    });
   });
 
   test("a 1xx response is an UnexpectedError, since no envelope covers it", async () => {

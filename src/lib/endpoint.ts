@@ -405,6 +405,18 @@ export class Endpoint<
               return query_value_error(key, raw_query);
             }
           }
+        } else {
+          // `undefined` never reaches here (it returned above as "nothing to add"), so what is left
+          // is `null` or a primitive, which `"urlencoded"` has no way to turn into key/value pairs.
+          // Reported rather than skipped, like every other shape it cannot encode: silently sending
+          // no query string at all is the one outcome the caller cannot detect.
+          return new SerializationError("Query serialization failed", {
+            cause: new Error(
+              "a urlencoded query must be an object or a list of [key, value] entries; use a `serialize` function for any other shape",
+            ),
+            operation: "generate_url",
+            input: { query: raw_query },
+          });
         }
       }
     }
@@ -479,8 +491,37 @@ export class Endpoint<
         });
       }
     } else {
+      // Wrapped like the custom `serialize` above, and for the same reason: `JSON.stringify` throws
+      // on a circular structure and on a `BigInt`, and this method's contract is to return its
+      // failures. Unwrapped, the one serializer the client provides itself was the only path out of
+      // here that could reject.
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(transformed_content);
+      } catch (cause) {
+        return new SerializationError("Body serialization failed", {
+          operation: "serialize_body",
+          cause,
+          input: { body: raw_body },
+        });
+      }
+
+      // `JSON.stringify` answers `undefined` rather than a string for a value JSON has no
+      // representation of, a function or a symbol. Sending that as a body means sending nothing at
+      // all, under a `Content-Type` still announcing JSON, so it is reported instead. An `undefined`
+      // the schema itself produced is a different thing and already returned above, as no body.
+      if (serialized === undefined) {
+        return new SerializationError("Body serialization failed", {
+          operation: "serialize_body",
+          cause: new Error(
+            `the body serialized to nothing: JSON has no representation for a ${typeof transformed_content}`,
+          ),
+          input: { body: raw_body },
+        });
+      }
+
       return {
-        body: JSON.stringify(transformed_content),
+        body: serialized,
         content_type: "application/json",
       };
     }
