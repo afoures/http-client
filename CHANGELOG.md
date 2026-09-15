@@ -2,6 +2,116 @@
 
 This is the changelog for `http-client`.
 
+## 0.7.0
+
+### Breaking Changes
+
+- Rework how endpoints and clients are declared
+
+  `Endpoint` takes three arguments now: the route, the definition, the options.
+
+  ```ts
+  // before
+  new Endpoint(
+    {
+      method: "POST",
+      pathname: "/tenants/:tenant/items",
+      context: define_context<Ctx>().with_defaults({ tenant: "acme" }),
+      params: { schema: (ctx) => z.object({ tenant: z.literal(ctx.tenant) }) },
+    },
+    { timeout: 5000 },
+  );
+
+  // after
+  new Endpoint(
+    { method: "POST", pathname: "/tenants/:tenant/items" },
+    (ctx: Ctx) => ({ params: { schema: z.object({ tenant: z.literal(ctx.tenant) }) } }),
+    { timeout: 5000, context: { tenant: "acme" } },
+  );
+  ```
+
+  A definition that needs the per-call context is a `(context) => definition` factory whose
+  parameter annotation declares the context type. The context is then in scope by closure, so
+  `define_context`, `with_defaults` and per-schema `(context) => schema` factories are gone.
+  `HttpClientConfig` is parameterized by the endpoint tree rather than by a hand-written context,
+  with `ClientContext<endpoints>` exported for wrappers, and `EndpointMap` is no longer exported.
+
+  Pathnames use a built-in parser, so the package has no runtime dependencies. `:param` and nested
+  optional groups are unchanged; wildcards, enums and the protocol, hostname, port and search
+  patterns are gone, and `?` and `#` are rejected. An unparsable `base_url` or a tree leaf that is
+  not an `Endpoint` now throws when the client is built, instead of failing per call.
+
+- Rework request serialization
+
+  A declared `params`, `query` or `body` schema always runs, an omitted slot included, so defaults
+  and `preprocess` apply where they used to be skipped; a schema output of `undefined` means send
+  nothing. A custom body `serialize` owns `Content-Type` and its return shape is keyed on the body
+  type: `FormData` and `URLSearchParams` reject one, `BufferSource` and `ReadableStream` require
+  one, and a `Content-Type` from `headers` is dropped in favor of the serializer's. A query or
+  params schema whose output is `any` now requires a `serialize` function.
+
+  The `"urlencoded"` encoder repeats array values (`?tags=a&tags=b`) and handles entry lists, and
+  returns a `SerializationError` for anything it cannot express instead of silently emitting
+  `[object Object]` or nothing at all. The `"json"` body serializer returns its failures the same
+  way rather than throwing them out of the call.
+
+- Give a response body exactly one reader
+
+  The `parse` declared for a status is the only thing handed the body; nothing else receives a
+  `Response`, and an unread body is released. `raw_response` is gone from the response envelopes,
+  which carry `status`, `ok`, `url`, `method` and `headers` themselves, and the retry callbacks
+  receive that same metadata in place of the `Request` and `Response`. To reach or stream a body
+  the client would not otherwise read, return it from `parse`.
+
+  A schema whose input is `any`, `unknown`, `void` or `never` now requires a `parse` function,
+  since the client cannot know how to decode for it. The undeclared-2xx fallback is typed `null`
+  instead of `void`, which is what it already yielded at runtime and what `204` yields. Malformed
+  JSON is now a `ParseError` carrying the offending text, and a `1xx` response is returned as an
+  `UnexpectedError` rather than thrown.
+
+- Rework retry and timeout semantics
+
+  `timeout` is the deadline for the whole call, covering every attempt, every retry delay and
+  response parsing, where it used to bound each attempt. `retry.attempts` counts retries rather
+  than requests.
+
+  ```ts
+  await api.users.get({ timeout: 5000 }); // was 5s per attempt, now 5s for the call
+  await api.users.get({ timeout: { attempt: 5000 } }); // the old behavior
+  await api.users.get({ retry: { attempts: 3 } }); // was 3 requests at most, now 4
+  ```
+
+  `timeout` accepts `{ total?, attempt? }` and merges per key, and `ErrorContext.request.timeout`
+  carries that object instead of a number. Only `undefined` disables it, so `0` means immediately.
+
+  The default retry condition retries only transient failures (`NetworkError`, `TimeoutError`, 408,
+  429 and 5xx) rather than every non-ok response, and `retry` merges per key, with `undefined`
+  meaning "not set here". A non-finite `attempts`, `delay` or timeout is rejected instead of, in
+  the case of `NaN`, retrying forever. This also fixes a retried body being held for the whole
+  backoff, a zero-delay retry loop starving the event loop, and an abort during a delay surfacing
+  as an `UnexpectedError`.
+
+### Features
+
+- Add a `kind` discriminant to every response envelope and error class
+
+  Each arm of a call result carries a `kind` literal named after its own type or class, exported as
+  `HTTPFetch.ResponseKind` and `ErrorKind`. It tells the redirect arm apart from the error
+  responses, which `ok: false` alone does not:
+
+  ```ts
+  if (result instanceof Error) return console.error(result.message, result.context);
+
+  if (result.ok) console.log(result.data);
+  else if (result.kind === "RedirectMessage") console.warn(result.redirect_to);
+  else console.error(result.error);
+  ```
+
+  It also narrows the whole union in one `switch` with no `instanceof`, for when a prototype check
+  cannot be trusted: after a spread, a clone, or two copies of the package being installed. Reading
+  a result is unaffected, but code that builds an envelope by hand, such as a test fixture, has to
+  add the matching `kind`.
+
 ## 0.6.0
 
 ### Breaking Changes
