@@ -446,10 +446,8 @@ export class Endpoint<
     /** Definition already resolved for this call; omit it and the definition is resolved here. */
     resolved?: ResolvedDefinition,
   ): Promise<
-    | { body: FormData | URLSearchParams; content_type?: never }
-    | { body: BufferSource | ReadableStream<any>; content_type: string }
     | {
-        body: Blob | string | null;
+        body: BodyInit | null;
         content_type?: string;
       }
     | SerializationError

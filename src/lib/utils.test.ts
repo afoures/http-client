@@ -446,7 +446,6 @@ describe("default_retry_condition", () => {
     { error: new NetworkError("x", context), retried: true },
     { error: new TimeoutError("x", context), retried: true },
     { error: new AbortedError("x", context), retried: false },
-    { error: new UnexpectedError("x", context), retried: false },
   ] as const;
 
   for (const { error, retried } of error_cases) {
@@ -454,6 +453,14 @@ describe("default_retry_condition", () => {
       assert.equal(default_retry_condition({ request, response: undefined, error }), retried);
     });
   }
+
+  // The client never hands one to a condition, so `RetryPolicy.AttemptError` leaves it out and the
+  // cast is what reaching this branch takes. The guard stays anyway: the condition is exported, so
+  // it can be called with whatever a composing caller has in hand.
+  test("UnexpectedError is not retried", () => {
+    const error = new UnexpectedError("x", context) as unknown as NetworkError;
+    assert.equal(default_retry_condition({ request, response: undefined, error }), false);
+  });
 
   test("an error wins over a response left from an earlier attempt", () => {
     assert.equal(

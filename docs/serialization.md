@@ -176,11 +176,14 @@ const endpoint = new Endpoint(
   },
 );
 
-const { body, content_type } = await endpoint.serialize_body({
+const result = await endpoint.serialize_body({
   body: { name: "John", email: "john@example.com" },
 });
-// body: '{"name":"John","email":"john@example.com"}'
-// content_type: 'application/json'
+// `serialize_body` returns its failures, so peel them off before reading the encoded body
+if (result instanceof Error) throw result;
+
+result.body; // '{"name":"John","email":"john@example.com"}'
+result.content_type; // 'application/json'
 ```
 
 ### Custom Serialization

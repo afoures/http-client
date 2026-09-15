@@ -86,6 +86,9 @@ const endpoint = new Endpoint(
 
 const result = await endpoint.parse_response(response);
 
+// `parse_response` returns its failures like every other call does, so peel them off first
+if (result instanceof Error) throw result;
+
 if (result.ok && result.status === 200) {
   console.log(result.data); // { id: string; name: string }
 } else if (!result.ok && result.status === 404) {
@@ -156,7 +159,9 @@ const download = new Endpoint(
 const api = http_client({ files: { download } }, { base_url: "https://api.example.com" });
 
 const result = await api.files.download({ params: { id: "1" } });
-if (!(result instanceof Error) && result.ok) {
+// `status`, not `ok`: the `ok` branch also covers 204 and any undeclared 2xx, whose `data` is
+// `null`, so only the exact status gets you the stream on its own
+if (!(result instanceof Error) && result.status === 200) {
   await result.data.pipeTo(destination);
 }
 ```
@@ -203,10 +208,14 @@ If no parser (specific or wildcard) covers a status:
 const endpoint = new Endpoint({ method: "DELETE", pathname: "/users/:id" });
 
 const result = await endpoint.parse_response(response);
+if (result instanceof Error) throw result;
+
 if (result.ok && result.status === 204) {
   console.log(result.data); // null
 }
-if (!result.ok && result.status >= 400) {
+// an exact status, not `>= 400`: a relational comparison does not narrow a union of numeric
+// literals, so the redirect arm would stay in and `error` would be out of reach
+if (result.status === 404) {
   console.log(typeof result.error); // "string", raw text fallback
 }
 ```
@@ -251,7 +260,9 @@ const endpoint = new Endpoint(
 );
 
 const result = await endpoint.parse_response(response);
-if (result.ok) {
+if (result instanceof Error) throw result;
+
+if (result.status === 200) {
   console.log(result.data.name); // uppercase string
   console.log(result.data.createdAt); // Date object
 }

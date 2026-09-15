@@ -243,10 +243,23 @@ interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly "~standard": {
     readonly version: 1;
     readonly vendor: string;
-    readonly validate: (value: Input) => StandardResult<Output>;
+    /** Carries the inferred types; never present at runtime. */
+    readonly types?: { readonly input: Input; readonly output: Output } | undefined;
+    readonly validate: (
+      value: unknown,
+      options?: { readonly libraryOptions?: Record<string, unknown> },
+    ) => Result<Output> | Promise<Result<Output>>;
   };
 }
+
+type Result<Output> =
+  | { readonly value: Output; readonly issues?: undefined }
+  | { readonly issues: ReadonlyArray<{ readonly message: string /* , path? */ }> };
 ```
+
+`validate` takes `unknown`, not `Input`: `Input` is only ever read off `types`, which is what
+`Schema.infer_input` and `Schema.infer_output` resolve. It may return a promise, which the client
+always awaits.
 
 The HTTP client uses `schema['~standard'].validate()` for both input serialization and output
 parsing, and treats a result with `issues` as a `SerializationError` or `ParseError` whose `cause`

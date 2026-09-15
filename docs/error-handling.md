@@ -58,8 +58,9 @@ if (result instanceof TimeoutError) {
 
 The message tells the two bounds apart: a `total` expiry reads `Call deadline of 1000ms exceeded`,
 an `attempt` expiry keeps the runtime's own `The operation was aborted due to timeout`. An expiry
-that lands while the body is being read carries `operation: "parse_response"` and the response's
-`status` and `headers` in `context.response`. See [Timeouts](./http-client.md#timeouts).
+that lands while the body is being read, or inside a custom `parse`, carries
+`operation: "parse_response"` and the response's `status` and `headers` in `context.response`. See
+[Timeouts](./http-client.md#timeouts).
 
 ### `AbortedError`
 
@@ -338,18 +339,18 @@ if (result instanceof Error) {
 
 Roughly in the order a call runs through them, with the class each one comes back as:
 
-| Operation            | Class                                                           | Failed at                                                                                                              |
-| -------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `resolve_timeout`    | `UnexpectedError`                                               | reading `timeout`: a key was `NaN` or `Infinity`                                                                       |
-| `resolve_definition` | `UnexpectedError`                                               | the definition factory threw                                                                                           |
-| `generate_url`       | `SerializationError`                                            | validating or serializing `params` / `query`, or a param that is missing, empty, `.` or `..`                           |
-| `serialize_body`     | `SerializationError`                                            | validating or serializing `body`                                                                                       |
-| `create_request`     | `UnexpectedError`                                               | constructing the `Request` (a stream body re-sent by a retry lands here)                                               |
-| `fetch`              | `NetworkError`, `TimeoutError`, `AbortedError`                  | the request itself: network failure, timeout, or abort                                                                 |
-| `retry_policy`       | `UnexpectedError`                                               | a `when`, `attempts` or `delay` callback threw, or `attempts` / `delay` resolved to `NaN` or `Infinity`                |
-| `retry_delay`        | `TimeoutError`, `AbortedError`                                  | the wait between attempts was cut short by a timeout or an abort                                                       |
-| `recover`            | `UnexpectedError`                                               | a `recover` callback threw                                                                                             |
-| `parse_response`     | `ParseError`, `TimeoutError`, `AbortedError`, `UnexpectedError` | decoding or validating the body, a timeout or abort while reading it, a `parse` function that threw, or a `1xx` status |
+| Operation            | Class                                                           | Failed at                                                                                                                                  |
+| -------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `resolve_timeout`    | `UnexpectedError`                                               | reading `timeout`: a key was `NaN` or `Infinity`                                                                                           |
+| `resolve_definition` | `UnexpectedError`                                               | the definition factory threw                                                                                                               |
+| `generate_url`       | `SerializationError`                                            | validating or serializing `params` / `query`, or a param that is missing, empty, `.` or `..`                                               |
+| `serialize_body`     | `SerializationError`                                            | validating or serializing `body`                                                                                                           |
+| `create_request`     | `UnexpectedError`                                               | constructing the `Request` (a stream body re-sent by a retry lands here)                                                                   |
+| `fetch`              | `NetworkError`, `TimeoutError`, `AbortedError`                  | the request itself: network failure, timeout, or abort                                                                                     |
+| `retry_policy`       | `UnexpectedError`                                               | a `when`, `attempts` or `delay` callback threw, or `attempts` / `delay` resolved to `NaN` or `Infinity`                                    |
+| `retry_delay`        | `TimeoutError`, `AbortedError`                                  | the wait between attempts was cut short by a timeout or an abort                                                                           |
+| `recover`            | `UnexpectedError`                                               | a `recover` callback threw                                                                                                                 |
+| `parse_response`     | `ParseError`, `TimeoutError`, `AbortedError`, `UnexpectedError` | decoding or validating the body, a timeout or abort while reading it or inside a `parse`, a `parse` function that threw, or a `1xx` status |
 
 `context.request.timeout` carries the **normalized** `{ total?, attempt? }` the call actually ran
 under, never the bare number a caller may have passed.

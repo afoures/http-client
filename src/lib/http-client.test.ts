@@ -2336,6 +2336,117 @@ describe("audit follow-ups", () => {
     });
   });
 
+  /**
+   * The cases above all read the body through `"json"`, which notices an abort only because `fetch`
+   * wires the signal into the response stream. A custom `parse` doing its own async work notices
+   * nothing, and a `custom_fetch` handing back a plain `Response` breaks even the stream's own
+   * wiring, so these pin the bound to the client rather than to the fetch implementation.
+   */
+  describe("a timeout during a custom `parse`", () => {
+    /** Answers instantly, with a body no parser here ever reads. */
+    const instant_fetch = async () => new Response("{}", { status: 200 });
+
+    function client_parsing_with(parse: () => Promise<unknown>) {
+      return fetch_endpoint_factory({
+        base_url: API_BASE_URL,
+        custom_fetch: instant_fetch,
+        endpoint: new Endpoint(
+          { method: "GET", pathname: "/slow-parse" },
+          { responses: { 200: { schema: z.unknown(), parse } } },
+        ),
+      });
+    }
+
+    /** Never settles, so only the client can end the call. */
+    const hangs = () => new Promise<unknown>(() => {});
+    const takes = (ms: number) => async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return { parsed: true };
+    };
+
+    test("a `parse` that never settles is ended by the `total` deadline", async () => {
+      const result = await client_parsing_with(hangs)({ timeout: { total: 50 } });
+
+      assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+      assert.match(result.message, /Call deadline of 50ms exceeded/);
+      assert.equal(result.context.operation, "parse_response");
+      assert.equal(result.context.response?.status, 200);
+    });
+
+    test("a `parse` that never settles is ended by the `attempt` bound", async () => {
+      const result = await client_parsing_with(hangs)({ timeout: { attempt: 50 } });
+
+      assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+      assert.doesNotMatch(result.message, /Call deadline/);
+      assert.equal(result.context.operation, "parse_response");
+    });
+
+    test("a `parse` slower than the deadline is a TimeoutError, not a late success", async () => {
+      const result = await client_parsing_with(takes(200))({ timeout: { total: 50 } });
+
+      assert.ok(result instanceof TimeoutError, `got ${String(result)}`);
+      assert.match(result.message, /Call deadline of 50ms exceeded/);
+    });
+
+    test("a `parse` inside the deadline still returns its value", async () => {
+      const result = await client_parsing_with(takes(10))({ timeout: { total: 200 } });
+
+      assert.ok(!(result instanceof Error), `got ${String(result)}`);
+      assert.ok(result.ok);
+      assert.deepEqual(result.data, { parsed: true });
+    });
+
+    test("an `attempt` expiry in `parse` is offered to `when` with the lost response", async () => {
+      let parses = 0;
+      const seen: Array<{ status: number | undefined; error: string | undefined }> = [];
+      // the first parse hangs, the second answers well inside the bound
+      const parse = () => (parses++ === 0 ? hangs() : takes(0)());
+      const result = await client_parsing_with(parse)({
+        timeout: { attempt: 50 },
+        retry: {
+          attempts: 1,
+          when: (ctx) => {
+            seen.push({ status: ctx.response?.status, error: ctx.error?.kind });
+            return default_retry_condition(ctx);
+          },
+        },
+      });
+
+      assert.ok(!(result instanceof Error), `got ${String(result)}`);
+      assert.deepEqual(result.ok && result.data, { parsed: true });
+      assert.deepEqual(seen, [
+        // the first 200, before its body went to the parser
+        { status: 200, error: undefined },
+        // the same response, now lost, alongside the bound that cut the parse
+        { status: 200, error: "TimeoutError" },
+        // the retry's 200, which parsed in time
+        { status: 200, error: undefined },
+      ]);
+    });
+
+    test("a caller abort during `parse` is a terminal AbortedError", async () => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 50);
+      const result = await client_parsing_with(hangs)({
+        signal: controller.signal,
+        retry: { attempts: 2 },
+      });
+
+      assert.ok(result instanceof AbortedError, `got ${String(result)}`);
+      assert.equal(result.context.operation, "parse_response");
+    });
+
+    test("no timeout and no signal leaves `parse` unbounded", async () => {
+      const result = await Promise.race([
+        client_parsing_with(takes(60))({}),
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 20)),
+      ]);
+
+      // the race is what asserts it: the parse was still running when the 20ms sentinel fired
+      assert.equal(result, "pending");
+    });
+  });
+
   test("a schema ParseError is never offered to `when`", async () => {
     let calls = 0;
     let when_calls = 0;

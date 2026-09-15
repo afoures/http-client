@@ -3,6 +3,7 @@ import {
   type ErrorMessage,
   type HTTPFetch,
   type HTTPMethod,
+  type HTTPStatus,
   type MaybePromise,
   type Parser,
   type Pathname,
@@ -125,6 +126,27 @@ function combine(...signals: Array<AbortSignal | null | undefined>): AbortSignal
   if (present.length === 0) return undefined;
   if (present.length === 1) return present[0];
   return AbortSignal.any(present);
+}
+
+/**
+ * A promise that rejects with `signal`'s reason the moment it aborts, plus the teardown that drops
+ * its listener. Used to bound a phase the client awaits but does not drive, so an expiry does not
+ * depend on that phase noticing the signal on its own.
+ *
+ * The loser of the race is abandoned rather than cancelled, which is safe for the one phase this
+ * serves: response parsing owns the body, and the caller discards it on this path anyway. Nothing
+ * re-awaits the abandoned promise, and `Promise.race` has already subscribed to it, so a rejection
+ * arriving afterwards is handled rather than unhandled.
+ */
+function abort_race(signal: AbortSignal): { rejected: Promise<never>; release: () => void } {
+  let release = () => {};
+  const rejected = new Promise<never>((_, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const on_abort = () => reject(signal.reason);
+    signal.addEventListener("abort", on_abort, { once: true });
+    release = () => signal.removeEventListener("abort", on_abort);
+  });
+  return { rejected, release };
 }
 
 /**
@@ -317,7 +339,7 @@ export function fetch_endpoint_factory<
       HTTPFetch.OptionalRequestInit &
       HTTPFetch.DefaultRequestInit,
   ) {
-    let start_time = Date.now();
+    const start_time = Date.now();
 
     const { args, options, context: call_context } = extract_args(input);
 
@@ -432,12 +454,23 @@ export function fetch_endpoint_factory<
       recover: merged_options.retry?.recover,
     } satisfies RetryPolicy.Configuration;
 
-    type AttemptError = UnexpectedError | NetworkError | TimeoutError | AbortedError;
+    /**
+     * What an attempt can settle with, and so what the retry policy is offered. An
+     * {@link UnexpectedError} is never among them: every path that produces one (a `Request` that
+     * could not be built, a throwing `when` / `attempts` / `delay` / `recover`) ends the call
+     * instead of going back through the policy.
+     */
+    type AttemptError = NetworkError | TimeoutError | AbortedError;
+    /** Everything the call itself can end with, which is the attempt failures plus those. */
+    type CallError = AttemptError | UnexpectedError;
 
     let attempt = 0;
     let request: Request;
     let response: Response | undefined;
+    /** The failure of the attempt that just settled, which the retry policy gets a say over. */
     let error: AttemptError | undefined;
+    /** A failure that ends the call outright, so it is never offered to the retry policy. */
+    let terminal_error: CallError | undefined;
 
     const request_context = () =>
       ({
@@ -565,7 +598,7 @@ export function fetch_endpoint_factory<
       attempt_request: HTTPFetch.RequestMetadata,
       attempt_response: HTTPFetch.ResponseMetadata | undefined,
       attempt_error: AttemptError | undefined,
-    ): Promise<AttemptError | undefined> {
+    ): Promise<CallError | undefined> {
       if (delay > 0) {
         try {
           await sleep(delay, call_signal);
@@ -632,7 +665,7 @@ export function fetch_endpoint_factory<
        */
       const pending_abort = terminal_abort("fetch");
       if (pending_abort) {
-        error = pending_abort;
+        terminal_error = pending_abort;
         break;
       }
 
@@ -655,10 +688,10 @@ export function fetch_endpoint_factory<
           ...{ duplex: "half" },
         });
       } catch (local_error) {
-        error = new UnexpectedError("Failed to create request", {
+        terminal_error = new UnexpectedError("Failed to create request", {
           cause: local_error,
           operation: "create_request",
-          request: { ...request_context(), headers },
+          request: { ...request_context(), headers: request_headers },
           timing: { startTime: start_time, attempt: attempt + 1 },
         });
         break;
@@ -697,7 +730,7 @@ export function fetch_endpoint_factory<
 
       const settled_abort = terminal_abort("fetch");
       if (settled_abort) {
-        error = settled_abort;
+        terminal_error = settled_abort;
         break;
       }
 
@@ -715,7 +748,7 @@ export function fetch_endpoint_factory<
         // has its body read into memory.
         const decision = await decide_retry(attempt_request, attempt_response, undefined);
         if (decision instanceof Error) {
-          error = decision;
+          terminal_error = decision;
           break;
         }
         if (decision.retry) {
@@ -732,7 +765,7 @@ export function fetch_endpoint_factory<
             undefined,
           );
           if (failure) {
-            error = failure;
+            terminal_error = failure;
             break;
           }
           continue;
@@ -744,16 +777,25 @@ export function fetch_endpoint_factory<
          * the thing that failed, there is no second copy, and reading one is what this whole design
          * is built to prevent. `discard_body` releases whatever is left of it.
          *
+         * Raced against `attempt_signal` rather than left to notice the abort itself. The built-in
+         * `"json"` and `"text"` readers do notice, but only because `fetch` wires the signal into
+         * the body stream, so the guarantee would hold or not depending on the fetch implementation
+         * and would not hold at all for a custom `parse` doing its own async work. Racing makes both
+         * timeouts bound this phase the way they bound every other one.
+         *
          * The `attempt` bound covers the body read too, and an expiry there is the one rejection
          * that is retried: the connection hung after the headers arrived, which is exactly what the
          * bound exists to recover from. The response is gone with its body, so the retry decision
          * below sees its metadata alongside the error.
          */
         const settled = response;
-        const outcome = await endpoint.parse_response(settled, context as any, definition).then(
+        const parsing = endpoint.parse_response(settled, context as any, definition);
+        const guard = attempt_signal ? abort_race(attempt_signal) : undefined;
+        const outcome = await (guard ? Promise.race([parsing, guard.rejected]) : parsing).then(
           (parsed) => ({ parsed }),
           (thrown: unknown) => ({ thrown }),
         );
+        guard?.release();
         if ("parsed" in outcome) return outcome.parsed;
 
         discard_body(settled);
@@ -798,14 +840,14 @@ export function fetch_endpoint_factory<
       // read timed out. `attempt_response` is set in the last case only.
       const decision = await decide_retry(attempt_request, attempt_response, error);
       if (decision instanceof Error) {
-        error = decision;
+        terminal_error = decision;
         break;
       }
       if (!decision.retry) break;
 
       const failure = await prepare_retry(decision.delay, attempt_request, attempt_response, error);
       if (failure) {
-        error = failure;
+        terminal_error = failure;
         break;
       }
       // oxlint-disable-next-line no-constant-condition
@@ -813,9 +855,10 @@ export function fetch_endpoint_factory<
 
     // A response can be in hand even on the error paths (an abort or a throwing retry callback
     // after the attempt settled), and it is never parsed from here, so its body is spent too.
-    if (error) {
+    const outcome_error = terminal_error ?? error;
+    if (outcome_error) {
       discard_body(response);
-      return error;
+      return outcome_error;
     }
 
     // Every exit from the loop either returned a parsed result or set `error`, so this is an
@@ -1037,20 +1080,39 @@ export namespace $infer {
   >;
 
   /**
+   * A `"2xx"` / `"4xx"` / `"5xx"` selector expanded to the codes of its class, so the wildcards a
+   * `responses` map is keyed by also work as the narrowing argument below. A number passes through.
+   */
+  type status_selector<status> = status extends HTTPStatus.AnySuccessfullResponse
+    ? HTTPStatus.SuccessfulResponse
+    : status extends HTTPStatus.AnyClientErrorResponse
+      ? HTTPStatus.ClientErrorResponse
+      : status extends HTTPStatus.AnyServerErrorResponse
+        ? HTTPStatus.ServerErrorResponse
+        : status;
+
+  /**
    * The success `data` type, optionally narrowed to a specific status or status class. Use it to
    * type the payload you extract from a successful response.
    *
    * @example
    * type Ok = $infer.Data<typeof api.users.get, 200>;
+   *
+   * @example
+   * // every success status at once, the wildcard spelled the way `responses` spells it
+   * type AnyOk = $infer.Data<typeof api.users.get, "2xx">;
    */
-  export type Data<endpoint extends AnyEndpointInput, status extends number = number> =
+  export type Data<
+    endpoint extends AnyEndpointInput,
+    status extends number | HTTPStatus.AnyStatusClass = number,
+  > =
     fetch_output<endpoint> extends infer response
       ? response extends {
           ok: true;
           status: infer member_status extends number;
           data: infer data;
         }
-        ? [Extract<member_status, status>] extends [never]
+        ? [Extract<member_status, status_selector<status>>] extends [never]
           ? never
           : data
         : never
@@ -1062,15 +1124,22 @@ export namespace $infer {
    *
    * @example
    * type NotFound = $infer.Error<typeof api.users.get, 404>;
+   *
+   * @example
+   * // every client-error status at once, leaving the 5xx shapes out
+   * type AnyClientError = $infer.Error<typeof api.users.get, "4xx">;
    */
-  export type Error<endpoint extends AnyEndpointInput, status extends number = number> =
+  export type Error<
+    endpoint extends AnyEndpointInput,
+    status extends number | HTTPStatus.AnyStatusClass = number,
+  > =
     fetch_output<endpoint> extends infer response
       ? response extends {
           ok: false;
           status: infer member_status extends number;
           error: infer error;
         }
-        ? [Extract<member_status, status>] extends [never]
+        ? [Extract<member_status, status_selector<status>>] extends [never]
           ? never
           : error
         : never

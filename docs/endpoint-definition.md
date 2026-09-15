@@ -158,6 +158,10 @@ call, and an optional trailing `resolved` argument, the result of `resolve_defin
 Because a definition factory is user code, all three can also return an `UnexpectedError` when it
 throws.
 
+All three return their failures as values, the same way a client call does, so peel them off with
+`instanceof Error` before reading the result. That is what makes `url`, `body` or `status` reachable
+at all.
+
 ### `generate_url(init, context?, resolved?)`
 
 Generates a full URL with params and query serialized:
@@ -182,9 +186,11 @@ serialization, or when a param is missing, empty, `"."` or `".."` (its `cause` i
 Serializes the request body:
 
 ```typescript
-const { body, content_type } = await endpoint.serialize_body({
-  body: { name: "John" },
-});
+const result = await endpoint.serialize_body({ body: { name: "John" } });
+if (result instanceof Error) throw result;
+
+result.body;
+result.content_type;
 ```
 
 Returns `{ body, content_type }` on success, or `SerializationError` on validation failure.

@@ -11,7 +11,7 @@ type RequestMetadata = { url: string; method: HTTPMethod; headers: Headers };
 type ResponseMetadata = { status: number; ok: boolean; url: string; headers: Headers };
 
 // the failure of the attempt, when it failed before a response could be parsed
-type AttemptError = NetworkError | TimeoutError | AbortedError | UnexpectedError;
+type AttemptError = NetworkError | TimeoutError | AbortedError;
 
 type RetryPolicy = {
   attempts?: number | ((ctx: { request: RequestMetadata }) => number | Promise<number>);
@@ -39,7 +39,13 @@ type RetryPolicy = {
 ```
 
 These are the `RetryPolicy.Configuration`, `RetryPolicy.Condition`, `RetryPolicy.Delay`,
-`RetryPolicy.Attempts` and `RetryPolicy.Recover` types exported from the package root.
+`RetryPolicy.Attempts`, `RetryPolicy.Recover` and `RetryPolicy.AttemptError` types exported from the
+package root.
+
+`AttemptError` holds three classes, not four: an `UnexpectedError` is never offered to a callback.
+Every path that produces one (a `Request` that could not be built, or a `when` / `attempts` /
+`delay` / `recover` that threw) ends the call instead of going back through the policy, so a branch
+for it would be one the callback can never be given.
 
 Decide from `status`, `headers` and `error`: the callbacks get metadata rather than the `Request` and
 `Response`, so a retry decision can never eat the body your parser is about to read (see
@@ -272,7 +278,10 @@ const default_retry_condition: RetryPolicy.Condition = ({ response, error }) => 
 };
 ```
 
-So `408`, `429` and every `5xx` are retried, as are `NetworkError` and `TimeoutError`. Nothing else is: a `4xx` other than those two is a permanent client error, a `3xx` read under `redirect: "manual"` is a normal outcome, an `AbortedError` means the caller asked to stop, and an `UnexpectedError` comes from your own callback throwing (retrying just re-throws).
+So `408`, `429` and every `5xx` are retried, as are `NetworkError` and `TimeoutError`. Nothing else is: a `4xx` other than those two is a permanent client error, a `3xx` read under `redirect: "manual"` is a normal outcome, and an `AbortedError` means the caller asked to stop.
+
+The `UnexpectedError` branch is there for a caller composing the condition by hand, not for the
+client: it never hands one to a condition, which is why `AttemptError` leaves it out.
 
 `attempts` counts retries after the first request and defaults to `0`, so none of this happens
 until you ask for a retry: a `when` condition on its own never retries anything.

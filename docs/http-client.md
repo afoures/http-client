@@ -239,12 +239,23 @@ await api.users.get({ params, timeout: { attempt: 2000 } }); // each try gets 2s
 await api.users.get({ params, timeout: { total: 5000, attempt: 2000 } }); // both
 ```
 
-- `total` is the **call deadline**. It covers initial setup, every attempt, every inter-attempt retry delay, and response parsing. When
-  it expires the call is over: the retry condition is never consulted, and the error reads
-  `Call deadline of 5000ms exceeded`.
-- `attempt` bounds **one try**. It has no default. Use it to cut a hung connection loose so the retry policy
-  can start a fresh one; an expiry goes through `when` like any other failure and is retried by the
-  default condition.
+- `total` is the **call deadline**. It covers every attempt, every inter-attempt retry delay, and
+  response parsing. When it expires the call is over: the retry condition is never consulted, and
+  the error reads `Call deadline of 5000ms exceeded`.
+- `attempt` bounds **one try**, headers and body alike. It has no default. Use it to cut a hung
+  connection loose so the retry policy can start a fresh one; an expiry goes through `when` like any
+  other failure and is retried by the default condition.
+
+Both bounds cover a custom [`parse`](./response-parsing.md#parse-modes) too, including one that does
+its own async work and never touches the body. The client races the parse against the bound rather
+than relying on it to notice, so an expiry there behaves like one anywhere else: terminal for
+`total`, retryable for `attempt`.
+
+Two phases are **not** cut short, because neither can be: the client-level `options()` factory runs
+before the budget is known (the budget may come from it), and request-side schema validation runs
+inside the serializers the client awaits. An overrunning one delays the call past its deadline, and
+the call then ends with the `TimeoutError` at the first checkpoint after it rather than returning a
+result. Keep an `options()` factory's own timeout on the request it makes.
 
 Both are floored and clamped to `0`, and `0` means "already expired", not "disabled": only omitting
 a key leaves that bound off. So a computed budget that runs out fails fast:
@@ -359,7 +370,9 @@ helper accepts **either** an `Endpoint` instance or a bound fetch function from 
 client:
 
 ```typescript
-import { $infer, http_client, Endpoint } from "@afoures/http-client";
+// `$infer` holds only types, so import it as one: a value import of it is an error under
+// `verbatimModuleSyntax` or `isolatedModules`
+import { type $infer, http_client, Endpoint } from "@afoures/http-client";
 import { z } from "zod";
 
 const get_user = new Endpoint(
@@ -402,6 +415,9 @@ type GetUserParams = $infer.Params<typeof get_user>; // { id: string | number }
 // Narrow data/error to a specific status code
 type User = $infer.Data<typeof api.users.get, 200>; // { id: string; name: string }
 type NotFound = $infer.Error<typeof api.users.get, 404>; // { message: string }
+
+// ...or to a whole status class, spelled the way `responses` spells it
+type AnyClientError = $infer.Error<typeof api.users.get, "4xx">; // { message: string } | string
 ```
 
 Available type helpers (each takes an `Endpoint` instance or a fetch function):

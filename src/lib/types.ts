@@ -1,6 +1,6 @@
 import { type StandardSchemaV1 } from "@standard-schema/spec";
 import { type PathnameParams } from "./pathname.ts";
-import type { AbortedError, NetworkError, TimeoutError, UnexpectedError } from "./errors";
+import type { AbortedError, NetworkError, TimeoutError } from "./errors";
 
 export type Pretty<T> = { [K in keyof T]: T[K] } & {};
 
@@ -48,9 +48,6 @@ export namespace Pathname {
     PathnameParams<pathname> extends infer params
       ? Pretty<{ [param in keyof params]: params[param] | number }>
       : never;
-
-  export type DefaultParamsObjectSchema<pathname extends Pathname.Relative> =
-    pathname extends Pathname.WithParams ? Schema._<Pathname.Params<pathname>> : never;
 }
 
 /** HTTP status-code literal unions grouped by response class. */
@@ -103,6 +100,12 @@ export namespace HTTPStatus {
   export type AnyClientErrorResponse = "4xx";
   export type AnyServerErrorResponse = "5xx";
 
+  /** The three status-class wildcards, wherever one may stand in for the codes it covers. */
+  export type AnyStatusClass =
+    | HTTPStatus.AnySuccessfullResponse
+    | HTTPStatus.AnyClientErrorResponse
+    | HTTPStatus.AnyServerErrorResponse;
+
   /** Any known HTTP status code. */
   export type Any =
     | HTTPStatus.InformationalResponse
@@ -134,6 +137,16 @@ export type HeadersInitWithReducer =
 /** Types for the per-request `retry` option. */
 export namespace RetryPolicy {
   /**
+   * How an attempt can fail, as the retry callbacks see it.
+   *
+   * An `UnexpectedError` is deliberately not among them. Every path that produces one (a
+   * `Request` that could not be built, a throwing `when` / `attempts` / `delay` / `recover`) ends
+   * the call rather than going back through the policy, so a callback handling it would be handling
+   * a case it can never be given.
+   */
+  export type AttemptError = NetworkError | TimeoutError | AbortedError;
+
+  /**
    * Decides whether a completed attempt should be retried; defaults to `default_retry_condition`.
    * `response` is set when one arrived and `error` when the attempt failed. Both are set in one
    * case: the response arrived but the `attempt` bound cut its body read, in which case `response`
@@ -142,7 +155,7 @@ export namespace RetryPolicy {
   export type Condition = (context: {
     request: HTTPFetch.RequestMetadata;
     response: HTTPFetch.ResponseMetadata | undefined;
-    error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+    error: AttemptError | undefined;
   }) => MaybePromise<boolean>;
 
   /**
@@ -158,7 +171,7 @@ export namespace RetryPolicy {
     | number
     | ((context: {
         response: HTTPFetch.ResponseMetadata | undefined;
-        error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+        error: AttemptError | undefined;
         request: HTTPFetch.RequestMetadata;
         attempt: number;
       }) => MaybePromise<number>);
@@ -180,7 +193,7 @@ export namespace RetryPolicy {
   export type Recover = (context: {
     request: HTTPFetch.RequestMetadata;
     response: HTTPFetch.ResponseMetadata | undefined;
-    error: UnexpectedError | NetworkError | TimeoutError | AbortedError | undefined;
+    error: AttemptError | undefined;
     attempt: number;
     current: { headers: Headers };
   }) => MaybePromise<Overrides | void>;
@@ -435,7 +448,15 @@ export namespace HTTPFetch {
    * "already expired", not "disabled": only omitting a key leaves that bound off.
    */
   export type TimeoutConfig = {
-    /** Bounds the whole call: the client-level `options()` factory, every attempt, every inter-attempt delay, and response parsing. Terminal, so an expiry is never offered to the retry condition. */
+    /**
+     * Bounds the whole call: every attempt, every inter-attempt delay, and response parsing.
+     * Terminal, so an expiry is never offered to the retry condition.
+     *
+     * The client-level `options()` factory runs before the budget can be read (the budget may come
+     * from it), and request-side validation runs inside the awaited serializers. Neither is cut
+     * short, so an overrunning one delays the call past the deadline; the call still ends with the
+     * `TimeoutError`, at the first checkpoint after it.
+     */
     total?: number;
     /** Bounds a single attempt, headers and body alike. No default; use it to cut a hung connection loose and retry. Retryable, so an expiry goes through the retry condition like any other failure, including one that lands while the body is being read. */
     attempt?: number;

@@ -488,6 +488,23 @@ assert_type<
   Equal<$infer.Data<typeof client.create_user, 201>, { id: string; created_at: string }>
 >();
 
+// a status class selects every code it covers, so the wildcards a `responses` map is keyed by are
+// also the narrowing argument here
+assert_type<
+  Equal<
+    $infer.Data<typeof client.create_user, "2xx">,
+    { id: string; existing: true } | { id: string; created_at: string } | null
+  >
+>();
+assert_type<
+  Equal<$infer.Data<typeof client.create_user, "2xx">, $infer.Data<typeof client.create_user>>
+>();
+// a class that no arm of this side can carry selects nothing
+assert_type<Equal<$infer.Data<typeof client.create_user, "4xx">, never>>();
+assert_type<Equal<$infer.Error<typeof client.create_user, "4xx">, { message: string } | string>>();
+assert_type<Equal<$infer.Error<typeof client.create_user, "5xx">, string>>();
+assert_type<Equal<$infer.Error<typeof client.create_user, "2xx">, never>>();
+
 // negative: a `status` chain is never exhaustive, which is why `default` is required
 async function status_chain_is_open() {
   const result = await client.create_user({ body: { name: "Ada" } });
